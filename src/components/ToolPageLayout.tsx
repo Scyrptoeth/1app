@@ -10,10 +10,9 @@ interface ToolPageLayoutProps {
 }
 
 export default function ToolPageLayout({ tool, children }: ToolPageLayoutProps) {
-  const IconComponent =
-    (LucideIcons as Record<string, React.ComponentType<{ size?: number; className?: string }>>)[
-      tool.icon
-    ] || LucideIcons.FileQuestion;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const icons = LucideIcons as any;
+  const IconComponent = icons[tool.icon] || LucideIcons.FileQuestion;
 
   const colorBg = categoryColors[tool.category] || "bg-slate-500";
 
