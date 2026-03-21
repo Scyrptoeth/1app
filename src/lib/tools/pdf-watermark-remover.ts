@@ -7,9 +7,12 @@
  *
  * Strategies:
  * 1. Remove objects in the "Watermark" artifact layer
- * 2. Detect and remove low-opacity text overlays
- * 3. Remove repeated text/image patterns across pages
- * 4. Clean annotation layers that contain watermark-like content
+ * 2. Detect and remove low-opacity text overlays via ExtGState
+ * 3. Detect and remove watermark text in content streams using multiple methods:
+ *    a. BDC/EMC marked content blocks
+ *    b. q/Q graphics state blocks containing low-opacity text
+ *    c. Known watermark keyword matching
+ * 4. Clean annotation layers and document-level metadata
  */
 
 export interface ProcessingUpdate {
@@ -35,7 +38,7 @@ export async function removePdfWatermark(
   onProgress({ progress: 5, status: "Loading PDF..." });
 
   // Dynamically import pdf-lib (lazy loaded)
-  const { PDFDocument, PDFName, PDFDict, PDFArray, PDFStream, PDFString, PDFHexString } =
+  const { PDFDocument, PDFName, PDFDict, PDFArray, PDFStream } =
     await import("pdf-lib");
 
   const arrayBuffer = await file.arrayBuffer();
@@ -53,7 +56,39 @@ export async function removePdfWatermark(
 
   let watermarksRemoved = 0;
 
-  // Strategy 1: Remove watermark annotations
+  // =============================================
+  // Phase 1: Identify low-opacity ExtGState names
+  // =============================================
+  // Collect the names of graphics states with low opacity (< 0.5)
+  // These are typically used by watermark text overlays.
+  const lowOpacityGsNames: Set<string> = new Set();
+
+  for (let i = 0; i < pageCount; i++) {
+    const page = pages[i];
+    const resources = page.node.lookup(PDFName.of("Resources"));
+    if (resources instanceof PDFDict) {
+      const extGState = resources.lookup(PDFName.of("ExtGState"));
+      if (extGState instanceof PDFDict) {
+        for (const [key, value] of extGState.entries()) {
+          if (value instanceof PDFDict) {
+            const ca = value.lookup(PDFName.of("ca"));
+            const CA = value.lookup(PDFName.of("CA"));
+            const caVal = ca ? parseFloat(ca.toString()) : 1;
+            const CAVal = CA ? parseFloat(CA.toString()) : 1;
+
+            // Opacity below 0.5 is suspicious — likely watermark
+            if (caVal < 0.5 || CAVal < 0.5) {
+              lowOpacityGsNames.add(key.toString());
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // =============================================
+  // Phase 2: Remove watermark annotations
+  // =============================================
   onProgress({ progress: 20, status: "Checking annotations..." });
 
   for (let i = 0; i < pageCount; i++) {
@@ -66,17 +101,14 @@ export async function removePdfWatermark(
       for (let j = 0; j < annots.size(); j++) {
         const annot = annots.lookup(j);
         if (annot instanceof PDFDict) {
-          // Check for watermark subtype
           const subtype = annot.lookup(PDFName.of("Subtype"));
-          const contents = annot.lookup(PDFName.of("Contents"));
+          const ca = annot.lookup(PDFName.of("CA"));
 
           if (subtype?.toString() === "/Watermark") {
             indicesToRemove.push(j);
             watermarksRemoved++;
           }
 
-          // Check for low opacity annotations (often watermarks)
-          const ca = annot.lookup(PDFName.of("CA"));
           if (ca && parseFloat(ca.toString()) < 0.5) {
             indicesToRemove.push(j);
             watermarksRemoved++;
@@ -84,31 +116,31 @@ export async function removePdfWatermark(
         }
       }
 
-      // Remove identified annotations (reverse order to maintain indices)
       for (const idx of indicesToRemove.reverse()) {
         annots.remove(idx);
       }
     }
 
     onProgress({
-      progress: 20 + ((i + 1) / pageCount) * 20,
+      progress: 20 + ((i + 1) / pageCount) * 15,
       status: `Checking annotations... page ${i + 1}/${pageCount}`,
     });
   }
 
-  // Strategy 2: Analyze and clean content streams
-  onProgress({ progress: 45, status: "Analyzing content streams..." });
+  // =============================================
+  // Phase 3: Process content streams
+  // =============================================
+  onProgress({ progress: 40, status: "Analyzing content streams..." });
 
   for (let i = 0; i < pageCount; i++) {
     const page = pages[i];
 
-    // Check for Optional Content Groups (OCGs) marked as watermarks
+    // Clean OCG properties
     const resources = page.node.lookup(PDFName.of("Resources"));
     if (resources instanceof PDFDict) {
       const properties = resources.lookup(PDFName.of("Properties"));
       if (properties instanceof PDFDict) {
-        const entries = properties.entries();
-        for (const [key, value] of entries) {
+        for (const [key, value] of properties.entries()) {
           if (value instanceof PDFDict) {
             const name = value.lookup(PDFName.of("Name"));
             if (name) {
@@ -120,7 +152,6 @@ export async function removePdfWatermark(
                 nameStr.includes("sample") ||
                 nameStr.includes("copy")
               ) {
-                // Remove this OCG reference
                 properties.delete(key);
                 watermarksRemoved++;
               }
@@ -128,22 +159,103 @@ export async function removePdfWatermark(
           }
         }
       }
+    }
 
-      // Check ExtGState for transparency settings used by watermarks
+    // Process content streams
+    try {
+      const contentStream = page.node.lookup(PDFName.of("Contents"));
+      if (!contentStream) continue;
+
+      if (contentStream instanceof PDFArray) {
+        // Multiple content streams — process each individually
+        // This is common: stream 0 = setup, stream 1 = main content, stream 2 = watermark overlay
+        for (let s = 0; s < contentStream.size(); s++) {
+          const stream = contentStream.lookup(s);
+          if (stream instanceof PDFStream) {
+            const bytes = stream.getContents();
+            const text = new TextDecoder("latin1").decode(bytes);
+
+            // Check if this entire stream is a watermark overlay
+            const isWatermarkStream = isStreamWatermarkOverlay(
+              text,
+              lowOpacityGsNames
+            );
+
+            if (isWatermarkStream) {
+              // Replace with minimal graphics state restore
+              const cleanBytes = new TextEncoder().encode(" Q\n");
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              (stream as any).setContents
+                ? (stream as any).setContents(cleanBytes)
+                : null;
+
+              // Alternative: create new stream and replace
+              const newStream = pdfDoc.context.stream(cleanBytes);
+              contentStream.set(s, pdfDoc.context.register(newStream));
+              watermarksRemoved++;
+            } else {
+              // Try partial cleanup within the stream
+              const cleaned = removeWatermarkFromContentStream(
+                text,
+                lowOpacityGsNames
+              );
+              if (cleaned !== text) {
+                const newBytes = new TextEncoder().encode(cleaned);
+                const newStream = pdfDoc.context.stream(newBytes);
+                contentStream.set(s, pdfDoc.context.register(newStream));
+                watermarksRemoved++;
+              }
+            }
+          }
+        }
+      } else if (contentStream instanceof PDFStream) {
+        // Single content stream
+        const bytes = contentStream.getContents();
+        const text = new TextDecoder("latin1").decode(bytes);
+        const cleaned = removeWatermarkFromContentStream(
+          text,
+          lowOpacityGsNames
+        );
+        if (cleaned !== text) {
+          watermarksRemoved++;
+          const newBytes = new TextEncoder().encode(cleaned);
+          const newStream = pdfDoc.context.stream(newBytes);
+          page.node.set(
+            PDFName.of("Contents"),
+            pdfDoc.context.register(newStream)
+          );
+        }
+      }
+    } catch {
+      // Content stream processing failed — skip silently
+    }
+
+    onProgress({
+      progress: 40 + ((i + 1) / pageCount) * 40,
+      status: `Processing content... page ${i + 1}/${pageCount}`,
+    });
+  }
+
+  // =============================================
+  // Phase 4: Set low-opacity ExtGState to fully transparent
+  // =============================================
+  onProgress({ progress: 82, status: "Neutralizing transparency layers..." });
+
+  for (let i = 0; i < pageCount; i++) {
+    const page = pages[i];
+    const resources = page.node.lookup(PDFName.of("Resources"));
+    if (resources instanceof PDFDict) {
       const extGState = resources.lookup(PDFName.of("ExtGState"));
       if (extGState instanceof PDFDict) {
-        const gsEntries = extGState.entries();
-        for (const [key, value] of gsEntries) {
+        for (const [, value] of extGState.entries()) {
           if (value instanceof PDFDict) {
             const ca = value.lookup(PDFName.of("ca"));
             const CA = value.lookup(PDFName.of("CA"));
-
-            // Very low opacity graphics state — likely watermark
             const caVal = ca ? parseFloat(ca.toString()) : 1;
             const CAVal = CA ? parseFloat(CA.toString()) : 1;
 
-            if (caVal < 0.3 || CAVal < 0.3) {
-              // Set opacity to 0 to make watermark invisible
+            if (caVal < 0.5 || CAVal < 0.5) {
+              // Set opacity to 0 — makes any remaining watermark invisible
               if (ca) value.set(PDFName.of("ca"), pdfDoc.context.obj(0));
               if (CA) value.set(PDFName.of("CA"), pdfDoc.context.obj(0));
               watermarksRemoved++;
@@ -152,52 +264,11 @@ export async function removePdfWatermark(
         }
       }
     }
-
-    // Strategy 3: Process content stream to remove watermark operators
-    try {
-      const contentStream = page.node.lookup(PDFName.of("Contents"));
-      if (contentStream) {
-        let streamData: string | null = null;
-
-        if (contentStream instanceof PDFStream) {
-          const bytes = contentStream.getContents();
-          streamData = new TextDecoder("latin1").decode(bytes);
-        } else if (contentStream instanceof PDFArray) {
-          // Multiple content streams — concatenate
-          const parts: string[] = [];
-          for (let s = 0; s < contentStream.size(); s++) {
-            const stream = contentStream.lookup(s);
-            if (stream instanceof PDFStream) {
-              const bytes = stream.getContents();
-              parts.push(new TextDecoder("latin1").decode(bytes));
-            }
-          }
-          streamData = parts.join("\n");
-        }
-
-        if (streamData) {
-          // Look for BDC/EMC blocks with watermark markers
-          const cleanedStream = removeWatermarkFromContentStream(streamData);
-          if (cleanedStream !== streamData) {
-            watermarksRemoved++;
-            // Re-encode the cleaned stream
-            const newBytes = new TextEncoder().encode(cleanedStream);
-            const newStream = pdfDoc.context.stream(newBytes);
-            page.node.set(PDFName.of("Contents"), pdfDoc.context.register(newStream));
-          }
-        }
-      }
-    } catch {
-      // Content stream processing failed — skip this page silently
-    }
-
-    onProgress({
-      progress: 45 + ((i + 1) / pageCount) * 40,
-      status: `Processing content... page ${i + 1}/${pageCount}`,
-    });
   }
 
-  // Strategy 4: Remove document-level watermark metadata
+  // =============================================
+  // Phase 5: Clean document-level metadata
+  // =============================================
   onProgress({ progress: 88, status: "Cleaning metadata..." });
 
   try {
@@ -205,7 +276,6 @@ export async function removePdfWatermark(
       pdfDoc.context.trailerInfo.Root
     );
     if (catalog instanceof PDFDict) {
-      // Remove OCProperties that define watermark layers
       const ocProperties = catalog.lookup(PDFName.of("OCProperties"));
       if (ocProperties instanceof PDFDict) {
         const ocgs = ocProperties.lookup(PDFName.of("OCGs"));
@@ -255,26 +325,84 @@ export async function removePdfWatermark(
 }
 
 /**
- * Remove watermark-related operators from a PDF content stream.
- * Targets BDC/EMC marked content blocks that are watermark artifacts.
+ * Detect whether an entire content stream is a watermark overlay.
+ *
+ * Watermark overlay streams typically:
+ * - Use a low-opacity graphics state (e.g. /Xi0 gs where Xi0 has ca < 0.5)
+ * - Contain only text drawing commands (BT/ET, Tj/TJ)
+ * - Contain rotated text (45-degree rotation matrix: 0.70711 values)
+ * - Do NOT contain image rendering (Do operator for XObjects)
  */
-function removeWatermarkFromContentStream(stream: string): string {
+function isStreamWatermarkOverlay(
+  stream: string,
+  lowOpacityGsNames: Set<string>
+): boolean {
+  const trimmed = stream.trim();
+
+  // Must not contain image rendering — we don't want to remove actual content
+  if (/\/Im\d+\s+Do/.test(trimmed)) return false;
+
+  // Must contain text operators
+  if (!trimmed.includes("Tj") && !trimmed.includes("TJ")) return false;
+
+  // Check if it uses a low-opacity graphics state
+  for (const gsName of lowOpacityGsNames) {
+    // gsName is like "/Xi0" — check for "/Xi0 gs" in stream
+    if (trimmed.includes(`${gsName} gs`)) {
+      return true;
+    }
+  }
+
+  // Check for 45-degree rotation (common diagonal watermark pattern)
+  // cos(45°) ≈ 0.70711
+  if (trimmed.includes("0.70711") && trimmed.includes("cm")) {
+    // Stream has rotated text — likely a diagonal watermark
+    // Additional check: no image references
+    if (!trimmed.includes(" Do")) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Remove watermark-related operators from a PDF content stream.
+ * Uses multiple detection strategies:
+ * 1. BDC/EMC marked content blocks with watermark artifacts
+ * 2. q/Q blocks that use low-opacity graphics state for text
+ * 3. Known watermark keyword text matching
+ */
+function removeWatermarkFromContentStream(
+  stream: string,
+  lowOpacityGsNames: Set<string>
+): string {
   let result = stream;
 
-  // Pattern 1: Remove /Watermark marked content blocks
-  // Format: /Artifact <</Type /Watermark...>> BDC ... EMC
+  // Pattern 1: Remove /Watermark marked content blocks (BDC/EMC)
   const watermarkBlockRegex =
     /\/Artifact\s*<<[^>]*\/Type\s*\/Watermark[^>]*>>\s*BDC[\s\S]*?EMC/gi;
   result = result.replace(watermarkBlockRegex, "");
 
-  // Pattern 2: Remove OC (Optional Content) blocks marked as watermark
-  // Format: /OC /WatermarkOCG BDC ... EMC
+  // Pattern 2: Remove OC (Optional Content) watermark blocks
   const ocWatermarkRegex =
     /\/OC\s+\/[A-Za-z]*[Ww]atermark[A-Za-z]*\s+BDC[\s\S]*?EMC/gi;
   result = result.replace(ocWatermarkRegex, "");
 
-  // Pattern 3: Remove common watermark text patterns
-  // Look for Tj/TJ operators with common watermark text
+  // Pattern 3: Remove q...Q blocks that use low-opacity GS for text
+  // These are standalone watermark overlay blocks within a larger stream
+  for (const gsName of lowOpacityGsNames) {
+    // Match: q ... <gsName> gs ... Tj ... Q
+    // Use non-greedy matching to find smallest enclosing q/Q block
+    const gsEscaped = gsName.replace(/\//g, "\\/");
+    const blockRegex = new RegExp(
+      `q\\s[\\s\\S]*?${gsEscaped}\\s+gs[\\s\\S]*?(?:Tj|TJ)[\\s\\S]*?Q`,
+      "g"
+    );
+    result = result.replace(blockRegex, "");
+  }
+
+  // Pattern 4: Remove known watermark text keywords
   const watermarkTexts = [
     "DRAFT",
     "SAMPLE",
@@ -291,7 +419,6 @@ function removeWatermarkFromContentStream(stream: string): string {
   ];
 
   for (const text of watermarkTexts) {
-    // Match text show operators with watermark text
     const tjRegex = new RegExp(
       `\\(${escapeRegex(text)}\\)\\s*Tj`,
       "gi"
