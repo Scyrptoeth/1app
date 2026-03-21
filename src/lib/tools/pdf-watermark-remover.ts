@@ -38,7 +38,7 @@ export async function removePdfWatermark(
   onProgress({ progress: 5, status: "Loading PDF..." });
 
   // Dynamically import pdf-lib (lazy loaded)
-  const { PDFDocument, PDFName, PDFDict, PDFArray, PDFStream } =
+  const { PDFDocument, PDFName, PDFDict, PDFArray, PDFStream, PDFRef } =
     await import("pdf-lib");
 
   const arrayBuffer = await file.arrayBuffer();
@@ -56,6 +56,19 @@ export async function removePdfWatermark(
 
   let watermarksRemoved = 0;
 
+  /**
+   * Helper: resolve a value that may be a PDFRef (indirect reference)
+   * into the actual underlying object. This is critical because many
+   * PDF objects are stored as indirect references, and entries() returns
+   * the raw PDFRef without resolving.
+   */
+  function resolveValue(value: unknown): unknown {
+    if (value instanceof PDFRef) {
+      return pdfDoc.context.lookup(value);
+    }
+    return value;
+  }
+
   // =============================================
   // Phase 1: Identify low-opacity ExtGState names
   // =============================================
@@ -69,7 +82,9 @@ export async function removePdfWatermark(
     if (resources instanceof PDFDict) {
       const extGState = resources.lookup(PDFName.of("ExtGState"));
       if (extGState instanceof PDFDict) {
-        for (const [key, value] of extGState.entries()) {
+        for (const [key, rawValue] of extGState.entries()) {
+          // CRITICAL: resolve indirect references before type checking
+          const value = resolveValue(rawValue);
           if (value instanceof PDFDict) {
             const ca = value.lookup(PDFName.of("ca"));
             const CA = value.lookup(PDFName.of("CA"));
@@ -94,28 +109,23 @@ export async function removePdfWatermark(
   for (let i = 0; i < pageCount; i++) {
     const page = pages[i];
     const annots = page.node.lookup(PDFName.of("Annots"));
-
     if (annots instanceof PDFArray) {
       const indicesToRemove: number[] = [];
-
       for (let j = 0; j < annots.size(); j++) {
         const annot = annots.lookup(j);
         if (annot instanceof PDFDict) {
           const subtype = annot.lookup(PDFName.of("Subtype"));
           const ca = annot.lookup(PDFName.of("CA"));
-
           if (subtype?.toString() === "/Watermark") {
             indicesToRemove.push(j);
             watermarksRemoved++;
           }
-
           if (ca && parseFloat(ca.toString()) < 0.5) {
             indicesToRemove.push(j);
             watermarksRemoved++;
           }
         }
       }
-
       for (const idx of indicesToRemove.reverse()) {
         annots.remove(idx);
       }
@@ -140,7 +150,8 @@ export async function removePdfWatermark(
     if (resources instanceof PDFDict) {
       const properties = resources.lookup(PDFName.of("Properties"));
       if (properties instanceof PDFDict) {
-        for (const [key, value] of properties.entries()) {
+        for (const [key, rawValue] of properties.entries()) {
+          const value = resolveValue(rawValue);
           if (value instanceof PDFDict) {
             const name = value.lookup(PDFName.of("Name"));
             if (name) {
@@ -170,7 +181,9 @@ export async function removePdfWatermark(
         // Multiple content streams — process each individually
         // This is common: stream 0 = setup, stream 1 = main content, stream 2 = watermark overlay
         for (let s = 0; s < contentStream.size(); s++) {
-          const stream = contentStream.lookup(s);
+          const rawStream = contentStream.get(s);
+          // Resolve the stream reference
+          const stream = resolveValue(rawStream);
           if (stream instanceof PDFStream) {
             const bytes = stream.getContents();
             const text = new TextDecoder("latin1").decode(bytes);
@@ -184,12 +197,6 @@ export async function removePdfWatermark(
             if (isWatermarkStream) {
               // Replace with minimal graphics state restore
               const cleanBytes = new TextEncoder().encode(" Q\n");
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              (stream as any).setContents
-                ? (stream as any).setContents(cleanBytes)
-                : null;
-
-              // Alternative: create new stream and replace
               const newStream = pdfDoc.context.stream(cleanBytes);
               contentStream.set(s, pdfDoc.context.register(newStream));
               watermarksRemoved++;
@@ -239,7 +246,10 @@ export async function removePdfWatermark(
   // =============================================
   // Phase 4: Set low-opacity ExtGState to fully transparent
   // =============================================
-  onProgress({ progress: 82, status: "Neutralizing transparency layers..." });
+  onProgress({
+    progress: 82,
+    status: "Neutralizing transparency layers...",
+  });
 
   for (let i = 0; i < pageCount; i++) {
     const page = pages[i];
@@ -247,7 +257,9 @@ export async function removePdfWatermark(
     if (resources instanceof PDFDict) {
       const extGState = resources.lookup(PDFName.of("ExtGState"));
       if (extGState instanceof PDFDict) {
-        for (const [, value] of extGState.entries()) {
+        for (const [, rawValue] of extGState.entries()) {
+          // CRITICAL: resolve indirect references
+          const value = resolveValue(rawValue);
           if (value instanceof PDFDict) {
             const ca = value.lookup(PDFName.of("ca"));
             const CA = value.lookup(PDFName.of("CA"));
@@ -310,7 +322,6 @@ export async function removePdfWatermark(
 
   // Save the modified PDF
   onProgress({ progress: 95, status: "Saving PDF..." });
-
   const pdfBytes = await pdfDoc.save();
   const blob = new Blob([pdfBytes], { type: "application/pdf" });
 
