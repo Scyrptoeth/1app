@@ -3,11 +3,12 @@
  *
  * Automatic watermark detection and removal using Canvas API.
  * Strategy:
- * 1. Detect semi-transparent overlays via brightness deviation (white/gray watermarks)
+ * 1. Compute adaptive color-deviation threshold from image statistics
  * 2. Detect colored watermarks via color-deviation-from-gray analysis
- * 3. Combine both detections with morphological cleanup
- * 4. Apply reverse alpha blending with local neighbor context
- * 5. Smooth the result with weighted interpolation
+ * 3. Detect white/gray watermarks via brightness deviation
+ * 4. Combine both detections with morphological cleanup
+ * 5. Apply reverse alpha blending with local neighbor context
+ * 6. Smooth the result with weighted interpolation
  *
  * Supports both white/gray watermarks AND colored watermarks (blue, red, etc.)
  */
@@ -106,14 +107,61 @@ export async function removeImageWatermark(
 }
 
 /**
+ * Compute the median of a Float32Array using histogram-based estimation.
+ * Efficient for large arrays (millions of pixels) without full sort.
+ */
+function histogramMedian(values: Float32Array, totalCount: number): number {
+  // Build a histogram with 1000 bins covering [0, max]
+  let maxVal = 0;
+  for (let i = 0; i < values.length; i++) {
+    if (values[i] > maxVal) maxVal = values[i];
+  }
+  if (maxVal === 0) return 0;
+
+  const numBins = 1000;
+  const binSize = maxVal / numBins;
+  const histogram = new Uint32Array(numBins);
+
+  for (let i = 0; i < values.length; i++) {
+    const bin = Math.min(Math.floor(values[i] / binSize), numBins - 1);
+    histogram[bin]++;
+  }
+
+  // Find median bin
+  const halfCount = totalCount / 2;
+  let cumulative = 0;
+  for (let i = 0; i < numBins; i++) {
+    cumulative += histogram[i];
+    if (cumulative >= halfCount) {
+      return (i + 0.5) * binSize;
+    }
+  }
+  return maxVal / 2;
+}
+
+/**
+ * Compute standard deviation given pre-computed sum and sumOfSquares.
+ */
+function computeStd(
+  sum: number,
+  sumSq: number,
+  count: number
+): number {
+  if (count === 0) return 0;
+  const mean = sum / count;
+  const variance = sumSq / count - mean * mean;
+  return Math.sqrt(Math.max(0, variance));
+}
+
+/**
  * Detect watermark regions by analyzing pixel patterns.
  * Returns a mask where 1 = watermark pixel, 0 = normal pixel.
  *
  * Uses TWO complementary strategies:
  * A. Color deviation from gray — catches colored watermarks (blue, red, etc.)
- *    Document images are mostly neutral (black text on white paper).
- *    Any pixel with notable color deviation is suspicious.
- * B. Brightness deviation — catches white/gray watermarks (original approach)
+ *    Uses ADAPTIVE threshold (median + 2*std) to avoid false positives
+ *    on images with background tint (e.g., scanned documents).
+ * B. Brightness deviation — catches white/gray watermarks
  *    Pixels brighter than local average with low saturation.
  */
 function detectWatermarkRegions(
@@ -158,6 +206,8 @@ function detectWatermarkRegions(
 
   let posDevSum = 0,
     posDevCount = 0;
+  let cdSum = 0,
+    cdSumSq = 0;
 
   for (let y = 0; y < height; y++) {
     const by = Math.floor(y / blockSize);
@@ -168,12 +218,11 @@ function detectWatermarkRegions(
       const r = data[idx];
       const g = data[idx + 1];
       const b = data[idx + 2];
-
       const brightness = (r + g + b) / 3;
+
       const bi = by * blocksX + bx;
       const dev = brightness - blockAvg[bi];
       deviations[pixelIdx] = dev;
-
       if (dev > 0) {
         posDevSum += dev;
         posDevCount++;
@@ -189,12 +238,32 @@ function detectWatermarkRegions(
       const diffR = Math.abs(rNorm - grayNorm);
       const diffG = Math.abs(gNorm - grayNorm);
       const diffB = Math.abs(bNorm - grayNorm);
-      colorDiff[pixelIdx] = Math.max(diffR, diffG, diffB);
+      const cd = Math.max(diffR, diffG, diffB);
+      colorDiff[pixelIdx] = cd;
+
+      cdSum += cd;
+      cdSumSq += cd * cd;
     }
   }
 
   const avgPosDev = posDevCount > 0 ? posDevSum / posDevCount : 10;
   const posThreshold = Math.max(avgPosDev * 0.6, 8);
+
+  // =========================================================
+  // Compute ADAPTIVE color-deviation threshold
+  // =========================================================
+  // The old hardcoded threshold (0.018) causes massive false positives
+  // on images with background tint (e.g., scanned documents with slight
+  // blue/yellow cast where ~95% of pixels have colorDiff > 0.018).
+  //
+  // Solution: Use median + 2*std as the threshold. This adapts to the
+  // image's actual color distribution:
+  // - Pure B&W document: median ≈ 0, threshold stays at floor (0.03)
+  // - Tinted document: median ≈ 0.02, std ≈ 0.04, threshold ≈ 0.10
+  //   → Only actual watermark pixels (strong color) are detected
+  const cdMedian = histogramMedian(colorDiff, totalPixels);
+  const cdStd = computeStd(cdSum, cdSumSq, totalPixels);
+  const adaptiveColorThreshold = Math.max(cdMedian + 2 * cdStd, 0.03);
 
   // =========================================================
   // Apply detection strategies
@@ -209,22 +278,27 @@ function detectWatermarkRegions(
       const dev = deviations[pixelIdx];
       const cDiff = colorDiff[pixelIdx];
 
-      // Strategy A: Color deviation from gray
+      // Strategy A: Color deviation from gray (ADAPTIVE threshold)
       // This is the PRIMARY detector for colored watermarks.
-      // In document images (mostly black/white), colored pixels are anomalous.
-      // Threshold 0.018 gives high recall with very few false positives.
-      if (cDiff > 0.018) {
+      // Uses adaptive threshold based on image statistics to avoid
+      // false positives on tinted backgrounds.
+      if (cDiff > adaptiveColorThreshold) {
         mask[pixelIdx] = 1;
         continue;
       }
 
       // Strategy B: Brightness deviation (for white/gray watermarks)
-      // Pixels brighter than local average with low saturation
-      if (dev > posThreshold) {
+      // Pixels brighter than local average with low saturation.
+      // IMPORTANT: Skip near-white pixels (brightness >= 240) to avoid
+      // false positives on white/off-white document backgrounds. In
+      // document images, white background pixels near text blocks often
+      // have high deviation from block average (because the block average
+      // is pulled down by dark text), but they are NOT watermark pixels.
+      const pixBrightness = (r + g + b) / 3;
+      if (dev > posThreshold && pixBrightness < 240) {
         const maxC = Math.max(r, g, b);
         const minC = Math.min(r, g, b);
         const saturation = maxC > 0 ? (maxC - minC) / maxC : 0;
-
         if (saturation < 0.35) {
           mask[pixelIdx] = 1;
         }
@@ -306,7 +380,14 @@ function estimateWatermarkProperties(
       count++;
 
       // Estimate alpha by comparing with nearest non-watermark pixel
-      const neighbor = findNearestCleanPixel(data, mask, x, y, width, height);
+      const neighbor = findNearestCleanPixel(
+        data,
+        mask,
+        x,
+        y,
+        width,
+        height
+      );
       if (neighbor) {
         const [nr, ng, nb] = neighbor;
         // Use maximum channel difference as alpha proxy
@@ -389,6 +470,7 @@ function removeWatermarkPixels(
       if (mask[pixelIdx] !== 1) continue;
 
       const idx = pixelIdx * 4;
+
       const neighbor = findNearestCleanPixel(
         data,
         mask,
