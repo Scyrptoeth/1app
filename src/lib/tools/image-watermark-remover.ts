@@ -72,7 +72,11 @@ export async function removeImageWatermark(
 
   // Step 5: Generate output
   onProgress({ progress: 90, status: "Generating output..." });
-  const outputImageData = new ImageData(smoothedData, width, height);
+  const outputImageData = new ImageData(
+    new Uint8ClampedArray(smoothedData.buffer),
+    width,
+    height
+  );
   ctx.putImageData(outputImageData, 0, 0);
 
   // Determine output format from input
@@ -114,16 +118,10 @@ function detectWatermarkRegions(
   const totalPixels = width * height;
 
   // --- Strategy 1: Detect semi-transparent bright overlays ---
-  // Watermarks are typically lighter than the surrounding content.
-  // We look for pixels that are significantly brighter than their
-  // local neighborhood, suggesting an additive overlay.
-
-  // Compute local brightness statistics using a block-based approach
   const blockSize = 32;
   const blocksX = Math.ceil(width / blockSize);
   const blocksY = Math.ceil(height / blockSize);
 
-  // Compute per-block average brightness
   const blockAvg = new Float32Array(blocksX * blocksY);
   const blockCount = new Uint32Array(blocksX * blocksY);
 
@@ -143,11 +141,7 @@ function detectWatermarkRegions(
     if (blockCount[i] > 0) blockAvg[i] /= blockCount[i];
   }
 
-  // --- Strategy 2: Detect repeating patterns (diagonal watermark text) ---
-  // Many watermarks repeat the same text diagonally across the image.
-  // We detect this by looking for pixels with consistent brightness deviation.
-
-  // Build histogram of brightness deviations from local average
+  // --- Strategy 2: Detect repeating patterns ---
   const deviations = new Float32Array(totalPixels);
   let devSum = 0;
   let devCount = 0;
@@ -170,15 +164,10 @@ function detectWatermarkRegions(
     }
   }
 
-  // Threshold: pixels that deviate positively (brighter) by a consistent amount
-  // are likely watermark pixels
   const avgPositiveDev = devCount > 0 ? devSum / devCount : 10;
   const threshold = Math.max(avgPositiveDev * 0.6, 8);
 
   // --- Strategy 3: Color consistency check ---
-  // Watermark text typically has consistent color (usually white/gray).
-  // Check if bright-deviated pixels have low color saturation.
-
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
       const pixelIdx = y * width + x;
@@ -188,14 +177,11 @@ function detectWatermarkRegions(
       const b = data[idx + 2];
       const dev = deviations[pixelIdx];
 
-      // Check if pixel is brighter than local average
       if (dev > threshold) {
-        // Check color saturation — watermarks tend to be desaturated
         const maxC = Math.max(r, g, b);
         const minC = Math.min(r, g, b);
         const saturation = maxC > 0 ? (maxC - minC) / maxC : 0;
 
-        // Low saturation + bright deviation = likely watermark
         if (saturation < 0.35) {
           mask[pixelIdx] = 1;
         }
@@ -203,16 +189,12 @@ function detectWatermarkRegions(
     }
   }
 
-  // --- Post-processing: clean up noise with morphological operations ---
-  // Remove isolated pixels (noise) and fill small gaps
-
-  // Erosion pass: remove isolated detections
+  // --- Post-processing: morphological operations ---
   const eroded = new Uint8Array(totalPixels);
   for (let y = 1; y < height - 1; y++) {
     for (let x = 1; x < width - 1; x++) {
       const idx = y * width + x;
       if (mask[idx] === 0) continue;
-      // Count neighbors
       let neighbors = 0;
       for (let dy = -1; dy <= 1; dy++) {
         for (let dx = -1; dx <= 1; dx++) {
@@ -224,7 +206,6 @@ function detectWatermarkRegions(
     }
   }
 
-  // Dilation pass: reconnect nearby detections
   const dilated = new Uint8Array(totalPixels);
   for (let y = 1; y < height - 1; y++) {
     for (let x = 1; x < width - 1; x++) {
@@ -273,7 +254,6 @@ function estimateWatermarkProperties(
       bSum += data[idx + 2];
       count++;
 
-      // Estimate alpha by comparing with nearest non-watermark pixel
       const neighbor = findNearestCleanPixel(data, mask, x, y, width, height);
       if (neighbor) {
         const origBright =
@@ -372,13 +352,11 @@ function smoothEdges(
 ): Uint8ClampedArray {
   const output = new Uint8ClampedArray(data);
 
-  // Find edge pixels (watermark pixels adjacent to non-watermark)
   for (let y = 1; y < height - 1; y++) {
     for (let x = 1; x < width - 1; x++) {
       const idx = y * width + x;
       if (mask[idx] !== 1) continue;
 
-      // Check if this is an edge pixel
       let isEdge = false;
       for (let dy = -1; dy <= 1; dy++) {
         for (let dx = -1; dx <= 1; dx++) {
@@ -392,7 +370,6 @@ function smoothEdges(
 
       if (!isEdge) continue;
 
-      // Average with 3x3 neighborhood
       let rSum = 0,
         gSum = 0,
         bSum = 0,
