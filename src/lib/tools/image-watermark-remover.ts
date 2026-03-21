@@ -3,10 +3,13 @@
  *
  * Automatic watermark detection and removal using Canvas API.
  * Strategy:
- * 1. Detect semi-transparent text/pattern overlays (most common watermark type)
- * 2. Use frequency analysis to find repeating patterns
- * 3. Apply reverse alpha blending to restore original pixels
- * 4. Smooth the result with surrounding pixel interpolation
+ * 1. Detect semi-transparent overlays via brightness deviation (white/gray watermarks)
+ * 2. Detect colored watermarks via color-deviation-from-gray analysis
+ * 3. Combine both detections with morphological cleanup
+ * 4. Apply reverse alpha blending with local neighbor context
+ * 5. Smooth the result with weighted interpolation
+ *
+ * Supports both white/gray watermarks AND colored watermarks (blue, red, etc.)
  */
 
 export interface ProcessingUpdate {
@@ -54,7 +57,12 @@ export async function removeImageWatermark(
     progress: 40,
     status: "Estimating watermark properties...",
   });
-  const wmProps = estimateWatermarkProperties(data, watermarkMask, width, height);
+  const wmProps = estimateWatermarkProperties(
+    data,
+    watermarkMask,
+    width,
+    height
+  );
 
   // Step 3: Remove watermark using reverse alpha blending
   onProgress({ progress: 55, status: "Removing watermark..." });
@@ -72,25 +80,17 @@ export async function removeImageWatermark(
 
   // Step 5: Generate output
   onProgress({ progress: 90, status: "Generating output..." });
-  const outputImageData = new ImageData(
-    new Uint8ClampedArray(smoothedData.buffer),
-    width,
-    height
-  );
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const outputImageData = new ImageData(smoothedData as any, width, height);
   ctx.putImageData(outputImageData, 0, 0);
 
   // Determine output format from input
   const ext = file.name.split(".").pop()?.toLowerCase();
-  const mimeType =
-    ext === "png" ? "image/png" : "image/jpeg";
+  const mimeType = ext === "png" ? "image/png" : "image/jpeg";
   const quality = ext === "png" ? undefined : 0.95;
 
   const blob = await new Promise<Blob>((resolve) => {
-    canvas.toBlob(
-      (b) => resolve(b!),
-      mimeType,
-      quality
-    );
+    canvas.toBlob((b) => resolve(b!), mimeType, quality);
   });
 
   const previewUrl = URL.createObjectURL(blob);
@@ -108,6 +108,13 @@ export async function removeImageWatermark(
 /**
  * Detect watermark regions by analyzing pixel patterns.
  * Returns a mask where 1 = watermark pixel, 0 = normal pixel.
+ *
+ * Uses TWO complementary strategies:
+ * A. Color deviation from gray — catches colored watermarks (blue, red, etc.)
+ *    Document images are mostly neutral (black text on white paper).
+ *    Any pixel with notable color deviation is suspicious.
+ * B. Brightness deviation — catches white/gray watermarks (original approach)
+ *    Pixels brighter than local average with low saturation.
  */
 function detectWatermarkRegions(
   data: Uint8ClampedArray,
@@ -117,7 +124,9 @@ function detectWatermarkRegions(
   const mask = new Uint8Array(width * height);
   const totalPixels = width * height;
 
-  // --- Strategy 1: Detect semi-transparent bright overlays ---
+  // =========================================================
+  // Compute local brightness statistics using a block approach
+  // =========================================================
   const blockSize = 32;
   const blocksX = Math.ceil(width / blockSize);
   const blocksY = Math.ceil(height / blockSize);
@@ -141,33 +150,55 @@ function detectWatermarkRegions(
     if (blockCount[i] > 0) blockAvg[i] /= blockCount[i];
   }
 
-  // --- Strategy 2: Detect repeating patterns ---
+  // =========================================================
+  // Compute per-pixel features
+  // =========================================================
   const deviations = new Float32Array(totalPixels);
-  let devSum = 0;
-  let devCount = 0;
+  const colorDiff = new Float32Array(totalPixels);
+
+  let posDevSum = 0,
+    posDevCount = 0;
 
   for (let y = 0; y < height; y++) {
     const by = Math.floor(y / blockSize);
     for (let x = 0; x < width; x++) {
       const bx = Math.floor(x / blockSize);
-      const idx = (y * width + x) * 4;
-      const brightness = (data[idx] + data[idx + 1] + data[idx + 2]) / 3;
-      const bi = by * blocksX + bx;
-      const localAvg = blockAvg[bi];
-      const dev = brightness - localAvg;
       const pixelIdx = y * width + x;
+      const idx = pixelIdx * 4;
+      const r = data[idx];
+      const g = data[idx + 1];
+      const b = data[idx + 2];
+
+      const brightness = (r + g + b) / 3;
+      const bi = by * blocksX + bx;
+      const dev = brightness - blockAvg[bi];
       deviations[pixelIdx] = dev;
+
       if (dev > 0) {
-        devSum += dev;
-        devCount++;
+        posDevSum += dev;
+        posDevCount++;
       }
+
+      // Color deviation from gray: how far each channel is from the
+      // pixel's own brightness. In a pure grayscale image, this is 0.
+      // Colored watermarks introduce non-zero color deviation.
+      const grayNorm = brightness / 255;
+      const rNorm = r / 255;
+      const gNorm = g / 255;
+      const bNorm = b / 255;
+      const diffR = Math.abs(rNorm - grayNorm);
+      const diffG = Math.abs(gNorm - grayNorm);
+      const diffB = Math.abs(bNorm - grayNorm);
+      colorDiff[pixelIdx] = Math.max(diffR, diffG, diffB);
     }
   }
 
-  const avgPositiveDev = devCount > 0 ? devSum / devCount : 10;
-  const threshold = Math.max(avgPositiveDev * 0.6, 8);
+  const avgPosDev = posDevCount > 0 ? posDevSum / posDevCount : 10;
+  const posThreshold = Math.max(avgPosDev * 0.6, 8);
 
-  // --- Strategy 3: Color consistency check ---
+  // =========================================================
+  // Apply detection strategies
+  // =========================================================
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
       const pixelIdx = y * width + x;
@@ -176,8 +207,20 @@ function detectWatermarkRegions(
       const g = data[idx + 1];
       const b = data[idx + 2];
       const dev = deviations[pixelIdx];
+      const cDiff = colorDiff[pixelIdx];
 
-      if (dev > threshold) {
+      // Strategy A: Color deviation from gray
+      // This is the PRIMARY detector for colored watermarks.
+      // In document images (mostly black/white), colored pixels are anomalous.
+      // Threshold 0.018 gives high recall with very few false positives.
+      if (cDiff > 0.018) {
+        mask[pixelIdx] = 1;
+        continue;
+      }
+
+      // Strategy B: Brightness deviation (for white/gray watermarks)
+      // Pixels brighter than local average with low saturation
+      if (dev > posThreshold) {
         const maxC = Math.max(r, g, b);
         const minC = Math.min(r, g, b);
         const saturation = maxC > 0 ? (maxC - minC) / maxC : 0;
@@ -189,7 +232,11 @@ function detectWatermarkRegions(
     }
   }
 
-  // --- Post-processing: morphological operations ---
+  // =========================================================
+  // Post-processing: morphological cleanup
+  // =========================================================
+
+  // Erosion: remove isolated pixels (noise)
   const eroded = new Uint8Array(totalPixels);
   for (let y = 1; y < height - 1; y++) {
     for (let x = 1; x < width - 1; x++) {
@@ -206,6 +253,7 @@ function detectWatermarkRegions(
     }
   }
 
+  // Dilation: reconnect nearby detections (3x3)
   const dilated = new Uint8Array(totalPixels);
   for (let y = 1; y < height - 1; y++) {
     for (let x = 1; x < width - 1; x++) {
@@ -230,6 +278,7 @@ interface WatermarkProperties {
 
 /**
  * Estimate watermark color and opacity from detected regions.
+ * Handles both bright overlays and colored overlays.
  */
 function estimateWatermarkProperties(
   data: Uint8ClampedArray,
@@ -242,7 +291,9 @@ function estimateWatermarkProperties(
     bSum = 0;
   let count = 0;
   let alphaEstimate = 0;
+  let alphaCount = 0;
 
+  // Use pixels with strong color deviation for better color estimation
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
       const pixelIdx = y * width + x;
@@ -254,14 +305,22 @@ function estimateWatermarkProperties(
       bSum += data[idx + 2];
       count++;
 
+      // Estimate alpha by comparing with nearest non-watermark pixel
       const neighbor = findNearestCleanPixel(data, mask, x, y, width, height);
       if (neighbor) {
-        const origBright =
-          (neighbor[0] + neighbor[1] + neighbor[2]) / 3;
-        const wmBright = (data[idx] + data[idx + 1] + data[idx + 2]) / 3;
-        if (wmBright > origBright && wmBright < 255) {
-          const a = (wmBright - origBright) / (255 - origBright + 0.001);
-          alphaEstimate += Math.min(Math.max(a, 0), 1);
+        const [nr, ng, nb] = neighbor;
+        // Use maximum channel difference as alpha proxy
+        const maxChannelDiff = Math.max(
+          Math.abs(data[idx] - nr),
+          Math.abs(data[idx + 1] - ng),
+          Math.abs(data[idx + 2] - nb)
+        );
+        if (maxChannelDiff > 3) {
+          const a = maxChannelDiff / 255;
+          if (a > 0.02 && a < 0.95) {
+            alphaEstimate += a;
+            alphaCount++;
+          }
         }
       }
     }
@@ -271,9 +330,11 @@ function estimateWatermarkProperties(
     return { avgColor: [255, 255, 255], avgAlpha: 0.3 };
   }
 
+  const estAlpha = alphaCount > 0 ? alphaEstimate / alphaCount : 0.3;
+
   return {
     avgColor: [rSum / count, gSum / count, bSum / count],
-    avgAlpha: Math.min(Math.max(alphaEstimate / count, 0.1), 0.9),
+    avgAlpha: Math.min(Math.max(estAlpha, 0.1), 0.8),
   };
 }
 
@@ -288,7 +349,7 @@ function findNearestCleanPixel(
   width: number,
   height: number
 ): [number, number, number] | null {
-  const searchRadius = 5;
+  const searchRadius = 8;
   for (let r = 1; r <= searchRadius; r++) {
     for (let dy = -r; dy <= r; dy++) {
       for (let dx = -r; dx <= r; dx++) {
@@ -308,8 +369,8 @@ function findNearestCleanPixel(
 }
 
 /**
- * Remove watermark by reverse alpha blending.
- * Formula: original = (blended - alpha * watermark_color) / (1 - alpha)
+ * Remove watermark by local-adaptive reverse alpha blending.
+ * Uses per-pixel alpha estimation from neighbor context for better results.
  */
 function removeWatermarkPixels(
   data: Uint8ClampedArray,
@@ -320,8 +381,7 @@ function removeWatermarkPixels(
 ): Uint8ClampedArray {
   const output = new Uint8ClampedArray(data);
   const [wmR, wmG, wmB] = props.avgColor;
-  const alpha = props.avgAlpha;
-  const invAlpha = 1 - alpha;
+  const globalAlpha = props.avgAlpha;
 
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
@@ -329,12 +389,76 @@ function removeWatermarkPixels(
       if (mask[pixelIdx] !== 1) continue;
 
       const idx = pixelIdx * 4;
+      const neighbor = findNearestCleanPixel(
+        data,
+        mask,
+        x,
+        y,
+        width,
+        height
+      );
 
-      // Reverse alpha blend
-      output[idx] = clamp((data[idx] - alpha * wmR) / invAlpha);
-      output[idx + 1] = clamp((data[idx + 1] - alpha * wmG) / invAlpha);
-      output[idx + 2] = clamp((data[idx + 2] - alpha * wmB) / invAlpha);
-      // Alpha channel stays at 255
+      if (neighbor) {
+        const [nr, ng, nb] = neighbor;
+        const maxDiff = Math.max(
+          Math.abs(data[idx] - nr),
+          Math.abs(data[idx + 1] - ng),
+          Math.abs(data[idx + 2] - nb)
+        );
+
+        // Estimate per-pixel alpha from difference to neighbor
+        const localAlpha = Math.min(
+          Math.max((maxDiff / 255) * 1.5, globalAlpha * 0.5),
+          globalAlpha * 1.5
+        );
+        const invAlpha = 1 - localAlpha;
+
+        // Confidence: how strong is the watermark signal at this pixel
+        const confidence = Math.min(maxDiff / 60, 1);
+
+        if (invAlpha > 0.15) {
+          // Reverse alpha blend
+          const rRestored = clamp(
+            (data[idx] - localAlpha * wmR) / invAlpha
+          );
+          const gRestored = clamp(
+            (data[idx + 1] - localAlpha * wmG) / invAlpha
+          );
+          const bRestored = clamp(
+            (data[idx + 2] - localAlpha * wmB) / invAlpha
+          );
+
+          // Blend: use restored pixel where confident, neighbor where not
+          output[idx] = clamp(
+            rRestored * confidence + nr * (1 - confidence)
+          );
+          output[idx + 1] = clamp(
+            gRestored * confidence + ng * (1 - confidence)
+          );
+          output[idx + 2] = clamp(
+            bRestored * confidence + nb * (1 - confidence)
+          );
+        } else {
+          // Very high alpha — just use neighbor
+          output[idx] = nr;
+          output[idx + 1] = ng;
+          output[idx + 2] = nb;
+        }
+      } else {
+        // No clean neighbor: global reverse blend
+        const invAlpha = 1 - globalAlpha;
+        if (invAlpha > 0.1) {
+          output[idx] = clamp(
+            (data[idx] - globalAlpha * wmR) / invAlpha
+          );
+          output[idx + 1] = clamp(
+            (data[idx + 1] - globalAlpha * wmG) / invAlpha
+          );
+          output[idx + 2] = clamp(
+            (data[idx + 2] - globalAlpha * wmB) / invAlpha
+          );
+        }
+      }
     }
   }
 
@@ -343,6 +467,7 @@ function removeWatermarkPixels(
 
 /**
  * Smooth the edges of removed regions to blend with surroundings.
+ * Uses weighted averaging that prefers non-watermark neighbors.
  */
 function smoothEdges(
   data: Uint8ClampedArray,
@@ -352,11 +477,13 @@ function smoothEdges(
 ): Uint8ClampedArray {
   const output = new Uint8ClampedArray(data);
 
+  // Pass 1: Smooth edge pixels
   for (let y = 1; y < height - 1; y++) {
     for (let x = 1; x < width - 1; x++) {
       const idx = y * width + x;
       if (mask[idx] !== 1) continue;
 
+      // Check if this is an edge pixel
       let isEdge = false;
       for (let dy = -1; dy <= 1; dy++) {
         for (let dx = -1; dx <= 1; dx++) {
@@ -370,28 +497,60 @@ function smoothEdges(
 
       if (!isEdge) continue;
 
+      // Weighted average: non-watermark neighbors get higher weight
       let rSum = 0,
         gSum = 0,
         bSum = 0,
-        count = 0;
+        weight = 0;
       for (let dy = -1; dy <= 1; dy++) {
         for (let dx = -1; dx <= 1; dx++) {
           const ni = ((y + dy) * width + (x + dx)) * 4;
-          rSum += data[ni];
-          gSum += data[ni + 1];
-          bSum += data[ni + 2];
-          count++;
+          const nMask = mask[(y + dy) * width + (x + dx)];
+          const w = nMask === 0 ? 2.0 : 0.5;
+          rSum += data[ni] * w;
+          gSum += data[ni + 1] * w;
+          bSum += data[ni + 2] * w;
+          weight += w;
         }
       }
 
       const pi = idx * 4;
-      output[pi] = Math.round(rSum / count);
-      output[pi + 1] = Math.round(gSum / count);
-      output[pi + 2] = Math.round(bSum / count);
+      output[pi] = Math.round(rSum / weight);
+      output[pi + 1] = Math.round(gSum / weight);
+      output[pi + 2] = Math.round(bSum / weight);
     }
   }
 
-  return output;
+  // Pass 2: Light center-weighted blur on all watermark pixels
+  const blurred = new Uint8ClampedArray(output);
+  for (let y = 2; y < height - 2; y++) {
+    for (let x = 2; x < width - 2; x++) {
+      const idx = y * width + x;
+      if (mask[idx] !== 1) continue;
+
+      let rSum = 0,
+        gSum = 0,
+        bSum = 0,
+        weight = 0;
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          const ni = ((y + dy) * width + (x + dx)) * 4;
+          const w = dx === 0 && dy === 0 ? 4 : 1;
+          rSum += output[ni] * w;
+          gSum += output[ni + 1] * w;
+          bSum += output[ni + 2] * w;
+          weight += w;
+        }
+      }
+
+      const pi = idx * 4;
+      blurred[pi] = Math.round(rSum / weight);
+      blurred[pi + 1] = Math.round(gSum / weight);
+      blurred[pi + 2] = Math.round(bSum / weight);
+    }
+  }
+
+  return blurred;
 }
 
 function clamp(value: number): number {
