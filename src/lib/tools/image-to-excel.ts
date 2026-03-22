@@ -109,7 +109,33 @@ function generateId(): string {
 }
 
 function isRpPrefix(text: string): boolean {
-  return RP_VARIANTS.has(text.trim().toLowerCase());
+  const lower = text.trim().toLowerCase();
+  // Exact match: "Rp", "rp", "fp", etc.
+  if (RP_VARIANTS.has(lower)) return true;
+  // Also match "Rp." or "Rp:" or "Rp " variants with trailing punctuation
+  const stripped = lower.replace(/[.:,\s]+$/, '');
+  if (RP_VARIANTS.has(stripped)) return true;
+  return false;
+}
+
+/**
+ * Extract digits from an Rp-prefixed word.
+ * Handles cases where OCR merges "Rp" with the number like "Rp61.039.612.496"
+ * Returns the digit portion or null if no digits found.
+ */
+function extractDigitsFromRpWord(text: string): string | null {
+  const lower = text.trim().toLowerCase();
+  for (const variant of RP_VARIANTS) {
+    if (lower.startsWith(variant)) {
+      const rest = text.trim().substring(variant.length).trim();
+      // Check if remaining part has digits
+      const cleaned = rest.replace(/[.,\s]/g, '');
+      if (/\d{3,}/.test(cleaned)) {
+        return rest;
+      }
+    }
+  }
+  return null;
 }
 
 /**
@@ -495,7 +521,7 @@ function detectValueColumns(
 
   for (const row of rows) {
     for (const word of row.words) {
-      if (isNumericValue(word.text) && word.bbox.x0 > imageWidth * 0.45) {
+      if (isNumericValue(word.text) && word.bbox.x0 > imageWidth * 0.35) {
         numericRightEdges.push(word.bbox.x1);
       }
     }
@@ -503,26 +529,61 @@ function detectValueColumns(
 
   if (numericRightEdges.length === 0) return [];
 
-  // Sort and cluster right edges
+  // Sort right edges
   numericRightEdges.sort((a, b) => a - b);
-  // Use larger threshold (8% of width) to avoid splitting into too many columns
-  const threshold = imageWidth * 0.08;
 
-  const clusters: number[][] = [];
-  let currentCluster: number[] = [numericRightEdges[0]];
+  // Strategy: Find the LARGEST GAP in sorted right-edges to split columns.
+  // This is much more robust than fixed-threshold sequential clustering,
+  // because it adapts to the actual column separation in the document.
+  // Financial statements typically have 2 value columns (Sub Jumlah + Jumlah).
+  const minGapForSplit = imageWidth * 0.04; // 4% minimum gap to consider a split
 
+  // Find all gaps between adjacent sorted edges
+  const gaps: { index: number; gap: number }[] = [];
   for (let i = 1; i < numericRightEdges.length; i++) {
-    if (numericRightEdges[i] - numericRightEdges[i - 1] < threshold) {
-      currentCluster.push(numericRightEdges[i]);
-    } else {
-      clusters.push(currentCluster);
-      currentCluster = [numericRightEdges[i]];
+    const gap = numericRightEdges[i] - numericRightEdges[i - 1];
+    if (gap >= minGapForSplit) {
+      gaps.push({ index: i, gap });
     }
   }
-  clusters.push(currentCluster);
+
+  // Sort gaps by size descending — the largest gap is the most likely column boundary
+  gaps.sort((a, b) => b.gap - a.gap);
+
+  // Determine split points (at most 2 splits → 3 columns max)
+  const splitIndices: number[] = [];
+  for (const g of gaps) {
+    if (splitIndices.length >= 2) break;
+    // Ensure split points are not too close to each other
+    const tooClose = splitIndices.some(
+      (si) => Math.abs(numericRightEdges[g.index] - numericRightEdges[si]) < imageWidth * 0.06
+    );
+    if (!tooClose) {
+      splitIndices.push(g.index);
+    }
+  }
+
+  // Build clusters from split points
+  splitIndices.sort((a, b) => a - b);
+  const clusters: number[][] = [];
+  let start = 0;
+  for (const si of splitIndices) {
+    clusters.push(numericRightEdges.slice(start, si));
+    start = si;
+  }
+  clusters.push(numericRightEdges.slice(start));
 
   // Keep significant clusters (at least 3 values)
   const significant = clusters.filter((c) => c.length >= 3);
+
+  // If no significant splits found, try single cluster
+  if (significant.length === 0) {
+    return [{
+      rightEdge: Math.max(...numericRightEdges),
+      avgRight: numericRightEdges.reduce((a, b) => a + b, 0) / numericRightEdges.length,
+      count: numericRightEdges.length,
+    }];
+  }
 
   const columns: ColumnInfo[] = significant.map((cluster) => ({
     rightEdge: Math.max(...cluster),
@@ -534,14 +595,13 @@ function detectValueColumns(
   columns.sort((a, b) => a.avgRight - b.avgRight);
 
   // If we detected more than 3 columns, merge the closest pair iteratively
-  // Financial statements typically have at most 2-3 value columns
   while (columns.length > 3) {
-    let minGap = Infinity;
+    let minGapVal = Infinity;
     let mergeIdx = -1;
     for (let i = 0; i < columns.length - 1; i++) {
-      const gap = columns[i + 1].avgRight - columns[i].avgRight;
-      if (gap < minGap) {
-        minGap = gap;
+      const gapVal = columns[i + 1].avgRight - columns[i].avgRight;
+      if (gapVal < minGapVal) {
+        minGapVal = gapVal;
         mergeIdx = i;
       }
     }
@@ -580,8 +640,9 @@ function analyzeLayout(
   onProgress({ progress: 55, status: 'Analyzing structure...' });
 
   // Determine content area: skip header/logo and footer/signature
+  // Reduced endY from 0.82 to 0.78 to exclude footer text and signature
   const contentStartY = imageHeight * 0.10;
-  const contentEndY = imageHeight * 0.82;
+  const contentEndY = imageHeight * 0.78;
 
   // Filter to content rows only
   const contentRows = wordRows.filter(
@@ -614,6 +675,14 @@ function analyzeLayout(
 
       // Case 1: Rp prefix — look for following number(s)
       if (isRpPrefix(word.text)) {
+        // First check: does the Rp word itself contain digits? (e.g., "Rp61.039")
+        const embeddedDigits = extractDigitsFromRpWord(word.text);
+        if (embeddedDigits && isNumericValue(embeddedDigits)) {
+          assignToColumn(embeddedDigits, word.bbox.x1, columns, valuesByColumn, imageWidth);
+          wi++;
+          continue;
+        }
+
         const numParts: string[] = [];
         let j = wi + 1;
 
@@ -640,6 +709,17 @@ function analyzeLayout(
           wi = j;
           continue;
         } else {
+          wi++;
+          continue;
+        }
+      }
+
+      // Case 1b: Word starts with Rp variant + digits (e.g., "Rp3.208.050.970")
+      // but isRpPrefix returned false because of the digits
+      {
+        const embeddedDigits = extractDigitsFromRpWord(word.text);
+        if (embeddedDigits && isNumericValue(embeddedDigits) && word.bbox.x0 > imageWidth * 0.35) {
+          assignToColumn(embeddedDigits, word.bbox.x1, columns, valuesByColumn, imageWidth);
           wi++;
           continue;
         }
@@ -696,6 +776,15 @@ function analyzeLayout(
     }
 
     let label = labelParts.join(' ').trim();
+
+    // Post-process label cleanup: remove OCR junk characters
+    // Strip leading/trailing punctuation noise from OCR artifacts
+    label = label
+      .replace(/^[:\-—|.;,\s]+/, '')    // Leading junk
+      .replace(/[:\-—|;,\s]+$/, '')      // Trailing junk
+      .replace(/\s{2,}/g, ' ')           // Multiple spaces → single space
+      .trim();
+
     if (!label && valuesByColumn.size === 0) continue;
 
     // Detect row number at start of label
@@ -784,7 +873,7 @@ function assignToColumn(
   return false;
 }
 
-// ============================================================
+// =======================================================
 // Phase 1: Main Extract Function
 // ============================================================
 
@@ -886,7 +975,7 @@ export async function generateExcel(
   headerRow.eachCell((cell) => {
     cell.border = {
       top: { style: 'thin' },
-      bottom: { style: 'thin' },
+      bottom: { style: 'th: 'thin' },
       left: { style: 'thin' },
       right: { style: 'thin' },
     };
