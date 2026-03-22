@@ -191,7 +191,7 @@ function parseIndonesianNumber(text: string): number | null {
  * @param w - Image width
  * @param h - Image height
  * @param tileX - Number of horizontal tiles (default 8)
- * @param tileY - Number of vertical tileW (default 8)
+ * @param tileY - Number of vertical tiles (default 8)
  * @param clipLimit - Histogram clip limit (default 2.5)
  */
 function applyCLAHE(
@@ -608,15 +608,19 @@ async function performOcr(
 
   // Try Indonesian language first for much better text accuracy on Indonesian documents.
   // Fall back to English if Indonesian language data fails to load.
+  // Use tessdata_best (LSTM best model) for maximum OCR accuracy.
+  // tessdata_best is ~3x larger than tessdata_fast but significantly more accurate.
+  const BEST_LANG_PATH = 'https://cdn.jsdelivr.net/npm/@tesseract.js-data';
   let lang = 'ind';
   let worker;
   try {
     worker = await createWorker('ind', 1, {
+      langPath: `${BEST_LANG_PATH}/ind@1.0.0/4.0.0_best_int`,
       logger: (m) => {
         if (m.status === 'loading language traineddata') {
           onProgress({
             progress: 6,
-            status: 'Loading Indonesian language data (first time may take a moment)...',
+            status: 'Loading Indonesian language data (best model, first time may take a moment)...',
           });
         }
       },
@@ -625,11 +629,12 @@ async function performOcr(
     lang = 'eng';
     onProgress({ progress: 5, status: 'Falling back to English OCR...' });
     worker = await createWorker('eng', 1, {
+      langPath: `${BEST_LANG_PATH}/eng@1.0.0/4.0.0_best_int`,
       logger: (m) => {
         if (m.status === 'loading language traineddata') {
           onProgress({
             progress: 6,
-            status: 'Loading language data (first time may take a moment)...',
+            status: 'Loading language data (best model, first time may take a moment)...',
           });
         }
       },
