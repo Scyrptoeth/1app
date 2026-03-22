@@ -1,11 +1,19 @@
 // ============================================================================
-// PDF to Excel Converter â Hybrid Approach
+// PDF to Excel Converter — Hybrid Approach
 // 1. Try pdfjs getTextContent() for text-based PDFs
 // 2. Fall back to Canvas render + Tesseract.js OCR for image-based/scanned PDFs
 // Designed for Indonesian financial documents (Laba Rugi, Neraca)
 // ============================================================================
 
-import { createWorker } from 'tesseract.js';
+// Tesseract.js: use dynamic import to avoid Next.js bundling issues with Web Workers
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let _createWorker: any = null;
+async function getCreateWorker() {
+  if (_createWorker) return _createWorker;
+  const Tesseract = await import('tesseract.js');
+  _createWorker = Tesseract.createWorker;
+  return _createWorker;
+}
 
 // ---------------------------------------------------------------------------
 // Public Types
@@ -198,8 +206,6 @@ async function renderPageToCanvas(page: any, scaleFactor: number = 3): Promise<H
 
 // ---------------------------------------------------------------------------
 // Sauvola adaptive threshold
-// ------------------------------------------------------------------------------------
-// Sauvola adaptive threshold
 // ---------------------------------------------------------------------------
 function sauvolaThreshold(gray: Uint8Array, w: number, h: number, blockSize: number = 25, k: number = 0.15): Uint8Array {
   const binary = new Uint8Array(w * h);
@@ -290,18 +296,27 @@ async function performOcr(
   onProgress: (u: ProcessingUpdate) => void,
   progressBase: number
 ): Promise<OcrWord[]> {
+  const createWorker = await getCreateWorker();
+  const TESS_CDN = 'https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist';
+  const CORE_CDN = 'https://cdn.jsdelivr.net/npm/tesseract.js-core@5.1.0';
   const BEST_LANG_PATH = 'https://cdn.jsdelivr.net/npm/@tesseract.js-data';
+  const workerOpts = {
+    workerPath: `${TESS_CDN}/worker.min.js`,
+    corePath: `${CORE_CDN}/tesseract-core-simd-lstm.wasm.js`,
+  };
   let worker;
   try {
     worker = await createWorker('ind', 1, {
+      ...workerOpts,
       langPath: `${BEST_LANG_PATH}/ind@1.0.0/4.0.0_best_int`,
-      logger: (m) => {
+      logger: (m: { status: string }) => {
         if (m.status === 'loading language traineddata')
           onProgress({ progress: progressBase + 2, status: 'Loading Indonesian OCR data...' });
       },
     });
   } catch {
     worker = await createWorker('eng', 1, {
+      ...workerOpts,
       langPath: `${BEST_LANG_PATH}/eng@1.0.0/4.0.0_best_int`,
     });
   }
@@ -339,6 +354,40 @@ async function performOcr(
   }
   return words;
 }
+
+// ---------------------------------------------------------------------------
+// Group OCR words into rows by Y-coordinate
+// ---------------------------------------------------------------------------
+function groupWordsIntoRows(words: OcrWord[]): WordRow[] {
+  if (words.length === 0) return [];
+  const sorted = [...words].sort((a, b) => (a.bbox.y0 + a.bbox.y1) / 2 - (b.bbox.y0 + b.bbox.y1) / 2);
+  const avgHeight = sorted.reduce((s, w) => s + w.bbox.y1 - w.bbox.y0, 0) / sorted.length;
+  const yGap = avgHeight * 0.7;
+
+  const rows: WordRow[] = [];
+  let cur: OcrWord[] = [sorted[0]];
+  let curCenter = (sorted[0].bbox.y0 + sorted[0].bbox.y1) / 2;
+
+  for (let i = 1; i < sorted.length; i++) {
+    const wc = (sorted[i].bbox.y0 + sorted[i].bbox.y1) / 2;
+    if (Math.abs(wc - curCenter) < yGap) {
+      cur.push(sorted[i]);
+      curCenter = cur.reduce((s, w) => s + (w.bbox.y0 + w.bbox.y1) / 2, 0) / cur.length;
+    } else {
+      cur.sort((a, b) => a.bbox.x0 - b.bbox.x0);
+      rows.push({ words: cur, minY: Math.min(...cur.map(w => w.bbox.y0)), maxY: Math.max(...cur.map(w => w.bbox.y1)), minX: Math.min(...cur.map(w => w.bbox.x0)) });
+      cur = [sorted[i]];
+      curCenter = wc;
+    }
+  }
+  cur.sort((a, b) => a.bbox.x0 - b.bbox.x0);
+  rows.push({ words: cur, minY: Math.min(...cur.map(w => w.bbox.y0)), maxY: Math.max(...cur.map(w => w.bbox.y1)), minX: Math.min(...cur.map(w => w.bbox.x0)) });
+  return rows;
+}
+
+// ---------------------------------------------------------------------------
+// Detect page type from OCR text
+// ---------------------------------------------------------------------------
 function detectPageTypeFromOcr(words: OcrWord[]): 'laba_rugi' | 'neraca' {
   const maxY = Math.max(...words.map(w => w.bbox.y1));
   const topText = words.filter(w => w.bbox.y0 < maxY * 0.15).map(w => w.text).join(' ').toLowerCase();
@@ -607,7 +656,7 @@ export async function convertPdfToExcel(
         pages.push({ pageNumber: pageNum, sheetName, isSideBySide: false, rows: parseLabaRugiFromOcr(wordRows, vp.width, vp.height) });
       }
     } else {
-      // TEXT-BASED: use getTextContent() â fast path
+      // TEXT-BASED: use getTextContent() — fast path
       // (Placeholder: same structure, returns empty for now since test PDF is image-based)
       onProgress?.({ progress: Math.round(ppBase + ppPerPage - 2), status: `Page ${pageNum}: Extracting text...` });
       pages.push({ pageNumber: pageNum, sheetName, isSideBySide: false, rows: [] });
