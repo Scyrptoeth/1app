@@ -13,7 +13,7 @@
  *   - Auto header / total / indent detection
  */
 
-import ExcelJS from "exceljs";
+// ExcelJS is dynamically imported inside generateExcel() for browser compatibility
 
 /* ------------------------------------------------------------------ */
 /*  Public types                                                       */
@@ -584,20 +584,25 @@ export async function generateExcel(
 
   report(93, "Generating Excel...");
 
-  const wb = new ExcelJS.Workbook();
+  // Dynamically import ExcelJS for browser compatibility
+  const ExcelJS = await import("exceljs");
+  const wb = new ExcelJS.default.Workbook();
 
   // Styles
-  const headerFill: ExcelJS.Fill = {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const headerFill: any = {
     type: "pattern",
     pattern: "solid",
     fgColor: { argb: "FFD9D9D9" },
   };
-  const totalFill: ExcelJS.Fill = {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const totalFill: any = {
     type: "pattern",
     pattern: "solid",
     fgColor: { argb: "FFFFF2CC" },
   };
-  const thinBorder: Partial<ExcelJS.Borders> = {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const thinBorder: any = {
     top: { style: "thin" },
     left: { style: "thin" },
     right: { style: "thin" },
@@ -747,14 +752,15 @@ export async function generateExcel(
 }
 
 /** Helper to write a single row in side-by-side mode */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 function writeSideRow(
-  ws: ExcelJS.Worksheet,
+  ws: any,
   rowNum: number,
   startCol: number,
   item: RowData,
-  border: Partial<ExcelJS.Borders>,
-  headerFill: ExcelJS.Fill,
-  totalFill: ExcelJS.Fill
+  border: any,
+  headerFill: any,
+  totalFill: any
 ) {
   const cellLabel = ws.getCell(rowNum, startCol);
   const cellSub = ws.getCell(rowNum, startCol + 1);
