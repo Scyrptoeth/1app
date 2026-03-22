@@ -4,16 +4,16 @@
  * Pipeline: Image -> Preprocessing -> Tesseract.js OCR -> Layout Analysis -> ExcelJS -> .xlsx
  *
  * Architecture:
- * - Phase 0: preprocessImage() â upscale + grayscale + binarize for OCR accuracy
- * - Phase 1: extractFromImage() â OCR + layout analysis -> structured data
- * - Phase 2: generateExcel() â structured data -> .xlsx Blob
+ * - Phase 0: preprocessImage() Ã¢ÂÂ upscale + grayscale + binarize for OCR accuracy
+ * - Phase 1: extractFromImage() Ã¢ÂÂ OCR + layout analysis -> structured data
+ * - Phase 2: generateExcel() Ã¢ÂÂ structured data -> .xlsx Blob
  *
  * All processing is client-side (browser). No server-side API calls.
  *
  * KEY DESIGN DECISIONS:
  * 1. We preprocess images before OCR (upscale, binarize) because Tesseract
  *    needs ~300 DPI equivalent for good accuracy. Phone photos at 850px are ~100 DPI.
- * 2. We do NOT rely on Tesseract's line grouping â we re-group words by Y-coordinate.
+ * 2. We do NOT rely on Tesseract's line grouping Ã¢ÂÂ we re-group words by Y-coordinate.
  */
 
 import { createWorker } from 'tesseract.js';
@@ -111,9 +111,9 @@ const TOTAL_KEYWORDS = [
  * Indonesian financial statements (Laporan Laba Rugi, Neraca, etc.).
  *
  * Categories of OCR errors corrected:
- * 1. rn/m confusion â OCR reads "m" as "rn" (e.g., Pernbelian â Pembelian)
- * 2. Character substitution â similar-looking chars (e.g., fi â &, I â J)
- * 3. Trailing artifacts â junk chars appended to words (e.g., "Ap", "Hp")
+ * 1. rn/m confusion Ã¢ÂÂ OCR reads "m" as "rn" (e.g., Pernbelian Ã¢ÂÂ Pembelian)
+ * 2. Character substitution Ã¢ÂÂ similar-looking chars (e.g., fi Ã¢ÂÂ &, I Ã¢ÂÂ J)
+ * 3. Trailing artifacts Ã¢ÂÂ junk chars appended to words (e.g., "Ap", "Hp")
  * 4. Common misreads of Indonesian words
  */
 const LABEL_CORRECTIONS: [RegExp, string][] = [
@@ -131,8 +131,8 @@ const LABEL_CORRECTIONS: [RegExp, string][] = [
   [/\bBehan\b/gi, 'Beban'],
   [/\bBlaya\b/gi, 'Biaya'],
   [/\bBiava\b/gi, 'Biaya'],
-  [/\bSawa\b/g, 'Sewa'],      // case-sensitive: Sawa â Sewa
-  [/\bBPIS\b/g, 'BPJS'],      // IâJ
+  [/\bSawa\b/g, 'Sewa'],      // case-sensitive: Sawa Ã¢ÂÂ Sewa
+  [/\bBPIS\b/g, 'BPJS'],      // IÃ¢ÂÂJ
   [/\bRX5\b/g, 'IKS'],        // complete misread
   [/\bRXS\b/g, 'IKS'],
   [/\bIX5\b/g, 'IKS'],
@@ -144,13 +144,13 @@ const LABEL_CORRECTIONS: [RegExp, string][] = [
   [/\bBarang\s+fi\s+Jasa\b/gi, 'Barang & Jasa'],
   [/\bBarang\s+fl\s+Jasa\b/gi, 'Barang & Jasa'],
   [/\bBarang\s+f[il1]\s+Jasa\b/gi, 'Barang & Jasa'],
-  [/\bBank\s+SRI\b/g, 'Bank BRI'],  // SâB in bank name
+  [/\bBank\s+SRI\b/g, 'Bank BRI'],  // SÃ¢ÂÂB in bank name
 
   // --- Trailing/leading artifacts from OCR ---
   // These often appear when OCR picks up nearby text or noise
   [/\s+[AH][pP]$/g, ''],         // trailing "Ap", "Hp" artifacts
   [/\s+[AH]p\b/g, ''],           // mid-word trailing artifacts
-  [/^\d+\)\s*/, ''],              // leading "20)" â strip paren
+  [/^\d+\)\s*/, ''],              // leading "20)" Ã¢ÂÂ strip paren
 ];
 
 /**
@@ -169,7 +169,7 @@ function correctLabel(label: string): string {
 
 /**
  * Post-process numeric value strings from OCR to fix common digit errors:
- * 1. Remove spurious dots in pure digit sequences (e.g., "32.07121" â "3207121")
+ * 1. Remove spurious dots in pure digit sequences (e.g., "32.07121" Ã¢ÂÂ "3207121")
  *    OCR sometimes inserts dots where there are none in the original.
  * 2. Validate that dot-separated groups follow Indonesian thousand-separator pattern.
  *    Valid: "1.975.155.731" (groups of 3). Invalid: "32.07121" (not groups of 3).
@@ -187,7 +187,7 @@ function correctNumericValue(text: string): string {
     const firstGroupValid = /^\d{1,3}$/.test(parts[0]);
 
     if (!allGroupsOf3 || !firstGroupValid) {
-      // Dots are spurious â remove them all (e.g., "32.07121" â "3207121")
+      // Dots are spurious Ã¢ÂÂ remove them all (e.g., "32.07121" Ã¢ÂÂ "3207121")
       cleaned = cleaned.replace(/\./g, '');
     }
     // else: dots are valid thousand separators, leave them
@@ -278,7 +278,7 @@ function parseIndonesianNumber(text: string): number | null {
 // ============================================================
 
 /**
- * CLAHE â Contrast Limited Adaptive Histogram Equalization.
+ * CLAHE Ã¢ÂÂ Contrast Limited Adaptive Histogram Equalization.
  * Dramatically improves contrast in images with uneven lighting (phone photos).
  * Divides image into tiles and equalizes each tile's histogram independently,
  * with a clip limit to prevent over-amplification of noise.
@@ -377,13 +377,13 @@ function applyCLAHE(
 }
 
 /**
- * Gaussian Blur 5x5 â reduces noise before thresholding.
+ * Gaussian Blur 5x5 Ã¢ÂÂ reduces noise before thresholding.
  * Tesseract docs specifically recommend slight blur to smooth grain.
  * A 5x5 kernel gives better noise reduction than 3x3 while preserving character edges.
  */
 function applyGaussianBlur5x5(gray: Uint8Array, w: number, h: number): Uint8Array {
   const result = new Uint8Array(gray.length);
-  // 5x5 Gaussian kernel (Ï â 1.0), sum = 273
+  // 5x5 Gaussian kernel (ÃÂ Ã¢ÂÂ 1.0), sum = 273
   const kernel = [
     1, 4, 7, 4, 1,
     4, 16, 26, 16, 4,
@@ -418,7 +418,7 @@ function applyGaussianBlur5x5(gray: Uint8Array, w: number, h: number): Uint8Arra
 }
 
 /**
- * Sauvola Adaptive Thresholding â handles uneven lighting much better than global Otsu.
+ * Sauvola Adaptive Thresholding Ã¢ÂÂ handles uneven lighting much better than global Otsu.
  *
  * For each pixel, the threshold is computed from a local neighborhood:
  *   T(x,y) = mean * (1 + k * (stddev / R - 1))
@@ -494,7 +494,7 @@ function sauvolaThreshold(
 }
 
 /**
- * Morphological Opening â erode then dilate to remove small noise (salt/pepper).
+ * Morphological Opening Ã¢ÂÂ erode then dilate to remove small noise (salt/pepper).
  * Uses a 3x3 cross-shaped structuring element.
  * Erode removes isolated white noise, dilate restores character edges.
  */
@@ -546,10 +546,10 @@ function morphologicalOpen(binary: Uint8Array, w: number, h: number): Uint8Array
  * 1. Upscale to ~400 DPI equivalent (3400px minimum width)
  * 2. Sharpen with 3x3 unsharp mask for crisp character edges
  * 3. Convert to grayscale (luminance)
- * 4. CLAHE â adaptive contrast enhancement (handles uneven lighting)
- * 5. Gaussian Blur 5x5 â smooths grain/noise before thresholding
- * 6. Sauvola Adaptive Threshold â per-pixel threshold based on local neighborhood
- * 7. Morphological Opening â removes salt/pepper noise
+ * 4. CLAHE Ã¢ÂÂ adaptive contrast enhancement (handles uneven lighting)
+ * 5. Gaussian Blur 5x5 Ã¢ÂÂ smooths grain/noise before thresholding
+ * 6. Sauvola Adaptive Threshold Ã¢ÂÂ per-pixel threshold based on local neighborhood
+ * 7. Morphological Opening Ã¢ÂÂ removes salt/pepper noise
  *
  * Key improvements over v5 (Global Otsu):
  * - CLAHE handles low-contrast phone photos
@@ -611,7 +611,7 @@ async function preprocessImage(
 
   onProgress({ progress: 2, status: 'Sharpening character edges...' });
 
-  // Step 1: Sharpen with 3x3 unsharp mask â improves thin strokes and digits
+  // Step 1: Sharpen with 3x3 unsharp mask Ã¢ÂÂ improves thin strokes and digits
   {
     const w = scaledWidth;
     const h = scaledHeight;
@@ -643,19 +643,19 @@ async function preprocessImage(
 
   onProgress({ progress: 2, status: 'Enhancing contrast (CLAHE)...' });
 
-  // Step 3: CLAHE â adaptive contrast enhancement
+  // Step 3: CLAHE Ã¢ÂÂ adaptive contrast enhancement
   // Dramatically improves text visibility in low-contrast / unevenly-lit images
   const enhanced = applyCLAHE(grayscale, scaledWidth, scaledHeight, 8, 8, 2.5);
 
   onProgress({ progress: 3, status: 'Reducing noise (Gaussian blur)...' });
 
-  // Step 4: Gaussian blur 5x5 â smooth noise before thresholding
+  // Step 4: Gaussian blur 5x5 Ã¢ÂÂ smooth noise before thresholding
   // Tesseract docs: slight blur reduces grain and improves recognition
   const smoothed = applyGaussianBlur5x5(enhanced, scaledWidth, scaledHeight);
 
   onProgress({ progress: 3, status: 'Applying adaptive threshold (Sauvola)...' });
 
-  // Step 5: Sauvola adaptive threshold â per-pixel threshold based on local statistics
+  // Step 5: Sauvola adaptive threshold Ã¢ÂÂ per-pixel threshold based on local statistics
   // Handles uneven lighting, shadows, and vignetting much better than global Otsu
   // blockSize=25 is ~2.5mm at 400 DPI, good for document text
   // k=0.15 is slightly aggressive to preserve thin strokes
@@ -663,7 +663,7 @@ async function preprocessImage(
 
   onProgress({ progress: 4, status: 'Cleaning noise (morphological opening)...' });
 
-  // Step 6: Morphological opening â remove small salt/pepper noise
+  // Step 6: Morphological opening Ã¢ÂÂ remove small salt/pepper noise
   const cleaned = morphologicalOpen(binary, scaledWidth, scaledHeight);
 
   // Write binary result back to canvas
@@ -692,7 +692,7 @@ async function preprocessImage(
 }
 
 // ============================================================
-// Phase 1: OCR â extract ALL words with bounding boxes
+// Phase 1: OCR Ã¢ÂÂ extract ALL words with bounding boxes
 // ============================================================
 
 async function performOcr(
@@ -738,13 +738,14 @@ async function performOcr(
   }
 
   // --- Multi-pass OCR ---
-  // Pass 1: PSM 6 â assume uniform block of text (good for full-page documents)
-  // Pass 2: PSM 4 â assume single column of variable-size text (better for tables)
+  // Pass 1: PSM 6 Ã¢ÂÂ assume uniform block of text (good for full-page documents)
+  // Pass 2: PSM 4 Ã¢ÂÂ assume single column of variable-size text (better for tables)
   // We pick the result with highest confidence.
 
   onProgress({ progress: 8, status: 'OCR Pass 1/2 (block mode)...' });
 
   await worker.setParameters({
+    // @ts-ignore
     tessedit_pageseg_mode: '6',
     preserve_interword_spaces: '1',
   });
@@ -754,6 +755,7 @@ async function performOcr(
   onProgress({ progress: 28, status: `Pass 1 confidence: ${conf1.toFixed(1)}%. Running Pass 2...` });
 
   await worker.setParameters({
+    // @ts-ignore
     tessedit_pageseg_mode: '4',
     preserve_interword_spaces: '1',
   });
@@ -850,7 +852,7 @@ function groupWordsIntoRows(words: OcrWord[], imageHeight: number): WordRow[] {
         currentRow.reduce((sum, w) => sum + (w.bbox.y0 + w.bbox.y1) / 2, 0) /
         currentRow.length;
     } else {
-      // New row â finalize current
+      // New row Ã¢ÂÂ finalize current
       rows.push(finalizeRow(currentRow));
       currentRow = [word];
       currentRowCenterY = wordCenterY;
@@ -915,10 +917,10 @@ function detectValueColumns(
     }
   }
 
-  // Sort gaps by size descending â the largest gap is the most likely column boundary
+  // Sort gaps by size descending Ã¢ÂÂ the largest gap is the most likely column boundary
   gaps.sort((a, b) => b.gap - a.gap);
 
-  // Determine split points (at most 2 splits â 3 columns max)
+  // Determine split points (at most 2 splits Ã¢ÂÂ 3 columns max)
   const splitIndices: number[] = [];
   for (const g of gaps) {
     if (splitIndices.length >= 2) break;
@@ -1041,7 +1043,7 @@ function analyzeLayout(
     while (wi < row.words.length) {
       const word = row.words[wi];
 
-      // Case 1: Rp prefix â look for following number(s)
+      // Case 1: Rp prefix Ã¢ÂÂ look for following number(s)
       if (isRpPrefix(word.text)) {
         // First check: does the Rp word itself contain digits? (e.g., "Rp61.039")
         const embeddedDigits = extractDigitsFromRpWord(word.text);
@@ -1125,7 +1127,7 @@ function analyzeLayout(
         }
       }
 
-      // Case 3: Regular text word â part of label
+      // Case 3: Regular text word Ã¢ÂÂ part of label
       // Skip standalone 1-2 digit numbers at far left (line item numbers)
       if (
         word.bbox.x0 < imageWidth * 0.2 &&
@@ -1148,9 +1150,9 @@ function analyzeLayout(
     // Post-process label cleanup: remove OCR junk characters
     // Strip leading/trailing punctuation noise from OCR artifacts
     label = label
-      .replace(/^[:\-â|.;,\s]+/, '')    // Leading junk
-      .replace(/[:\-â|;,\s]+$/, '')      // Trailing junk
-      .replace(/\s{2,}/g, ' ')           // Multiple spaces â single space
+      .replace(/^[:\-Ã¢ÂÂ|.;,\s]+/, '')    // Leading junk
+      .replace(/[:\-Ã¢ÂÂ|;,\s]+$/, '')      // Trailing junk
+      .replace(/\s{2,}/g, ' ')           // Multiple spaces Ã¢ÂÂ single space
       .trim();
 
     // Apply dictionary-based OCR correction for Indonesian financial terms
@@ -1257,7 +1259,7 @@ export async function extractFromImage(
   const { blob: processedBlob, scale, width: imageWidth, height: imageHeight } =
     await preprocessImage(file, onProgress);
 
-  // Phase 1a: OCR on preprocessed image â get all words
+  // Phase 1a: OCR on preprocessed image Ã¢ÂÂ get all words
   // Coordinates are scaled back to original image space inside performOcr
   const ocrResult = await performOcr(processedBlob, scale, onProgress);
 
