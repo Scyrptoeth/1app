@@ -1,11 +1,11 @@
 /**
  * Image-to-Excel Converter
  *
- * Pipeline: Image → Tesseract.js OCR → Layout Analysis → Editable Preview → ExcelJS → .xlsx
+ * Pipeline: Image -> Tesseract.js OCR -> Layout Analysis -> ExcelJS -> .xlsx
  *
  * Architecture:
- * - Phase 1: extractFromImage() — OCR + layout analysis → structured data for preview
- * - Phase 2: generateExcel() — takes (possibly user-edited) data → .xlsx Blob
+ * - Phase 1: extractFromImage() — OCR + layout analysis -> structured data
+ * - Phase 2: generateExcel() — structured data -> .xlsx Blob
  *
  * All processing is client-side (browser). No server-side API calls.
  */
@@ -82,13 +82,15 @@ const RP_VARIANTS = new Set([
 /** Keywords indicating a header/section row */
 const HEADER_KEYWORDS = [
   'PENERIMAAN', 'BIAYA LANGSUNG', 'BIAYA UMUM', 'PENDAPATAN BUNGA',
-  'BEBAN DILUAR', 'BEBAN LUAR', 'LABA KOTOR', 'PENDAPATAN BUNGA DEPOSIT',
+  'BEBAN DILUAR', 'BEBAN LUAR', 'HARGA POKOK', 'PENDAPATAN BUNGA DEPOSIT',
+  'PENGHASILAN DARI LUAR USAHA', 'LABA BERSIH DARI USAHA',
 ];
 
 /** Keywords indicating a total/subtotal row */
 const TOTAL_KEYWORDS = [
   'HARGA POKOK PENJUALAN', 'LABA BERSIH', 'TOTAL', 'LABA SETELAH',
   'PPH TERUTANG', 'JUMLAH', 'PENGHASILAN DARI LUAR',
+  'LABA KOTOR', 'PENDAPATAN DILUAR',
 ];
 
 // ============================================================
@@ -103,18 +105,45 @@ function isRpPrefix(text: string): boolean {
   return RP_VARIANTS.has(text.trim().toLowerCase());
 }
 
+/**
+ * Check if a word is a numeric value (financial amount).
+ * Requires at least 3 consecutive digits to avoid matching
+ * line numbers, dates, or short codes.
+ */
 function isNumericValue(text: string): boolean {
-  const cleaned = text.replace(/[.,\s]/g, '');
-  return /^\d{2,}$/.test(cleaned);
+  const cleaned = text.replace(/[.,\s_\-()]/g, '');
+  // Must contain at least 3 consecutive digits
+  return /\d{3,}/.test(cleaned);
 }
 
+/**
+ * Parse Indonesian-format number string to number.
+ * Indonesian: dots = thousands separator, comma = decimal.
+ * Example: "1.975.155.731" -> 1975155731
+ */
 function parseIndonesianNumber(text: string): number | null {
-  // Remove Rp prefix and whitespace
-  let cleaned = text.replace(/[Rp\s_]/gi, '');
-  // Remove all dots (thousand separators)
-  cleaned = cleaned.replace(/\./g, '');
-  // Replace comma with dot for decimal
-  cleaned = cleaned.replace(',', '.');
+  // Remove Rp prefix variants and whitespace
+  let cleaned = text.trim();
+  const lowerCleaned = cleaned.toLowerCase();
+  for (const variant of RP_VARIANTS) {
+    if (lowerCleaned.startsWith(variant)) {
+      cleaned = cleaned.substring(variant.length).trim();
+      break;
+    }
+  }
+  // Remove all non-numeric except dots, commas, minus
+  cleaned = cleaned.replace(/[^\d.,\-]/g, '');
+  if (!cleaned) return null;
+
+  // Indonesian format: dots are thousand separators
+  if (cleaned.includes(',')) {
+    // Has comma = decimal separator. Remove dots first.
+    cleaned = cleaned.replace(/\./g, '').replace(',', '.');
+  } else {
+    // No comma. Dots are thousand separators.
+    cleaned = cleaned.replace(/\./g, '');
+  }
+
   const num = parseFloat(cleaned);
   return isNaN(num) ? null : num;
 }
@@ -189,11 +218,12 @@ async function performOcr(
 // ============================================================
 
 function detectValueColumns(lines: OcrLine[], imageWidth: number): ColumnInfo[] {
-  // Collect right-edges of all numeric words that are in the right half of the image
+  // Collect right-edges of all numeric words in the right portion of the image
   const numericRightEdges: number[] = [];
 
   for (const line of lines) {
     for (const word of line.words) {
+      // Only consider words in the right 55% of image AND are actual numeric values
       if (isNumericValue(word.text) && word.bbox.x0 > imageWidth * 0.45) {
         numericRightEdges.push(word.bbox.x1);
       }
@@ -250,11 +280,9 @@ function analyzeLayout(
 
   onProgress({ progress: 55, status: 'Analyzing structure...' });
 
-  // Determine content area: skip header/logo lines
-  // Heuristic: content starts below ~15% of image height
-  const contentStartY = imageHeight * 0.14;
-  // Content ends above ~85% (skip footer/signature)
-  const contentEndY = imageHeight * 0.82;
+  // Determine content area: skip header/logo and footer/signature
+  const contentStartY = imageHeight * 0.12;
+  const contentEndY = imageHeight * 0.80;
 
   // Left margin baseline from content lines only
   const contentLines = lines.filter(
@@ -262,7 +290,7 @@ function analyzeLayout(
   );
   const leftMargins = contentLines.map((l) => l.bbox.x0);
   const minLeftMargin = leftMargins.length > 0 ? Math.min(...leftMargins) : 0;
-  const indentUnit = imageWidth * 0.015;
+  const indentUnit = imageWidth * 0.02;
 
   const rows: RowData[] = [];
 
@@ -290,7 +318,6 @@ function analyzeLayout(
 
       // Case 1: Rp prefix — look for following number
       if (isRpPrefix(word.text)) {
-        const rpX = word.bbox.x0;
         const numParts: string[] = [];
         let j = wi + 1;
 
@@ -329,22 +356,39 @@ function analyzeLayout(
           wi = j;
           continue;
         } else {
-          // Rp without number — skip it
+          // Standalone Rp without number — skip
           wi++;
           continue;
         }
       }
 
-      // Case 2: Standalone number in the right half of the image
+      // Case 2: Standalone number in the right portion of the image
       if (
         isNumericValue(word.text) &&
         word.bbox.x0 > imageWidth * 0.4
       ) {
-        const numRight = word.bbox.x1;
+        // Look ahead for continuation: adjacent numeric fragments
+        let combinedText = word.text;
+        let combinedRight = word.bbox.x1;
+        let j = wi + 1;
+
+        while (j < line.words.length) {
+          const nextWord = line.words[j];
+          const gap = nextWord.bbox.x0 - combinedRight;
+          // If very close and numeric-like, merge (handles split values like "16.378" + "910")
+          if (gap < imageWidth * 0.02 && /[\d.,]/.test(nextWord.text) && !isRpPrefix(nextWord.text)) {
+            combinedText += nextWord.text;
+            combinedRight = nextWord.bbox.x1;
+            j++;
+          } else {
+            break;
+          }
+        }
+
         let bestCol = -1;
         let bestDist = Infinity;
         for (let ci = 0; ci < columns.length; ci++) {
-          const dist = Math.abs(numRight - columns[ci].avgRight);
+          const dist = Math.abs(combinedRight - columns[ci].avgRight);
           if (dist < bestDist) {
             bestDist = dist;
             bestCol = ci;
@@ -353,13 +397,25 @@ function analyzeLayout(
 
         if (bestCol >= 0 && bestDist < imageWidth * 0.15) {
           const existing = valuesByColumn.get(bestCol) || '';
-          valuesByColumn.set(bestCol, (existing + word.text).trim());
-          wi++;
+          valuesByColumn.set(bestCol, (existing + combinedText).trim());
+          wi = j;
           continue;
         }
       }
 
       // Case 3: Regular text word — part of label
+      // Skip standalone short numbers at the left (line item numbers like "1", "2", etc.)
+      if (word.bbox.x0 < imageWidth * 0.25 && /^\d{1,2}[.:]?$/.test(word.text.trim())) {
+        // Could be a line item number — we'll capture it separately
+        const maybeNum = parseInt(word.text);
+        if (maybeNum > 0 && maybeNum <= 50) {
+          // Store as potential rowNumber, handled later
+          labelParts.push(word.text);
+          wi++;
+          continue;
+        }
+      }
+
       labelParts.push(word.text);
       wi++;
     }
@@ -384,9 +440,13 @@ function analyzeLayout(
 
     // Classify row
     const upperLabel = label.toUpperCase();
+    const hasValues = valuesByColumn.size > 0;
+
     const isHeader =
-      HEADER_KEYWORDS.some((kw) => upperLabel.includes(kw)) &&
-      valuesByColumn.size === 0;
+      !hasValues && (
+        HEADER_KEYWORDS.some((kw) => upperLabel.includes(kw)) ||
+        (upperLabel === upperLabel && /^[A-Z\s]+$/.test(upperLabel) && upperLabel.length > 5)
+      );
 
     const isSectionTitle =
       ['BIAYA LANGSUNG', 'BIAYA UMUM', 'PENDAPATAN BUNGA'].some((kw) =>
@@ -394,8 +454,7 @@ function analyzeLayout(
       );
 
     const isTotal =
-      TOTAL_KEYWORDS.some((kw) => upperLabel.includes(kw)) &&
-      valuesByColumn.size > 0;
+      TOTAL_KEYWORDS.some((kw) => upperLabel.includes(kw)) && hasValues;
 
     // Build values array
     const values: string[] = [];
@@ -561,13 +620,17 @@ export async function generateExcel(
       row.fill = {
         type: 'pattern',
         pattern: 'solid',
-        fgColor: { argb: 'FFF2F2F2' },
+        fgColor: { argb: 'FFD9D9D9' },
       };
     } else if (rowData.isTotal) {
       row.font = { bold: true, size: 10 };
+      row.fill = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: 'FFFFF2CC' },
+      };
       row.border = {
         top: { style: 'thin' },
-        bottom: { style: 'double' },
       };
     } else {
       row.font = { size: 10 };
