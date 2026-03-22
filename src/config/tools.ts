@@ -70,17 +70,21 @@ export const tools: ToolConfig[] = [
   {
     id: "image-to-excel",
     name: "Image to Excel",
-    description: "Convert images of tables and spreadsheets into editable Excel files using OCR technology.",
-    href: "/tools/image-to-excel",
+    description:
+      "Convert images of tables and spreadsheets into editable Excel files using OCR technology.",
     category: "convert",
-    icon: "📊",
-    available: true,
+    icon: "FileImage",
+    route: "/tools/image-to-excel",
+    accentColor: "blue",
+    inputFormats: [".jpg", ".jpeg", ".png"],
+    outputFormats: [".xlsx"],
+    isAvailable: true,
   },
   {
     id: "pdf-to-excel",
     name: "PDF to Excel",
     description:
-      "Extract tables, numbers, and structured data from PDF documents into formatted Excel spreadsheets. Supports scanned documents via OCR.",
+      "Extract tables, numbers, and structured data from PDF documents into formatted Excel spreadsheets.",
     category: "convert",
     icon: "FileSpreadsheet",
     route: "/tools/pdf-to-excel",
