@@ -2,13 +2,13 @@
  * PDF-to-Excel Converter
  *
  * Two-phase pipeline:
- *   Phase 1 — extractFromPdf(): PDF → render pages to canvas → OCR via Tesseract.js → structured data
- *   Phase 2 — generateExcel(): Structured data → .xlsx Blob via ExcelJS
+ *   Phase 1 â extractFromPdf(): PDF â render pages to canvas â OCR via Tesseract.js â structured data
+ *   Phase 2 â generateExcel(): Structured data â .xlsx Blob via ExcelJS
  *
  * Supports:
  *   - Single-column layout (e.g., Profit & Loss / Laba Rugi)
  *   - Side-by-side layout  (e.g., Balance Sheet / Neraca)
- *   - Multi-page PDFs (each page → one worksheet)
+ *   - Multi-page PDFs (each page â one worksheet)
  *   - Currency (Rp) number detection and formatting
  *   - Auto header / total / indent detection
  */
@@ -80,7 +80,7 @@ interface OcrWord {
 
 function isNumericWord(text: string): boolean {
   const cleaned = text.replace(/[.,_=\s()\-]/g, "");
-  const digitCount = [...cleaned].filter((c) => c >= "0" && c <= "9").length;
+  const digitCount = cleaned.split('').filter((c) => c >= "0" && c <= "9").length;
   return digitCount >= 3;
 }
 
@@ -105,7 +105,7 @@ function cleanNumber(text: string): number | null {
   if (/^\d{1,3}(\.\d{3})+$/.test(s)) {
     s = s.replace(/\./g, "");
   } else if (s.includes(",") && s.includes(".")) {
-    // Mixed (OCR error) — treat both as thousand separators
+    // Mixed (OCR error) â treat both as thousand separators
     s = s.replace(/[,.]/g, "");
   } else if (s.includes(",")) {
     s = s.replace(/,/g, "");
@@ -232,7 +232,7 @@ function isFooterRow(row: OcrWord[], pageHeight: number): boolean {
   // Common footer patterns
   if (/\b(direktur|medan|april|ttd|tanda\s*tangan)\b/i.test(text))
     return true;
-  // If only a few short words near bottom — likely footer
+  // If only a few short words near bottom â likely footer
   if (row.length <= 3 && y > pageHeight * 0.85) return true;
 
   return false;
@@ -437,7 +437,7 @@ function parseSideBySide(
 }
 
 /* ------------------------------------------------------------------ */
-/*  Phase 1 — Extract from PDF                                        */
+/*  Phase 1 â Extract from PDF                                        */
 /* ------------------------------------------------------------------ */
 
 export async function extractFromPdf(
@@ -457,7 +457,7 @@ export async function extractFromPdf(
   const pdfDoc = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
   const totalPages = pdfDoc.numPages;
 
-  report(5, `PDF loaded — ${totalPages} page(s)`);
+  report(5, `PDF loaded â ${totalPages} page(s)`);
 
   // Dynamically import Tesseract.js
   report(8, "Loading OCR engine...");
@@ -572,7 +572,7 @@ export async function extractFromPdf(
 }
 
 /* ------------------------------------------------------------------ */
-/*  Phase 2 — Generate Excel                                           */
+/*  Phase 2 â Generate Excel                                           */
 /* ------------------------------------------------------------------ */
 
 export async function generateExcel(
