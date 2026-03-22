@@ -82,6 +82,7 @@ export default function ImageToExcelPage() {
   const handleExport = useCallback(async () => {
     if (!extractionResult) return;
     setIsExporting(true);
+
     try {
       const blob = await generateExcel(
         extractionResult.rows,
@@ -174,15 +175,15 @@ export default function ImageToExcelPage() {
             onDrop={handleDrop}
             onDragOver={handleDragOver}
             onClick={() => fileInputRef.current?.click()}
-            className="border-2 border-dashed border-gray-300 rounded-xl p-16 text-center cursor-pointer
-                       hover:border-blue-400 hover:bg-blue-50 transition-all"
+            className="border-2 border-dashed border-gray-300 rounded-xl p-16 text-center cursor-pointer hover:border-blue-400 hover:bg-blue-50 transition-all"
           >
             <div className="text-6xl mb-4">&#128202;</div>
             <h2 className="text-xl font-semibold text-gray-700 mb-2">
               Upload an image to extract data
             </h2>
             <p className="text-gray-500 mb-4">
-              Supports PNG, JPEG, JPG &mdash; financial reports, tables, invoices, receipts
+              Supports PNG, JPEG, JPG &mdash; financial reports, tables,
+              invoices, receipts
             </p>
             <p className="text-sm text-gray-400">
               Drag &amp; drop or click to browse
@@ -226,7 +227,6 @@ export default function ImageToExcelPage() {
                   style={{ width: `${progress.progress}%` }}
                 />
               </div>
-
               <p className="text-sm text-gray-500">{progress.status}</p>
               <p className="text-xs text-gray-400 mt-1">
                 {progress.progress}% complete
@@ -234,7 +234,8 @@ export default function ImageToExcelPage() {
 
               {progress.progress < 50 && (
                 <p className="text-xs text-amber-600 mt-4">
-                  First-time OCR may take 30-60 seconds to download language data.
+                  First-time OCR may take 30-60 seconds to download language
+                  data.
                 </p>
               )}
             </div>
@@ -248,11 +249,7 @@ export default function ImageToExcelPage() {
             <div className="bg-white rounded-xl shadow-sm border p-4 flex items-center justify-between flex-wrap gap-4">
               <div className="flex items-center gap-6 text-sm">
                 <span className="text-gray-500">
-                  <strong className="text-gray-900">{extractionResult.rows.length}</strong>{' '}
-                  rows extracted
-                </span>
-                <span className="text-gray-500">
-                  OCR Confidence:{' '}
+                  Data Quality:{' '}
                   <strong
                     className={
                       confidence >= 70
@@ -262,14 +259,19 @@ export default function ImageToExcelPage() {
                           : 'text-red-600'
                     }
                   >
-                    {confidence.toFixed(1)}%
+                    {confidence >= 70 ? 'High' : confidence >= 50 ? 'Medium' : 'Low'}{' '}
+                    ({confidence.toFixed(1)}%)
                   </strong>
                 </span>
-                <span className="text-gray-500">
-                  <strong className="text-gray-900">{extractionResult.columnCount}</strong>{' '}
-                  value columns detected
-                </span>
               </div>
+            </div>
+
+            {/* Info notice */}
+            <div className="bg-blue-50 border border-blue-200 rounded-xl px-4 py-3 flex items-start gap-3">
+              <span className="text-blue-500 mt-0.5">&#9432;</span>
+              <p className="text-sm text-blue-700">
+                Extraction quality depends on the input image. Higher resolution and clearer images produce better results.
+              </p>
             </div>
 
             {/* Image preview + Export */}
@@ -293,18 +295,18 @@ export default function ImageToExcelPage() {
               {/* Export section */}
               <div className="border-t bg-gray-50 p-6 text-center">
                 <p className="text-sm text-gray-600 mb-4">
-                  Data has been extracted and formatted. Click below to download your Excel file.
+                  Data has been extracted and formatted. Click below to download
+                  your Excel file.
                 </p>
                 <button
                   onClick={handleExport}
                   disabled={isExporting}
-                  className="px-8 py-3 bg-green-600 hover:bg-green-700 disabled:bg-gray-400
-                             text-white font-semibold rounded-xl transition-colors text-base shadow-lg
-                             inline-flex items-center gap-2"
+                  className="px-8 py-3 bg-green-600 hover:bg-green-700 disabled:bg-gray-400 text-white font-semibold rounded-xl transition-colors text-base shadow-lg inline-flex items-center gap-2"
                 >
                   {isExporting ? (
                     <>
-                      <span className="animate-spin">&#9203;</span> Generating Excel...
+                      <span className="animate-spin">&#9203;</span> Generating
+                      Excel...
                     </>
                   ) : (
                     <>&#128229; Export to Excel (.xlsx)</>
