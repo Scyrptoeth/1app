@@ -1,30 +1,18 @@
-/**
- * PDF-to-Excel Converter
- *
- * Two-phase pipeline:
- *   Phase 1 Ã¢ÂÂ extractFromPdf(): PDF Ã¢ÂÂ render pages to canvas Ã¢ÂÂ OCR via Tesseract.js Ã¢ÂÂ structured data
- *   Phase 2 Ã¢ÂÂ generateExcel(): Structured data Ã¢ÂÂ .xlsx Blob via ExcelJS
- *
- * Supports:
- *   - Single-column layout (e.g., Profit & Loss / Laba Rugi)
- *   - Side-by-side layout  (e.g., Balance Sheet / Neraca)
- *   - Multi-page PDFs (each page Ã¢ÂÂ one worksheet)
- *   - Currency (Rp) number detection and formatting
- *   - Auto header / total / indent detection
- */
+// ============================================================================
+// PDF to Excel Converter — Text Extraction Approach (no OCR)
+// Uses pdfjs-dist getTextContent() for fast, accurate text extraction
+// Designed for Indonesian financial documents (Laba Rugi, Neraca)
+// ============================================================================
 
-// ExcelJS is dynamically imported inside generateExcel() for browser compatibility
-
-/* ------------------------------------------------------------------ */
-/*  Public types                                                       */
-/* ------------------------------------------------------------------ */
-
-export interface ProcessingUpdate {
+// ---------------------------------------------------------------------------
+// Interfaces
+// ---------------------------------------------------------------------------
+interface ProcessingUpdate {
   progress: number; // 0-100
   status: string;
 }
 
-export interface RowData {
+interface RowData {
   label: string;
   subValue: number | null;
   mainValue: number | null;
@@ -35,304 +23,328 @@ export interface RowData {
   rowNumber: string;
 }
 
-export interface PageData {
+interface PageData {
   pageNumber: number;
   sheetName: string;
   isSideBySide: boolean;
-  // Single-column data
   rows?: RowData[];
-  // Side-by-side data
   leftRows?: RowData[];
   rightRows?: RowData[];
   leftTitle?: string;
   rightTitle?: string;
 }
 
-export interface PdfExtractionResult {
+interface PdfExtractionResult {
   pages: PageData[];
   totalPages: number;
 }
 
-export interface PdfToExcelResult {
+interface PdfToExcelResult {
   blob: Blob;
   pages: PageData[];
   originalSize: number;
   processedSize: number;
 }
 
-/* ------------------------------------------------------------------ */
-/*  Internal types                                                     */
-/* ------------------------------------------------------------------ */
-
-interface OcrWord {
-  text: string;
+// A single text item from pdfjs getTextContent
+interface TextItem {
+  str: string;
   x: number;
   y: number;
-  w: number;
-  h: number;
-  right: number;
-  conf: number;
+  width: number;
+  height: number;
+  fontName: string;
 }
 
-/* ------------------------------------------------------------------ */
-/*  Utility helpers                                                    */
-/* ------------------------------------------------------------------ */
-
-function isNumericWord(text: string): boolean {
-  const cleaned = text.replace(/[.,_=\s()\-]/g, "");
-  const digitCount = cleaned.split('').filter((c) => c >= "0" && c <= "9").length;
-  return digitCount >= 3;
+// A row of text items grouped by Y position
+interface TextRow {
+  y: number;
+  items: TextItem[];
 }
 
-function isLabelWord(text: string): boolean {
-  if (text === "Rp" || text === "Rp.") return false;
-  if (isNumericWord(text)) return false;
-  if (text.length <= 1 && !/[a-zA-Z]/.test(text)) return false;
-  return true;
+// ---------------------------------------------------------------------------
+// Constants for Indonesian financial document parsing
+// ---------------------------------------------------------------------------
+const HEADER_KEYWORDS = [
+  'PENERIMAAN BRUTO', 'BIAYA LANGSUNG', 'BIAYA UMUM', 'PENGHASILAN',
+  'Laba Kotor', 'Laba Bersih', 'Total Penghasilan', 'Jumlah',
+  'Aktiva Lancar', 'Aktiva Tetap', 'Hutang Lancar', 'Ekuitas',
+  'Jumlah Aktiva', 'Jumlah Hutang', 'Jumlah Ekuitas',
+];
+
+const TOTAL_KEYWORDS = [
+  'Laba Kotor', 'Laba Bersih', 'Total', 'Jumlah',
+];
+
+const NERACA_KEYWORDS = ['Neraca', 'Balance Sheet', 'Aktiva', 'Passiva'];
+const LABA_RUGI_KEYWORDS = ['Laba Rugi', 'Profit', 'Loss', 'P&L', 'Penerimaan'];
+
+// ---------------------------------------------------------------------------
+// Utility: parse Indonesian number format
+// "61.039.612.496" => 61039612496
+// "(139.115.941)" or "-139.115.941" => -139115941
+// ---------------------------------------------------------------------------
+function parseIndonesianNumber(raw: string): number | null {
+  if (!raw || raw.trim().length === 0) return null;
+  let s = raw.trim();
+
+  // Remove "Rp", "Rp.", currency prefixes
+  s = s.replace(/^Rp\.?\s*/i, '');
+
+  // Check for parentheses indicating negative
+  const isNeg = s.startsWith('(') && s.endsWith(')');
+  if (isNeg) s = s.substring(1, s.length - 1);
+
+  // Check for leading minus
+  const hasMinus = s.startsWith('-');
+  if (hasMinus) s = s.substring(1);
+
+  // Remove thousand separators (dots) — Indonesian format uses dot as thousands
+  s = s.replace(/\./g, '');
+
+  // Replace comma with dot for decimals if needed
+  s = s.replace(/,/g, '.');
+
+  // Remove any remaining non-numeric chars except dot and minus
+  s = s.replace(/[^0-9.]/g, '');
+
+  if (s.length === 0) return null;
+
+  const num = parseFloat(s);
+  if (isNaN(num)) return null;
+
+  return (isNeg || hasMinus) ? -num : num;
 }
 
-function cleanNumber(text: string): number | null {
-  let s = text.replace(/^[\s_=]+|[\s_=]+$/g, "");
+// ---------------------------------------------------------------------------
+// Utility: detect if text looks like a number (Indonesian format)
+// ---------------------------------------------------------------------------
+function looksLikeNumber(text: string): boolean {
+  const s = text.trim()
+    .replace(/^Rp\.?\s*/i, '')
+    .replace(/^\(/, '').replace(/\)$/, '')
+    .replace(/^-/, '');
+  // Must have digits and optionally dots/commas as separators
+  return /^\d[\d.,]*\d$/.test(s) || /^\d$/.test(s);
+}
 
-  // Handle negative (parentheses)
-  const isNeg = s.includes("(") && s.includes(")");
-  s = s.replace(/[()]/g, "");
+// ---------------------------------------------------------------------------
+// Utility: detect bold from font name
+// ---------------------------------------------------------------------------
+function isBoldFont(fontName: string): boolean {
+  const lower = fontName.toLowerCase();
+  return lower.includes('bold') || lower.includes('black') || lower.includes('heavy');
+}
 
-  // Remove Rp prefix
-  s = s.replace(/^[Rr][Pp]\.?\s*/, "");
+// ---------------------------------------------------------------------------
+// Utility: detect if a label is a section header
+// ---------------------------------------------------------------------------
+function isSectionHeader(label: string, bold: boolean): boolean {
+  if (!label) return false;
+  const upper = label.toUpperCase();
+  return bold && HEADER_KEYWORDS.some(k => upper.includes(k.toUpperCase()));
+}
 
-  // Indonesian thousands separator: 1.000.000
-  if (/^\d{1,3}(\.\d{3})+$/.test(s)) {
-    s = s.replace(/\./g, "");
-  } else if (s.includes(",") && s.includes(".")) {
-    // Mixed (OCR error) Ã¢ÂÂ treat both as thousand separators
-    s = s.replace(/[,.]/g, "");
-  } else if (s.includes(",")) {
-    s = s.replace(/,/g, "");
-  } else {
-    s = s.replace(/\./g, "");
+// ---------------------------------------------------------------------------
+// Utility: detect if a row is a total line
+// ---------------------------------------------------------------------------
+function isTotalLine(label: string, bold: boolean): boolean {
+  if (!label) return false;
+  return bold && TOTAL_KEYWORDS.some(k => label.includes(k));
+}
+
+// ---------------------------------------------------------------------------
+// STEP 1: Extract raw text items from a PDF page using pdfjs
+// ---------------------------------------------------------------------------
+async function extractTextItems(page: any): Promise<TextItem[]> {
+  const textContent = await page.getTextContent();
+  const viewport = page.getViewport({ scale: 1.0 });
+  const items: TextItem[] = [];
+
+  for (const item of textContent.items) {
+    if (!item.str || item.str.trim().length === 0) continue;
+
+    // transform: [scaleX, skewX, skewY, scaleY, translateX, translateY]
+    const tx = item.transform;
+    const x = tx[4];
+    // PDF Y is bottom-up; flip to top-down
+    const y = viewport.height - tx[5];
+    const height = Math.abs(tx[3]) || Math.abs(tx[0]);
+    const width = item.width || 0;
+
+    items.push({
+      str: item.str,
+      x: Math.round(x * 100) / 100,
+      y: Math.round(y * 100) / 100,
+      width: Math.round(width * 100) / 100,
+      height: Math.round(height * 100) / 100,
+      fontName: item.fontName || '',
+    });
   }
 
-  const val = parseFloat(s);
-  if (isNaN(val)) return null;
-  return isNeg ? -val : val;
+  return items;
 }
 
-/* ------------------------------------------------------------------ */
-/*  Row grouping                                                       */
-/* ------------------------------------------------------------------ */
+// ---------------------------------------------------------------------------
+// STEP 2: Group text items into rows by Y position
+// Items within Y_THRESHOLD pixels are considered the same row
+// ---------------------------------------------------------------------------
+function groupIntoRows(items: TextItem[], yThreshold: number = 3): TextRow[] {
+  if (items.length === 0) return [];
 
-function groupIntoRows(words: OcrWord[], yThreshold = 25): OcrWord[][] {
-  const sorted = [...words].sort((a, b) => a.y - b.y || a.x - b.x);
-  const rows: OcrWord[][] = [];
-  let current: OcrWord[] = [];
-  let lastY = -100;
+  // Sort by Y first, then by X
+  const sorted = items.slice().sort((a, b) => a.y - b.y || a.x - b.x);
 
-  for (const w of sorted) {
-    if (Math.abs(w.y - lastY) > yThreshold && current.length > 0) {
-      rows.push(current.sort((a, b) => a.x - b.x));
-      current = [];
+  const rows: TextRow[] = [];
+  let currentRow: TextRow = { y: sorted[0].y, items: [sorted[0]] };
+
+  for (let i = 1; i < sorted.length; i++) {
+    const item = sorted[i];
+    if (Math.abs(item.y - currentRow.y) <= yThreshold) {
+      currentRow.items.push(item);
+    } else {
+      // Sort items in current row by X
+      currentRow.items.sort((a, b) => a.x - b.x);
+      rows.push(currentRow);
+      currentRow = { y: item.y, items: [item] };
     }
-    current.push(w);
-    lastY = w.y;
   }
-  if (current.length > 0) {
-    rows.push(current.sort((a, b) => a.x - b.x));
-  }
+  // Don't forget last row
+  currentRow.items.sort((a, b) => a.x - b.x);
+  rows.push(currentRow);
+
   return rows;
 }
 
-/* ------------------------------------------------------------------ */
-/*  Layout detection                                                   */
-/* ------------------------------------------------------------------ */
+// ---------------------------------------------------------------------------
+// STEP 3: Detect page type — Laba Rugi (P&L) vs Neraca (Balance Sheet)
+// ---------------------------------------------------------------------------
+function detectPageType(rows: TextRow[]): 'laba_rugi' | 'neraca' | 'unknown' {
+  // Check first few rows for keywords
+  const topText = rows.slice(0, 5).map(r => r.items.map(i => i.str).join(' ')).join(' ');
 
-function detectSideBySide(words: OcrWord[], pageWidth: number): boolean {
+  if (NERACA_KEYWORDS.some(k => topText.includes(k))) return 'neraca';
+  if (LABA_RUGI_KEYWORDS.some(k => topText.includes(k))) return 'laba_rugi';
+
+  // Check if there are items spread across left and right halves (neraca indicator)
+  const pageWidth = Math.max(...rows.flatMap(r => r.items.map(i => i.x + i.width)));
   const midX = pageWidth / 2;
-  const rows = groupIntoRows(words);
-
-  let bothSides = 0;
+  let leftCount = 0, rightCount = 0;
   for (const row of rows) {
-    const labelsLeft = row.filter(
-      (w) => w.x < midX * 0.8 && isLabelWord(w.text)
-    );
-    const labelsRight = row.filter(
-      (w) => w.x > midX && isLabelWord(w.text)
-    );
-    if (labelsLeft.length > 0 && labelsRight.length > 0) {
-      bothSides++;
+    for (const item of row.items) {
+      if (item.x < midX) leftCount++;
+      else rightCount++;
     }
   }
-  return bothSides >= 5;
+  // If roughly balanced left/right, it's likely neraca (side-by-side)
+  if (rightCount > leftCount * 0.3 && rightCount < leftCount * 3) return 'neraca';
+
+  return 'laba_rugi';
 }
 
-/* ------------------------------------------------------------------ */
-/*  Header area detection                                              */
-/* ------------------------------------------------------------------ */
-
-function detectHeaderEnd(
-  rows: OcrWord[][],
-  pageHeight: number
-): number {
-  const keywords = [
-    "PENERIMAAN",
-    "AKTIVA",
-    "PASSIVA",
-    "PENDAPATAN",
-    "BIAYA",
-    "NERACA",
-    "LABA",
-    "LAPORAN",
-  ];
-
-  for (let i = 0; i < rows.length; i++) {
-    const y = rows[i][0].y;
-    if (y < pageHeight * 0.12) continue; // Skip top 12%
-
-    const text = rows[i].map((w) => w.text).join(" ").toUpperCase();
-
-    // Check for title row like "LAPORAN LABA RUGI" or "NERACA"
-    if (
-      keywords.some((kw) => text.includes(kw)) &&
-      text.length < 80
-    ) {
-      // Find the next row with actual data (Rp or first content row)
-      for (let j = i + 1; j < rows.length; j++) {
-        const nextText = rows[j].map((w) => w.text).join(" ");
-        if (
-          nextText.includes("Rp") ||
-          keywords.some((kw) => nextText.toUpperCase().includes(kw))
-        ) {
-          return j;
-        }
-      }
-      return i + 1;
-    }
-  }
-
-  // Fallback: skip top 20%
-  for (let i = 0; i < rows.length; i++) {
-    if (rows[i][0].y > pageHeight * 0.2) return i;
-  }
-  return 0;
-}
-
-/* ------------------------------------------------------------------ */
-/*  Footer area detection                                              */
-/* ------------------------------------------------------------------ */
-
-function isFooterRow(row: OcrWord[], pageHeight: number): boolean {
-  const y = row[0].y;
-  if (y < pageHeight * 0.8) return false;
-
-  const text = row
-    .map((w) => w.text)
-    .join(" ")
-    .toLowerCase();
-
-  // Common footer patterns
-  if (/\b(direktur|medan|april|ttd|tanda\s*tangan)\b/i.test(text))
-    return true;
-  // If only a few short words near bottom Ã¢ÂÂ likely footer
-  if (row.length <= 3 && y > pageHeight * 0.85) return true;
-
-  return false;
-}
-
-/* ------------------------------------------------------------------ */
-/*  Single-column parser (P&L)                                         */
-/* ------------------------------------------------------------------ */
-
-function parseSingleColumn(
-  rows: OcrWord[][],
-  startIdx: number,
-  pageHeight: number
-): RowData[] {
+// ---------------------------------------------------------------------------
+// STEP 4a: Parse Laba Rugi (P&L) page
+// Columns: No | Keterangan | Sub-Amount (Rp) | Amount (Rp)
+// ---------------------------------------------------------------------------
+function parseLaraRugiPage(rows: TextRow[], commonFonts: Map<string, boolean>): RowData[] {
   const result: RowData[] = [];
 
-  // Detect x-position thresholds for sub-value vs main-value columns
-  // by analyzing where numbers appear
-  const numberPositions: number[] = [];
-  for (const row of rows.slice(startIdx)) {
-    for (const w of row) {
-      if (isNumericWord(w.text)) {
-        numberPositions.push(w.x);
+  // Find column boundaries by analyzing X positions of number-like items
+  const numberXPositions: number[] = [];
+  for (const row of rows) {
+    for (const item of row.items) {
+      if (looksLikeNumber(item.str)) {
+        numberXPositions.push(item.x);
       }
     }
   }
 
-  // Cluster number positions into sub (left cluster) and main (right cluster)
-  numberPositions.sort((a, b) => a - b);
-  let mainThreshold = 1750; // default
-  if (numberPositions.length > 5) {
-    // Find the largest gap in number positions
-    let maxGap = 0;
-    let gapPos = mainThreshold;
-    for (let i = 1; i < numberPositions.length; i++) {
-      const gap = numberPositions[i] - numberPositions[i - 1];
-      if (gap > maxGap && gap > 100) {
-        maxGap = gap;
-        gapPos = (numberPositions[i] + numberPositions[i - 1]) / 2;
-      }
-    }
-    if (maxGap > 100) mainThreshold = gapPos;
+  if (numberXPositions.length === 0) return result;
+
+  // Cluster number positions into sub-amount and main-amount columns
+  numberXPositions.sort((a, b) => a - b);
+  const clusters = clusterPositions(numberXPositions, 30);
+
+  // Typically: leftmost cluster = sub-amount, rightmost = main-amount
+  let subAmountX = -1;
+  let mainAmountX = -1;
+
+  if (clusters.length >= 2) {
+    subAmountX = clusters[clusters.length - 2].center;
+    mainAmountX = clusters[clusters.length - 1].center;
+  } else if (clusters.length === 1) {
+    mainAmountX = clusters[0].center;
   }
 
-  for (const row of rows.slice(startIdx)) {
-    if (isFooterRow(row, pageHeight)) continue;
+  // Find the left boundary where text labels start
+  const textItems = rows.flatMap(r => r.items.filter(i => !looksLikeNumber(i.str)));
+  const minTextX = textItems.length > 0 ? Math.min(...textItems.map(i => i.x)) : 0;
 
-    const labelParts: string[] = [];
+  // Skip title rows (first few rows that are title/header of the document)
+  let dataStartIdx = 0;
+  for (let i = 0; i < Math.min(rows.length, 5); i++) {
+    const rowText = rows[i].items.map(it => it.str).join(' ');
+    if (rowText.includes('PT ') || rowText.includes('Laporan') || rowText.includes('Per ') || rowText.includes('Desember') || rowText.includes('Januari')) {
+      dataStartIdx = i + 1;
+    }
+  }
+
+  for (let i = dataStartIdx; i < rows.length; i++) {
+    const row = rows[i];
+    const textParts: string[] = [];
     let subValue: number | null = null;
     let mainValue: number | null = null;
+    let rowNumber = '';
+    let isBold = false;
+    let minX = Infinity;
 
-    for (const w of row) {
-      if (w.text === "Rp" || w.text === "Rp.") continue;
+    for (const item of row.items) {
+      const bold = isBoldFont(item.fontName) || commonFonts.get(item.fontName) === true;
+      if (bold) isBold = true;
 
-      if (isNumericWord(w.text)) {
-        const num = cleanNumber(w.text);
+      if (looksLikeNumber(item.str)) {
+        const num = parseIndonesianNumber(item.str);
         if (num !== null) {
-          if (w.x > mainThreshold) {
-            mainValue = num;
+          // Determine if sub-amount or main-amount based on X position
+          if (mainAmountX > 0 && subAmountX > 0) {
+            const distToSub = Math.abs(item.x - subAmountX);
+            const distToMain = Math.abs(item.x - mainAmountX);
+            if (distToMain < distToSub) {
+              mainValue = num;
+            } else {
+              subValue = num;
+            }
           } else {
-            subValue = num;
+            mainValue = num;
           }
         }
       } else {
-        const cleaned = w.text.replace(/^[_=|]+|[_=|]+$/g, "");
-        if (cleaned && cleaned !== "-" && cleaned !== ":" && cleaned !== ".") {
-          labelParts.push(cleaned);
+        // Check if it's a row number (1, 2, 3...)
+        const trimmed = item.str.trim();
+        if (/^\d{1,2}$/.test(trimmed) && item.x < minTextX + 30) {
+          rowNumber = trimmed;
+        } else {
+          if (item.x < minX) minX = item.x;
+          textParts.push(item.str.trim());
         }
       }
     }
 
-    const label = labelParts.join(" ").trim();
-    if (!label && subValue === null && mainValue === null) continue;
+    const label = textParts.join(' ').trim();
+    if (label.length === 0 && subValue === null && mainValue === null) continue;
 
-    // Detect row type
-    const isHeader =
-      label.length > 3 &&
-      label === label.toUpperCase() &&
-      subValue === null &&
-      mainValue === null &&
-      !/\d/.test(label);
-
-    const isTotal =
-      /^(total|jumlah|laba)/i.test(label) && mainValue !== null;
-
-    const isIndented = row[0].x > 530;
-
-    // Check if label starts with a number (numbered items)
-    const numMatch = label.match(/^(\d+)\s+(.+)/);
-    const isNumbered = numMatch !== null;
-    const rowNumber = numMatch ? numMatch[1] : "";
-    const cleanLabel = numMatch ? numMatch[2] : label;
+    const isHeader = isSectionHeader(label, isBold);
+    const isTotal = isTotalLine(label, isBold);
+    const isNumbered = rowNumber.length > 0;
+    const isIndented = isNumbered || (minX > minTextX + 20);
 
     result.push({
-      label: cleanLabel,
+      label,
       subValue,
       mainValue,
       isHeader,
-      isTotal,
-      isIndented: isIndented && !isNumbered,
+      isTotal: isTotal || (isBold && (mainValue !== null || subValue !== null)),
+      isIndented,
       isNumbered,
       rowNumber,
     });
@@ -341,473 +353,395 @@ function parseSingleColumn(
   return result;
 }
 
-/* ------------------------------------------------------------------ */
-/*  Side-by-side parser (Balance Sheet)                                */
-/* ------------------------------------------------------------------ */
-
-function parseSideBySide(
-  rows: OcrWord[][],
-  startIdx: number,
-  pageWidth: number,
-  pageHeight: number
-): { leftRows: RowData[]; rightRows: RowData[] } {
+// ---------------------------------------------------------------------------
+// STEP 4b: Parse Neraca (Balance Sheet) page — side-by-side layout
+// Left: Aktiva (A, Rp, Nilai) | Right: Passiva (E, Rp, Nilai)
+// ---------------------------------------------------------------------------
+function parseNeracaPage(
+  rows: TextRow[],
+  commonFonts: Map<string, boolean>
+): { leftRows: RowData[]; rightRows: RowData[]; leftTitle: string; rightTitle: string } {
+  // Find the midpoint of the page
+  const allX = rows.flatMap(r => r.items.map(i => i.x));
+  const pageWidth = Math.max(...allX.map((x, _, arr) => {
+    const maxRight = rows.flatMap(r => r.items.map(i => i.x + i.width));
+    return Math.max(...maxRight);
+  }));
   const midX = pageWidth / 2;
-  const leftResult: RowData[] = [];
-  const rightResult: RowData[] = [];
 
-  // Detect value column thresholds for each side
-  const leftMainThreshold = midX * 0.8;
-  const rightMainThreshold = pageWidth * 0.75;
+  // Split items into left and right halves
+  const leftItems: TextItem[] = [];
+  const rightItems: TextItem[] = [];
 
-  for (const row of rows.slice(startIdx)) {
-    if (isFooterRow(row, pageHeight)) continue;
+  // Skip title rows
+  let dataStartIdx = 0;
+  for (let i = 0; i < Math.min(rows.length, 5); i++) {
+    const rowText = rows[i].items.map(it => it.str).join(' ');
+    if (rowText.includes('PT ') || rowText.includes('Neraca') || rowText.includes('Per ') || rowText.includes('Desember') || rowText.includes('Balance')) {
+      dataStartIdx = i + 1;
+    }
+  }
 
-    const leftWords = row.filter((w) => w.x < midX - 50);
-    const rightWords = row.filter((w) => w.x >= midX - 50);
+  for (let i = dataStartIdx; i < rows.length; i++) {
+    for (const item of rows[i].items) {
+      if (item.x < midX) leftItems.push(item);
+      else rightItems.push(item);
+    }
+  }
 
-    // Parse each side
-    for (const [sideWords, sideResult, threshold] of [
-      [leftWords, leftResult, leftMainThreshold],
-      [rightWords, rightResult, rightMainThreshold],
-    ] as [OcrWord[], RowData[], number][]) {
-      if (sideWords.length === 0) continue;
+  const leftRows = groupIntoRows(leftItems);
+  const rightRowsGrouped = groupIntoRows(rightItems);
 
-      const labelParts: string[] = [];
-      let subValue: number | null = null;
-      let mainValue: number | null = null;
+  return {
+    leftRows: parseSideColumn(leftRows, commonFonts),
+    rightRows: parseSideColumn(rightRowsGrouped, commonFonts),
+    leftTitle: 'Aktiva',
+    rightTitle: 'Passiva',
+  };
+}
 
-      for (const w of sideWords) {
-        if (w.text === "Rp" || w.text === "Rp.") continue;
+// ---------------------------------------------------------------------------
+// Parse one side of a Neraca (either Aktiva or Passiva)
+// ---------------------------------------------------------------------------
+function parseSideColumn(rows: TextRow[], commonFonts: Map<string, boolean>): RowData[] {
+  const result: RowData[] = [];
 
-        if (isNumericWord(w.text)) {
-          const num = cleanNumber(w.text);
-          if (num !== null) {
-            if (w.x > threshold) {
+  // Find number column positions
+  const numberXPositions: number[] = [];
+  for (const row of rows) {
+    for (const item of row.items) {
+      if (looksLikeNumber(item.str)) {
+        numberXPositions.push(item.x);
+      }
+    }
+  }
+
+  const clusters = clusterPositions(numberXPositions, 30);
+  let subAmountX = -1;
+  let mainAmountX = -1;
+
+  if (clusters.length >= 2) {
+    subAmountX = clusters[clusters.length - 2].center;
+    mainAmountX = clusters[clusters.length - 1].center;
+  } else if (clusters.length === 1) {
+    mainAmountX = clusters[0].center;
+  }
+
+  for (const row of rows) {
+    const textParts: string[] = [];
+    let subValue: number | null = null;
+    let mainValue: number | null = null;
+    let isBold = false;
+
+    for (const item of row.items) {
+      const bold = isBoldFont(item.fontName) || commonFonts.get(item.fontName) === true;
+      if (bold) isBold = true;
+
+      if (looksLikeNumber(item.str)) {
+        const num = parseIndonesianNumber(item.str);
+        if (num !== null) {
+          if (mainAmountX > 0 && subAmountX > 0) {
+            const distToSub = Math.abs(item.x - subAmountX);
+            const distToMain = Math.abs(item.x - mainAmountX);
+            if (distToMain < distToSub) {
               mainValue = num;
             } else {
               subValue = num;
             }
-          }
-        } else {
-          const cleaned = w.text.replace(/^[_=|.]+|[_=|.]+$/g, "");
-          if (
-            cleaned &&
-            cleaned !== "-" &&
-            cleaned !== ":" &&
-            !cleaned.match(/^[|D]\.$/)
-          ) {
-            labelParts.push(cleaned);
+          } else {
+            subValue = num;
           }
         }
+      } else {
+        textParts.push(item.str.trim());
       }
+    }
 
-      const label = labelParts.join(" ").trim();
-      if (!label && subValue === null && mainValue === null) continue;
+    const label = textParts.join(' ').trim();
+    if (label.length === 0 && subValue === null && mainValue === null) continue;
 
-      const sectionKeywords = [
-        "Aktiva",
-        "Passiva",
-        "Lancar",
-        "Tetap",
-        "Ekuitas",
-        "Hutang",
-      ];
-      const isHeader =
-        label.length > 0 &&
-        subValue === null &&
-        mainValue === null &&
-        sectionKeywords.some((kw) => label.includes(kw));
+    const isHeader = isSectionHeader(label, isBold);
+    const isTotal = isTotalLine(label, isBold);
 
-      const isTotal = /^(total|jumlah)/i.test(label);
+    result.push({
+      label,
+      subValue,
+      mainValue,
+      isHeader,
+      isTotal: isTotal || (isBold && (mainValue !== null || subValue !== null)),
+      isIndented: false,
+      isNumbered: false,
+      rowNumber: '',
+    });
+  }
 
-      sideResult.push({
-        label,
-        subValue,
-        mainValue,
-        isHeader,
-        isTotal,
-        isIndented: false,
-        isNumbered: false,
-        rowNumber: "",
-      });
+  return result;
+}
+
+// ---------------------------------------------------------------------------
+// Cluster X positions to find column boundaries
+// ---------------------------------------------------------------------------
+function clusterPositions(positions: number[], threshold: number): { center: number; count: number }[] {
+  if (positions.length === 0) return [];
+
+  const sorted = positions.slice().sort((a, b) => a - b);
+  const clusters: { sum: number; count: number }[] = [{ sum: sorted[0], count: 1 }];
+
+  for (let i = 1; i < sorted.length; i++) {
+    const lastCluster = clusters[clusters.length - 1];
+    const center = lastCluster.sum / lastCluster.count;
+    if (Math.abs(sorted[i] - center) <= threshold) {
+      lastCluster.sum += sorted[i];
+      lastCluster.count++;
+    } else {
+      clusters.push({ sum: sorted[i], count: 1 });
     }
   }
 
-  return { leftRows: leftResult, rightRows: rightResult };
+  return clusters
+    .map(c => ({ center: c.sum / c.count, count: c.count }))
+    .sort((a, b) => a.center - b.center);
 }
 
-/* ------------------------------------------------------------------ */
-/*  Phase 1 Ã¢ÂÂ Extract from PDF                                        */
-/* ------------------------------------------------------------------ */
+// ---------------------------------------------------------------------------
+// Detect bold fonts by analyzing which fonts are used for known bold text
+// ---------------------------------------------------------------------------
+function detectBoldFonts(rows: TextRow[]): Map<string, boolean> {
+  const fontUsage = new Map<string, { boldHits: number; total: number }>();
 
-export async function extractFromPdf(
+  for (const row of rows) {
+    for (const item of row.items) {
+      if (!fontUsage.has(item.fontName)) {
+        fontUsage.set(item.fontName, { boldHits: 0, total: 0 });
+      }
+      const usage = fontUsage.get(item.fontName)!;
+      usage.total++;
+
+      // Check if this text is known to be bold content
+      const upper = item.str.toUpperCase();
+      if (HEADER_KEYWORDS.some(k => upper.includes(k.toUpperCase())) || isBoldFont(item.fontName)) {
+        usage.boldHits++;
+      }
+    }
+  }
+
+  const result = new Map<string, boolean>();
+  for (const [font, usage] of fontUsage.entries()) {
+    result.set(font, isBoldFont(font) || (usage.boldHits > 0 && usage.boldHits / usage.total > 0.3));
+  }
+  return result;
+}
+
+// ---------------------------------------------------------------------------
+// MAIN: Extract structured data from PDF
+// ---------------------------------------------------------------------------
+async function extractFromPdf(
   file: File,
   onProgress?: (update: ProcessingUpdate) => void
 ): Promise<PdfExtractionResult> {
-  const report = (progress: number, status: string) =>
-    onProgress?.({ progress, status });
+  onProgress?.({ progress: 5, status: 'Loading PDF library...' });
 
-  report(2, "Loading PDF...");
+  // Dynamic import pdfjs-dist
+  const pdfjsLib = await import('pdfjs-dist');
 
-  // Dynamically import pdf.js
-  const pdfjsLib = await import("pdfjs-dist");
-  pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
+  // Set worker URL — must use .mjs extension for cdnjs
+  pdfjsLib.GlobalWorkerOptions.workerSrc =
+    `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
+
+  onProgress?.({ progress: 10, status: 'Reading PDF file...' });
 
   const arrayBuffer = await file.arrayBuffer();
-  const pdfDoc = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-  const totalPages = pdfDoc.numPages;
+  const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+  const totalPages = pdf.numPages;
 
-  report(5, `PDF loaded Ã¢ÂÂ ${totalPages} page(s)`);
-
-  // Dynamically import Tesseract.js
-  report(8, "Loading OCR engine...");
-  const Tesseract = await import("tesseract.js");
-  const worker = await Tesseract.createWorker("ind+eng", 1, {
-    logger: (m: { progress: number; status: string }) => {
-      if (m.status === "recognizing text") {
-        // Don't override main progress here
-      }
-    },
-  });
+  onProgress?.({ progress: 20, status: `Found ${totalPages} page(s). Extracting text...` });
 
   const pages: PageData[] = [];
 
   for (let pageNum = 1; pageNum <= totalPages; pageNum++) {
-    const pageBaseProgress = 10 + ((pageNum - 1) / totalPages) * 80;
-    const pageProgressRange = 80 / totalPages;
+    const progressBase = 20 + (pageNum - 1) * (60 / totalPages);
+    onProgress?.({
+      progress: Math.round(progressBase),
+      status: `Processing page ${pageNum} of ${totalPages}...`,
+    });
 
-    report(
-      pageBaseProgress,
-      `Processing page ${pageNum}/${totalPages}...`
-    );
+    const page = await pdf.getPage(pageNum);
+    const textItems = await extractTextItems(page);
+    const rows = groupIntoRows(textItems);
+    const boldFonts = detectBoldFonts(rows);
+    const pageType = detectPageType(rows);
 
-    // Render page to canvas
-    const page = await pdfDoc.getPage(pageNum);
-    const viewport = page.getViewport({ scale: 3.0 }); // 3x for good OCR quality
-    const canvas = document.createElement("canvas");
-    canvas.width = viewport.width;
-    canvas.height = viewport.height;
-    const ctx = canvas.getContext("2d")!;
+    const sheetName = `Halaman_${pageNum}`;
 
-    await page.render({ canvasContext: ctx, viewport }).promise;
-
-    report(
-      pageBaseProgress + pageProgressRange * 0.3,
-      `OCR page ${pageNum}/${totalPages}...`
-    );
-
-    // Run OCR
-    const {
-      data: { words: ocrWords },
-    } = await worker.recognize(canvas);
-
-    // Convert to our word format
-    const words: OcrWord[] = (ocrWords || [])
-      .filter(
-        (w: { text: string; confidence: number }) =>
-          w.text.trim() && w.confidence > 10
-      )
-      .map(
-        (w: {
-          text: string;
-          bbox: { x0: number; y0: number; x1: number; y1: number };
-          confidence: number;
-        }) => ({
-          text: w.text.trim(),
-          x: w.bbox.x0,
-          y: w.bbox.y0,
-          w: w.bbox.x1 - w.bbox.x0,
-          h: w.bbox.y1 - w.bbox.y0,
-          right: w.bbox.x1,
-          conf: w.confidence,
-        })
-      );
-
-    report(
-      pageBaseProgress + pageProgressRange * 0.6,
-      `Analyzing layout page ${pageNum}/${totalPages}...`
-    );
-
-    // Analyze layout
-    const pageWidth = viewport.width;
-    const pageHeight = viewport.height;
-    const rows = groupIntoRows(words);
-    const startIdx = detectHeaderEnd(rows, pageHeight);
-    const isSideBySide = detectSideBySide(words, pageWidth);
-
-    report(
-      pageBaseProgress + pageProgressRange * 0.8,
-      `Structuring data page ${pageNum}/${totalPages}...`
-    );
-
-    const pageData: PageData = {
-      pageNumber: pageNum,
-      sheetName: `Halaman_${pageNum}`,
-      isSideBySide,
-    };
-
-    if (isSideBySide) {
-      const { leftRows, rightRows } = parseSideBySide(
-        rows,
-        startIdx,
-        pageWidth,
-        pageHeight
-      );
-      pageData.leftRows = leftRows;
-      pageData.rightRows = rightRows;
-      pageData.leftTitle = "Aktiva";
-      pageData.rightTitle = "Passiva";
+    if (pageType === 'neraca') {
+      const { leftRows, rightRows, leftTitle, rightTitle } = parseNeracaPage(rows, boldFonts);
+      pages.push({
+        pageNumber: pageNum,
+        sheetName,
+        isSideBySide: true,
+        leftRows,
+        rightRows,
+        leftTitle,
+        rightTitle,
+      });
     } else {
-      pageData.rows = parseSingleColumn(rows, startIdx, pageHeight);
+      const parsedRows = parseLaraRugiPage(rows, boldFonts);
+      pages.push({
+        pageNumber: pageNum,
+        sheetName,
+        isSideBySide: false,
+        rows: parsedRows,
+      });
     }
-
-    pages.push(pageData);
   }
 
-  await worker.terminate();
-
-  report(92, "Extraction complete");
+  onProgress?.({ progress: 80, status: 'Text extraction complete.' });
 
   return { pages, totalPages };
 }
 
-/* ------------------------------------------------------------------ */
-/*  Phase 2 Ã¢ÂÂ Generate Excel                                           */
-/* ------------------------------------------------------------------ */
-
-export async function generateExcel(
+// ---------------------------------------------------------------------------
+// GENERATE EXCEL from extracted data
+// ---------------------------------------------------------------------------
+async function generateExcel(
   extraction: PdfExtractionResult,
   onProgress?: (update: ProcessingUpdate) => void
 ): Promise<Blob> {
-  const report = (progress: number, status: string) =>
-    onProgress?.({ progress, status });
+  onProgress?.({ progress: 85, status: 'Generating Excel file...' });
 
-  report(93, "Generating Excel...");
+  // Dynamic import ExcelJS
+  const ExcelJS = await import('exceljs');
+  const workbook = new ExcelJS.default.Workbook();
 
-  // Dynamically import ExcelJS for browser compatibility
-  const ExcelJS = await import("exceljs");
-  const wb = new ExcelJS.default.Workbook();
+  for (const pageData of extraction.pages) {
+    const ws = workbook.addWorksheet(pageData.sheetName);
 
-  // Styles
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const headerFill: any = {
-    type: "pattern",
-    pattern: "solid",
-    fgColor: { argb: "FFD9D9D9" },
-  };
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const totalFill: any = {
-    type: "pattern",
-    pattern: "solid",
-    fgColor: { argb: "FFFFF2CC" },
-  };
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const thinBorder: any = {
-    top: { style: "thin" },
-    left: { style: "thin" },
-    right: { style: "thin" },
-    bottom: { style: "thin" },
-  };
-
-  for (const page of extraction.pages) {
-    const ws = wb.addWorksheet(page.sheetName);
-
-    if (page.isSideBySide && page.leftRows && page.rightRows) {
-      // ---- Side-by-side layout ----
-      const leftHeaders = [
-        page.leftTitle || "Left",
-        "Rp",
-        "Nilai",
-      ];
-      const rightHeaders = [
-        page.rightTitle || "Right",
-        "Rp",
-        "Nilai",
+    if (pageData.isSideBySide && pageData.leftRows && pageData.rightRows) {
+      // Neraca — side-by-side layout
+      // Columns: A=Aktiva, B=Rp, C=Nilai, D=(empty), E=Passiva, F=Rp, G=Nilai
+      ws.columns = [
+        { width: 30 }, // A: Aktiva label
+        { width: 18 }, // B: Rp value
+        { width: 18 }, // C: Nilai total
+        { width: 3 },  // D: spacer
+        { width: 30 }, // E: Passiva label
+        { width: 18 }, // F: Rp value
+        { width: 18 }, // G: Nilai total
       ];
 
-      // Column headers
-      leftHeaders.forEach((h, i) => {
-        const cell = ws.getCell(1, i + 1);
-        cell.value = h;
-        cell.font = { bold: true, size: 11 };
-        cell.fill = headerFill;
-        cell.alignment = { horizontal: "center" };
-        cell.border = thinBorder;
+      // Header row
+      const headerRow = ws.addRow([
+        pageData.leftTitle || 'Aktiva', 'Rp', 'Nilai',
+        '', pageData.rightTitle || 'Passiva', 'Rp', 'Nilai',
+      ]);
+      headerRow.eachCell((cell) => {
+        cell.font = { bold: true };
       });
 
-      // Gap column (D)
-      const gapCol = 4;
+      // Data rows — merge left and right by index
+      const maxRows = Math.max(pageData.leftRows.length, pageData.rightRows.length);
 
-      rightHeaders.forEach((h, i) => {
-        const cell = ws.getCell(1, gapCol + i + 1);
-        cell.value = h;
-        cell.font = { bold: true, size: 11 };
-        cell.fill = headerFill;
-        cell.alignment = { horizontal: "center" };
-        cell.border = thinBorder;
-      });
+      for (let i = 0; i < maxRows; i++) {
+        const left = pageData.leftRows[i];
+        const right = pageData.rightRows[i];
 
-      // Write left data
-      let rowNum = 2;
-      for (const item of page.leftRows) {
-        writeSideRow(ws, rowNum, 1, item, thinBorder, headerFill, totalFill);
-        rowNum++;
-      }
+        const rowValues: (string | number | null)[] = [
+          left?.label || '',
+          left?.subValue ?? null,
+          left?.mainValue ?? null,
+          null,
+          right?.label || '',
+          right?.subValue ?? null,
+          right?.mainValue ?? null,
+        ];
 
-      // Write right data
-      rowNum = 2;
-      for (const item of page.rightRows) {
-        writeSideRow(
-          ws,
-          rowNum,
-          gapCol + 1,
-          item,
-          thinBorder,
-          headerFill,
-          totalFill
-        );
-        rowNum++;
-      }
+        const excelRow = ws.addRow(rowValues);
 
-      // Column widths
-      ws.getColumn(1).width = 35;
-      ws.getColumn(2).width = 22;
-      ws.getColumn(3).width = 22;
-      ws.getColumn(4).width = 3;
-      ws.getColumn(5).width = 35;
-      ws.getColumn(6).width = 22;
-      ws.getColumn(7).width = 22;
-    } else if (page.rows) {
-      // ---- Single-column layout ----
-      const headers = ["No", "Keterangan", "Sub-Amount (Rp)", "Amount (Rp)"];
-      headers.forEach((h, i) => {
-        const cell = ws.getCell(1, i + 1);
-        cell.value = h;
-        cell.font = { bold: true, size: 11 };
-        cell.fill = headerFill;
-        cell.alignment = { horizontal: "center" };
-        cell.border = thinBorder;
-      });
-
-      let rowNum = 2;
-      for (const item of page.rows) {
-        const cellNo = ws.getCell(rowNum, 1);
-        const cellLabel = ws.getCell(rowNum, 2);
-        const cellSub = ws.getCell(rowNum, 3);
-        const cellMain = ws.getCell(rowNum, 4);
-
-        cellNo.value = item.rowNumber ? parseInt(item.rowNumber, 10) : null;
-        cellLabel.value = item.label;
-        cellSub.value = item.subValue;
-        cellMain.value = item.mainValue;
-
-        // Borders
-        [cellNo, cellLabel, cellSub, cellMain].forEach((c) => {
-          c.border = thinBorder;
-        });
-
-        // Alignment
-        cellLabel.alignment = {
-          horizontal: "left",
-          indent: item.isIndented ? 2 : 0,
-        };
-        cellSub.alignment = { horizontal: "right" };
-        cellMain.alignment = { horizontal: "right" };
-        cellSub.numFmt = "#,##0";
-        cellMain.numFmt = "#,##0";
-
-        // Header style
-        if (item.isHeader) {
-          [cellNo, cellLabel, cellSub, cellMain].forEach((c) => {
-            c.font = { bold: true, size: 11 };
-            c.fill = headerFill;
-          });
+        // Apply bold formatting
+        if (left?.isHeader || left?.isTotal) {
+          excelRow.getCell(1).font = { bold: true };
+          if (left?.mainValue !== null) excelRow.getCell(3).font = { bold: true };
+        }
+        if (right?.isHeader || right?.isTotal) {
+          excelRow.getCell(5).font = { bold: true };
+          if (right?.mainValue !== null) excelRow.getCell(7).font = { bold: true };
         }
 
-        // Total style
-        if (item.isTotal) {
-          [cellNo, cellLabel, cellSub, cellMain].forEach((c) => {
-            c.font = { bold: true, size: 11 };
-            c.fill = totalFill;
-          });
+        // Number formatting for currency columns
+        for (const col of [2, 3, 6, 7]) {
+          const cell = excelRow.getCell(col);
+          if (cell.value !== null && cell.value !== undefined) {
+            cell.numFmt = '#,##0';
+          }
+        }
+      }
+    } else if (pageData.rows) {
+      // Laba Rugi — 4 columns
+      // Columns: A=No, B=Keterangan, C=Sub-Amount (Rp), D=Amount (Rp)
+      ws.columns = [
+        { width: 6 },  // A: No
+        { width: 50 }, // B: Keterangan
+        { width: 20 }, // C: Sub-Amount
+        { width: 20 }, // D: Amount
+      ];
+
+      // Header row
+      const headerRow = ws.addRow(['No', 'Keterangan', 'Sub-Amount (Rp)', 'Amount (Rp)']);
+      headerRow.eachCell((cell) => {
+        cell.font = { bold: true };
+      });
+
+      for (const row of pageData.rows) {
+        const excelRow = ws.addRow([
+          row.rowNumber || null,
+          row.label,
+          row.subValue,
+          row.mainValue,
+        ]);
+
+        // Bold for headers and totals
+        if (row.isHeader || row.isTotal) {
+          excelRow.getCell(2).font = { bold: true };
+          if (row.mainValue !== null) {
+            excelRow.getCell(4).font = { bold: true };
+          }
         }
 
-        rowNum++;
+        // Number formatting
+        for (const col of [3, 4]) {
+          const cell = excelRow.getCell(col);
+          if (cell.value !== null && cell.value !== undefined) {
+            cell.numFmt = '#,##0';
+          }
+        }
       }
-
-      // Column widths
-      ws.getColumn(1).width = 6;
-      ws.getColumn(2).width = 50;
-      ws.getColumn(3).width = 22;
-      ws.getColumn(4).width = 22;
     }
   }
 
-  report(98, "Finalizing...");
+  onProgress?.({ progress: 95, status: 'Finalizing Excel file...' });
 
-  const buffer = await wb.xlsx.writeBuffer();
+  const buffer = await workbook.xlsx.writeBuffer();
   return new Blob([buffer], {
-    type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   });
 }
 
-/** Helper to write a single row in side-by-side mode */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function writeSideRow(
-  ws: any,
-  rowNum: number,
-  startCol: number,
-  item: RowData,
-  border: any,
-  headerFill: any,
-  totalFill: any
-) {
-  const cellLabel = ws.getCell(rowNum, startCol);
-  const cellSub = ws.getCell(rowNum, startCol + 1);
-  const cellMain = ws.getCell(rowNum, startCol + 2);
-
-  cellLabel.value = item.label;
-  cellSub.value = item.subValue;
-  cellMain.value = item.mainValue;
-
-  [cellLabel, cellSub, cellMain].forEach((c) => {
-    c.border = border;
-  });
-
-  cellSub.alignment = { horizontal: "right" };
-  cellMain.alignment = { horizontal: "right" };
-  cellSub.numFmt = "#,##0";
-  cellMain.numFmt = "#,##0";
-
-  if (item.isHeader) {
-    [cellLabel, cellSub, cellMain].forEach((c) => {
-      c.font = { bold: true, size: 11 };
-      c.fill = headerFill;
-    });
-  }
-
-  if (item.isTotal) {
-    [cellLabel, cellSub, cellMain].forEach((c) => {
-      c.font = { bold: true, size: 11 };
-      c.fill = totalFill;
-    });
-  }
-}
-
-/* ------------------------------------------------------------------ */
-/*  Main entry point (combines Phase 1 + Phase 2)                      */
-/* ------------------------------------------------------------------ */
-
+// ---------------------------------------------------------------------------
+// EXPORTED: Main conversion function
+// ---------------------------------------------------------------------------
 export async function convertPdfToExcel(
   file: File,
   onProgress?: (update: ProcessingUpdate) => void
 ): Promise<PdfToExcelResult> {
   const originalSize = file.size;
 
+  // Step 1: Extract structured data from PDF
   const extraction = await extractFromPdf(file, onProgress);
+
+  // Step 2: Generate Excel
   const blob = await generateExcel(extraction, onProgress);
 
-  onProgress?.({ progress: 100, status: "Done!" });
+  onProgress?.({ progress: 100, status: 'Conversion complete!' });
 
   return {
     blob,
