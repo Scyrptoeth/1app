@@ -1,14 +1,19 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  typescript: {
-    // Build succeeds (Compiled successfully) but strict type checking
-    // fails on DOM API types (ImageData, Uint8ClampedArray).
-    // These are annotation-only issues, not runtime bugs.
-    ignoreBuildErrors: true,
-  },
-  webpack: (config) => {
+  webpack: (config, { isServer }) => {
     // Required for pdf.js worker
     config.resolve.alias.canvas = false;
+
+    // ExcelJS needs 'fs' polyfill for browser
+    if (!isServer) {
+      config.resolve.fallback = {
+        ...config.resolve.fallback,
+        fs: false,
+        stream: false,
+        crypto: false,
+      };
+    }
+
     return config;
   },
 };
