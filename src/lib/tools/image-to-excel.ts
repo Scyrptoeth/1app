@@ -178,21 +178,288 @@ function parseIndonesianNumber(text: string): number | null {
 }
 
 // ============================================================
-// Phase 0: Image Preprocessing (Canvas-based)
+// Phase 0: Image Preprocessing (Enhanced Pipeline v6)
 // ============================================================
 
 /**
- * Preprocess image for optimal OCR accuracy.
+ * CLAHE — Contrast Limited Adaptive Histogram Equalization.
+ * Dramatically improves contrast in images with uneven lighting (phone photos).
+ * Divides image into tiles and equalizes each tile's histogram independently,
+ * with a clip limit to prevent over-amplification of noise.
  *
- * This is the CRITICAL step that fixes the 32% OCR confidence problem.
- * Without preprocessing, Tesseract receives a low-DPI RGBA image and produces garbage.
+ * @param gray - Grayscale pixel array
+ * @param w - Image width
+ * @param h - Image height
+ * @param tileX - Number of horizontal tiles (default 8)
+ * @param tileY - Number of vertical tileW (default 8)
+ * @param clipLimit - Histogram clip limit (default 2.5)
+ */
+function applyCLAHE(
+  gray: Uint8Array,
+  w: number,
+  h: number,
+  tileX: number = 8,
+  tileY: number = 8,
+  clipLimit: number = 2.5
+): Uint8Array {
+  const result = new Uint8Array(gray.length);
+  const tileW = Math.ceil(w / tileX);
+  const tileH = Math.ceil(h / tileY);
+  const bins = 256;
+
+  // Build lookup tables for each tile
+  const luts: Uint8Array[][] = [];
+  for (let ty = 0; ty < tileY; ty++) {
+    luts[ty] = [];
+    for (let tx = 0; tx < tileX; tx++) {
+      const x0 = tx * tileW;
+      const y0 = ty * tileH;
+      const x1 = Math.min(x0 + tileW, w);
+      const y1 = Math.min(y0 + tileH, h);
+      const tilePixels = (x1 - x0) * (y1 - y0);
+
+      // Build histogram for this tile
+      const hist = new Int32Array(bins);
+      for (let y = y0; y < y1; y++) {
+        for (let x = x0; x < x1; x++) {
+          hist[gray[y * w + x]]++;
+        }
+      }
+
+      // Clip histogram and redistribute
+      const limit = Math.max(1, Math.round(clipLimit * tilePixels / bins));
+      let excess = 0;
+      for (let i = 0; i < bins; i++) {
+        if (hist[i] > limit) {
+          excess += hist[i] - limit;
+          hist[i] = limit;
+        }
+      }
+      const increment = Math.floor(excess / bins);
+      const remainder = excess - increment * bins;
+      for (let i = 0; i < bins; i++) {
+        hist[i] += increment + (i < remainder ? 1 : 0);
+      }
+
+      // Build CDF lookup table
+      const lut = new Uint8Array(bins);
+      let cumSum = 0;
+      for (let i = 0; i < bins; i++) {
+        cumSum += hist[i];
+        lut[i] = Math.round(((cumSum - 1) / Math.max(1, tilePixels - 1)) * 255);
+      }
+      luts[ty][tx] = lut;
+    }
+  }
+
+  // Interpolate between tiles for smooth result
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const pixel = gray[y * w + x];
+      // Find which tile center this pixel is closest to
+      const fx = (x / tileW) - 0.5;
+      const fy = (y / tileH) - 0.5;
+      const tx0 = Math.max(0, Math.floor(fx));
+      const ty0 = Math.max(0, Math.floor(fy));
+      const tx1 = Math.min(tx0 + 1, tileX - 1);
+      const ty1 = Math.min(ty0 + 1, tileY - 1);
+      const dx = Math.max(0, Math.min(1, fx - tx0));
+      const dy = Math.max(0, Math.min(1, fy - ty0));
+
+      // Bilinear interpolation of 4 surrounding tile LUTs
+      const v00 = luts[ty0][tx0][pixel];
+      const v10 = luts[ty0][tx1][pixel];
+      const v01 = luts[ty1][tx0][pixel];
+      const v11 = luts[ty1][tx1][pixel];
+      const top = v00 * (1 - dx) + v10 * dx;
+      const bot = v01 * (1 - dx) + v11 * dx;
+      result[y * w + x] = Math.round(top * (1 - dy) + bot * dy);
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Gaussian Blur 5x5 — reduces noise before thresholding.
+ * Tesseract docs specifically recommend slight blur to smooth grain.
+ * A 5x5 kernel gives better noise reduction than 3x3 while preserving character edges.
+ */
+function applyGaussianBlur5x5(gray: Uint8Array, w: number, h: number): Uint8Array {
+  const result = new Uint8Array(gray.length);
+  // 5x5 Gaussian kernel (σ ≈ 1.0), sum = 273
+  const kernel = [
+    1, 4, 7, 4, 1,
+    4, 16, 26, 16, 4,
+    7, 26, 41, 26, 7,
+    4, 16, 26, 16, 4,
+    1, 4, 7, 4, 1,
+  ];
+  const kSum = 273;
+
+  for (let y = 2; y < h - 2; y++) {
+    for (let x = 2; x < w - 2; x++) {
+      let val = 0;
+      for (let ky = -2; ky <= 2; ky++) {
+        for (let kx = -2; kx <= 2; kx++) {
+          val += gray[(y + ky) * w + (x + kx)] * kernel[(ky + 2) * 5 + (kx + 2)];
+        }
+      }
+      result[y * w + x] = Math.round(val / kSum);
+    }
+  }
+
+  // Copy edges unchanged
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      if (y < 2 || y >= h - 2 || x < 2 || x >= w - 2) {
+        result[y * w + x] = gray[y * w + x];
+      }
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Sauvola Adaptive Thresholding — handles uneven lighting much better than global Otsu.
  *
- * Steps:
- * 1. Upscale to minimum 2500px width (Tesseract needs ~300 DPI)
- * 2. Flatten RGBA to RGB with white background
+ * For each pixel, the threshold is computed from a local neighborhood:
+ *   T(x,y) = mean * (1 + k * (stddev / R - 1))
+ * where R = 128 (dynamic range of grayscale), k = tuning parameter.
+ *
+ * Uses integral image and integral square image for O(1) per-pixel computation.
+ *
+ * @param gray - Grayscale pixel array
+ * @param w - Image width
+ * @param h - Image height
+ * @param blockSize - Local neighborhood size (must be odd)
+ * @param k - Sauvola parameter (0.0-0.5, lower = more text preserved)
+ */
+function sauvolaThreshold(
+  gray: Uint8Array,
+  w: number,
+  h: number,
+  blockSize: number = 25,
+  k: number = 0.15
+): Uint8Array {
+  const binary = new Uint8Array(w * h);
+  const halfBlock = Math.floor(blockSize / 2);
+  const R = 128; // Half the dynamic range
+
+  // Build integral image and integral of squares for O(1) block mean/variance
+  const integral = new Float64Array((w + 1) * (h + 1));
+  const integralSq = new Float64Array((w + 1) * (h + 1));
+
+  for (let y = 0; y < h; y++) {
+    let rowSum = 0;
+    let rowSumSq = 0;
+    for (let x = 0; x < w; x++) {
+      const val = gray[y * w + x];
+      rowSum += val;
+      rowSumSq += val * val;
+      integral[(y + 1) * (w + 1) + (x + 1)] =
+        integral[y * (w + 1) + (x + 1)] + rowSum;
+      integralSq[(y + 1) * (w + 1) + (x + 1)] =
+        integralSq[y * (w + 1) + (x + 1)] + rowSumSq;
+    }
+  }
+
+  // Helper to get block sum from integral image
+  const getBlockSum = (img: Float64Array, x0: number, y0: number, x1: number, y1: number): number => {
+    return img[(y1 + 1) * (w + 1) + (x1 + 1)]
+      - img[(y0) * (w + 1) + (x1 + 1)]
+      - img[(y1 + 1) * (w + 1) + (x0)]
+      + img[(y0) * (w + 1) + (x0)];
+  };
+
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const x0 = Math.max(0, x - halfBlock);
+      const y0 = Math.max(0, y - halfBlock);
+      const x1 = Math.min(w - 1, x + halfBlock);
+      const y1 = Math.min(h - 1, y + halfBlock);
+      const count = (x1 - x0 + 1) * (y1 - y0 + 1);
+
+      const blockSum = getBlockSum(integral, x0, y0, x1, y1);
+      const blockSumSq = getBlockSum(integralSq, x0, y0, x1, y1);
+      const mean = blockSum / count;
+      const variance = (blockSumSq / count) - (mean * mean);
+      const stddev = Math.sqrt(Math.max(0, variance));
+
+      // Sauvola formula: T = mean * (1 + k * (stddev / R - 1))
+      const threshold = mean * (1 + k * (stddev / R - 1));
+
+      binary[y * w + x] = gray[y * w + x] > threshold ? 255 : 0;
+    }
+  }
+
+  return binary;
+}
+
+/**
+ * Morphological Opening — erode then dilate to remove small noise (salt/pepper).
+ * Uses a 3x3 cross-shaped structuring element.
+ * Erode removes isolated white noise, dilate restores character edges.
+ */
+function morphologicalOpen(binary: Uint8Array, w: number, h: number): Uint8Array {
+  // Erode: pixel is 0 (black) if ANY neighbor in structuring element is 0
+  const eroded = new Uint8Array(w * h);
+  for (let y = 1; y < h - 1; y++) {
+    for (let x = 1; x < w - 1; x++) {
+      const center = binary[y * w + x];
+      const top = binary[(y - 1) * w + x];
+      const bot = binary[(y + 1) * w + x];
+      const left = binary[y * w + (x - 1)];
+      const right = binary[y * w + (x + 1)];
+      // Cross element: if center AND all 4 neighbors are white, keep white
+      eroded[y * w + x] = (center & top & bot & left & right) ? 255 : 0;
+    }
+  }
+
+  // Dilate: pixel is 255 (white) if ANY neighbor in structuring element is 255
+  const dilated = new Uint8Array(w * h);
+  for (let y = 1; y < h - 1; y++) {
+    for (let x = 1; x < w - 1; x++) {
+      const center = eroded[y * w + x];
+      const top = eroded[(y - 1) * w + x];
+      const bot = eroded[(y + 1) * w + x];
+      const left = eroded[y * w + (x - 1)];
+      const right = eroded[y * w + (x + 1)];
+      // Cross element: if ANY is white, set white
+      dilated[y * w + x] = (center | top | bot | left | right) ? 255 : 0;
+    }
+  }
+
+  // Copy edges from original binary
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      if (y === 0 || y === h - 1 || x === 0 || x === w - 1) {
+        dilated[y * w + x] = binary[y * w + x];
+      }
+    }
+  }
+
+  return dilated;
+}
+
+/**
+ * Enhanced Preprocessing Pipeline v6 for optimal OCR accuracy.
+ *
+ * This is the CRITICAL step for high OCR confidence. The pipeline:
+ * 1. Upscale to ~400 DPI equivalent (3400px minimum width)
+ * 2. Sharpen with 3x3 unsharp mask for crisp character edges
  * 3. Convert to grayscale (luminance)
- * 4. Compute Otsu's threshold for adaptive binarization
- * 5. Apply binarization (pure black & white)
+ * 4. CLAHE — adaptive contrast enhancement (handles uneven lighting)
+ * 5. Gaussian Blur 5x5 — smooths grain/noise before thresholding
+ * 6. Sauvola Adaptive Threshold — per-pixel threshold based on local neighborhood
+ * 7. Morphological Opening — removes salt/pepper noise
+ *
+ * Key improvements over v5 (Global Otsu):
+ * - CLAHE handles low-contrast phone photos
+ * - Sauvola adapts to uneven lighting (shadows, vignetting)
+ * - Gaussian blur reduces noise that causes false characters
+ * - Morphological opening cleans residual noise pixels
  *
  * Returns { blob, scale } where scale maps OCR coordinates back to original space.
  */
@@ -217,7 +484,6 @@ async function preprocessImage(
   URL.revokeObjectURL(imgUrl);
 
   // Determine scale factor: target at least 3400px width (~400 DPI equivalent)
-  // Higher resolution significantly improves digit and character recognition
   const MIN_WIDTH = 3400;
   const scale = origWidth < MIN_WIDTH
     ? Math.ceil(MIN_WIDTH / origWidth)
@@ -225,7 +491,7 @@ async function preprocessImage(
   const scaledWidth = origWidth * scale;
   const scaledHeight = origHeight * scale;
 
-  onProgress({ progress: 2, status: `Upscaling image ${scale}x for OCR accuracy...` });
+  onProgress({ progress: 1, status: `Upscaling image ${scale}x for OCR accuracy...` });
 
   // Create canvas at scaled size
   const canvas = document.createElement('canvas');
@@ -247,15 +513,13 @@ async function preprocessImage(
   const data = imageData.data;
   const pixelCount = data.length / 4;
 
-  onProgress({ progress: 3, status: 'Sharpening and converting to grayscale...' });
+  onProgress({ progress: 2, status: 'Sharpening character edges...' });
 
-  // Step 0.5: Apply unsharp mask (sharpen) to improve character edges
-  // This makes thin strokes and digits much clearer for OCR
+  // Step 1: Sharpen with 3x3 unsharp mask — improves thin strokes and digits
   {
     const w = scaledWidth;
     const h = scaledHeight;
     const src = new Uint8ClampedArray(data);
-    // 3x3 sharpen kernel: center=9, edges=-1
     const kernel = [-1, -1, -1, -1, 9, -1, -1, -1, -1];
     for (let y = 1; y < h - 1; y++) {
       for (let x = 1; x < w - 1; x++) {
@@ -272,7 +536,7 @@ async function preprocessImage(
     }
   }
 
-  // Step 1: Convert to grayscale (luminance)
+  // Step 2: Convert to grayscale (luminance)
   const grayscale = new Uint8Array(pixelCount);
   for (let i = 0; i < pixelCount; i++) {
     const idx = i * 4;
@@ -281,44 +545,34 @@ async function preprocessImage(
     );
   }
 
-  // Step 2: Compute Otsu's threshold
-  const histogram = new Int32Array(256);
+  onProgress({ progress: 2, status: 'Enhancing contrast (CLAHE)...' });
+
+  // Step 3: CLAHE — adaptive contrast enhancement
+  // Dramatically improves text visibility in low-contrast / unevenly-lit images
+  const enhanced = applyCLAHE(grayscale, scaledWidth, scaledHeight, 8, 8, 2.5);
+
+  onProgress({ progress: 3, status: 'Reducing noise (Gaussian blur)...' });
+
+  // Step 4: Gaussian blur 5x5 — smooth noise before thresholding
+  // Tesseract docs: slight blur reduces grain and improves recognition
+  const smoothed = applyGaussianBlur5x5(enhanced, scaledWidth, scaledHeight);
+
+  onProgress({ progress: 3, status: 'Applying adaptive threshold (Sauvola)...' });
+
+  // Step 5: Sauvola adaptive threshold — per-pixel threshold based on local statistics
+  // Handles uneven lighting, shadows, and vignetting much better than global Otsu
+  // blockSize=25 is ~2.5mm at 400 DPI, good for document text
+  // k=0.15 is slightly aggressive to preserve thin strokes
+  const binary = sauvolaThreshold(smoothed, scaledWidth, scaledHeight, 25, 0.15);
+
+  onProgress({ progress: 4, status: 'Cleaning noise (morphological opening)...' });
+
+  // Step 6: Morphological opening — remove small salt/pepper noise
+  const cleaned = morphologicalOpen(binary, scaledWidth, scaledHeight);
+
+  // Write binary result back to canvas
   for (let i = 0; i < pixelCount; i++) {
-    histogram[grayscale[i]]++;
-  }
-
-  let sum = 0;
-  for (let i = 0; i < 256; i++) sum += i * histogram[i];
-
-  let sumB = 0;
-  let wB = 0;
-  let maxVariance = 0;
-  let threshold = 128;
-
-  for (let t = 0; t < 256; t++) {
-    wB += histogram[t];
-    if (wB === 0) continue;
-    const wF = pixelCount - wB;
-    if (wF === 0) break;
-
-    sumB += t * histogram[t];
-    const mB = sumB / wB;
-    const mF = (sum - sumB) / wF;
-
-    const variance = wB * wF * (mB - mF) * (mB - mF);
-    if (variance > maxVariance) {
-      maxVariance = variance;
-      threshold = t;
-    }
-  }
-
-  // Step 3: Apply binarization
-  // Moderate bias toward preserving text (lower threshold = more black pixels preserved)
-  // Reduced from +15 to +10 to preserve more thin strokes and digits
-  const binaryThreshold = Math.min(threshold + 10, 245);
-
-  for (let i = 0; i < pixelCount; i++) {
-    const val = grayscale[i] < binaryThreshold ? 0 : 255;
+    const val = cleaned[i];
     const idx = i * 4;
     data[idx] = val;
     data[idx + 1] = val;
@@ -354,16 +608,12 @@ async function performOcr(
 
   // Try Indonesian language first for much better text accuracy on Indonesian documents.
   // Fall back to English if Indonesian language data fails to load.
+  let lang = 'ind';
   let worker;
   try {
     worker = await createWorker('ind', 1, {
       logger: (m) => {
-        if (m.status === 'recognizing text') {
-          onProgress({
-            progress: 8 + Math.round(m.progress * 35),
-            status: 'Recognizing text...',
-          });
-        } else if (m.status === 'loading language traineddata') {
+        if (m.status === 'loading language traineddata') {
           onProgress({
             progress: 6,
             status: 'Loading Indonesian language data (first time may take a moment)...',
@@ -372,16 +622,11 @@ async function performOcr(
       },
     });
   } catch {
-    // Fallback to English if Indonesian data unavailable
+    lang = 'eng';
     onProgress({ progress: 5, status: 'Falling back to English OCR...' });
     worker = await createWorker('eng', 1, {
       logger: (m) => {
-        if (m.status === 'recognizing text') {
-          onProgress({
-            progress: 8 + Math.round(m.progress * 35),
-            status: 'Recognizing text...',
-          });
-        } else if (m.status === 'loading language traineddata') {
+        if (m.status === 'loading language traineddata') {
           onProgress({
             progress: 6,
             status: 'Loading language data (first time may take a moment)...',
@@ -391,18 +636,40 @@ async function performOcr(
     });
   }
 
-  // Set optimal parameters for financial documents
+  // --- Multi-pass OCR ---
+  // Pass 1: PSM 6 — assume uniform block of text (good for full-page documents)
+  // Pass 2: PSM 4 — assume single column of variable-size text (better for tables)
+  // We pick the result with highest confidence.
+
+  onProgress({ progress: 8, status: 'OCR Pass 1/2 (block mode)...' });
+
   await worker.setParameters({
-    tessedit_pageseg_mode: '6', // Uniform block of text
+    tessedit_pageseg_mode: '6',
     preserve_interword_spaces: '1',
   });
+  const result1 = await worker.recognize(imageBlob);
+  const conf1 = result1.data.confidence;
 
-  onProgress({ progress: 8, status: 'Running OCR on preprocessed image...' });
+  onProgress({ progress: 28, status: `Pass 1 confidence: ${conf1.toFixed(1)}%. Running Pass 2...` });
 
-  const result = await worker.recognize(imageBlob);
+  await worker.setParameters({
+    tessedit_pageseg_mode: '4',
+    preserve_interword_spaces: '1',
+  });
+  const result2 = await worker.recognize(imageBlob);
+  const conf2 = result2.data.confidence;
+
   await worker.terminate();
 
-  onProgress({ progress: 46, status: 'OCR complete, analyzing layout...' });
+  // Pick better result
+  const result = conf2 > conf1 ? result2 : result1;
+  const bestConf = Math.max(conf1, conf2);
+  const bestPsm = conf2 > conf1 ? 4 : 6;
+
+  onProgress({
+    progress: 46,
+    status: `OCR complete (PSM ${bestPsm}, ${bestConf.toFixed(1)}%), analyzing layout...`,
+  });
 
   // Collect ALL words from ALL blocks/paragraphs/lines
   const allWords: OcrWord[] = [];
@@ -873,7 +1140,7 @@ function assignToColumn(
   return false;
 }
 
-// =======================================================
+// ============================================================
 // Phase 1: Main Extract Function
 // ============================================================
 
@@ -975,7 +1242,7 @@ export async function generateExcel(
   headerRow.eachCell((cell) => {
     cell.border = {
       top: { style: 'thin' },
-      bottom: { style: 'th: 'thin' },
+      bottom: { style: 'thin' },
       left: { style: 'thin' },
       right: { style: 'thin' },
     };
