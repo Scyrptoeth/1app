@@ -1,18 +1,19 @@
 /**
  * Image-to-Excel Converter
  *
- * Pipeline: Image -> Tesseract.js OCR -> Layout Analysis -> ExcelJS -> .xlsx
+ * Pipeline: Image -> Preprocessing -> Tesseract.js OCR -> Layout Analysis -> ExcelJS -> .xlsx
  *
  * Architecture:
+ * - Phase 0: preprocessImage() — upscale + grayscale + binarize for OCR accuracy
  * - Phase 1: extractFromImage() — OCR + layout analysis -> structured data
  * - Phase 2: generateExcel() — structured data -> .xlsx Blob
  *
  * All processing is client-side (browser). No server-side API calls.
  *
- * KEY DESIGN DECISION: We do NOT rely on Tesseract's line grouping.
- * Tesseract frequently merges multiple visual rows into a single "line",
- * which destroys the row structure of financial statements.
- * Instead, we collect ALL words and re-group them by Y-coordinate ourselves.
+ * KEY DESIGN DECISIONS:
+ * 1. We preprocess images before OCR (upscale, binarize) because Tesseract
+ *    needs ~300 DPI equivalent for good accuracy. Phone photos at 850px are ~100 DPI.
+ * 2. We do NOT rely on Tesseract's line grouping — we re-group words by Y-coordinate.
  */
 
 import { createWorker } from 'tesseract.js';
@@ -151,37 +152,185 @@ function parseIndonesianNumber(text: string): number | null {
 }
 
 // ============================================================
+// Phase 0: Image Preprocessing (Canvas-based)
+// ============================================================
+
+/**
+ * Preprocess image for optimal OCR accuracy.
+ *
+ * This is the CRITICAL step that fixes the 32% OCR confidence problem.
+ * Without preprocessing, Tesseract receives a low-DPI RGBA image and produces garbage.
+ *
+ * Steps:
+ * 1. Upscale to minimum 2500px width (Tesseract needs ~300 DPI)
+ * 2. Flatten RGBA to RGB with white background
+ * 3. Convert to grayscale (luminance)
+ * 4. Compute Otsu's threshold for adaptive binarization
+ * 5. Apply binarization (pure black & white)
+ *
+ * Returns { blob, scale } where scale maps OCR coordinates back to original space.
+ */
+async function preprocessImage(
+  file: File,
+  onProgress: (update: ProcessingUpdate) => void
+): Promise<{ blob: Blob; scale: number; width: number; height: number }> {
+  onProgress({ progress: 1, status: 'Loading image...' });
+
+  // Load image into an HTMLImageElement
+  const img = document.createElement('img');
+  const imgUrl = URL.createObjectURL(file);
+
+  await new Promise<void>((resolve, reject) => {
+    img.onload = () => resolve();
+    img.onerror = () => reject(new Error('Failed to load image'));
+    img.src = imgUrl;
+  });
+
+  const origWidth = img.naturalWidth;
+  const origHeight = img.naturalHeight;
+  URL.revokeObjectURL(imgUrl);
+
+  // Determine scale factor: target at least 2500px width
+  const MIN_WIDTH = 2500;
+  const scale = origWidth < MIN_WIDTH
+    ? Math.ceil(MIN_WIDTH / origWidth)
+    : 1;
+  const scaledWidth = origWidth * scale;
+  const scaledHeight = origHeight * scale;
+
+  onProgress({ progress: 2, status: `Upscaling image ${scale}x for OCR accuracy...` });
+
+  // Create canvas at scaled size
+  const canvas = document.createElement('canvas');
+  canvas.width = scaledWidth;
+  canvas.height = scaledHeight;
+  const ctx = canvas.getContext('2d')!;
+
+  // White background (flattens RGBA alpha channel)
+  ctx.fillStyle = '#FFFFFF';
+  ctx.fillRect(0, 0, scaledWidth, scaledHeight);
+
+  // High-quality upscale
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(img, 0, 0, scaledWidth, scaledHeight);
+
+  // Get pixel data for processing
+  const imageData = ctx.getImageData(0, 0, scaledWidth, scaledHeight);
+  const data = imageData.data;
+  const pixelCount = data.length / 4;
+
+  onProgress({ progress: 3, status: 'Converting to grayscale and binarizing...' });
+
+  // Step 1: Convert to grayscale (luminance)
+  const grayscale = new Uint8Array(pixelCount);
+  for (let i = 0; i < pixelCount; i++) {
+    const idx = i * 4;
+    grayscale[i] = Math.round(
+      0.299 * data[idx] + 0.587 * data[idx + 1] + 0.114 * data[idx + 2]
+    );
+  }
+
+  // Step 2: Compute Otsu's threshold
+  const histogram = new Int32Array(256);
+  for (let i = 0; i < pixelCount; i++) {
+    histogram[grayscale[i]]++;
+  }
+
+  let sum = 0;
+  for (let i = 0; i < 256; i++) sum += i * histogram[i];
+
+  let sumB = 0;
+  let wB = 0;
+  let maxVariance = 0;
+  let threshold = 128;
+
+  for (let t = 0; t < 256; t++) {
+    wB += histogram[t];
+    if (wB === 0) continue;
+    const wF = pixelCount - wB;
+    if (wF === 0) break;
+
+    sumB += t * histogram[t];
+    const mB = sumB / wB;
+    const mF = (sum - sumB) / wF;
+
+    const variance = wB * wF * (mB - mF) * (mB - mF);
+    if (variance > maxVariance) {
+      maxVariance = variance;
+      threshold = t;
+    }
+  }
+
+  // Step 3: Apply binarization
+  // Slight bias toward preserving text (lower threshold = more black pixels preserved)
+  const binaryThreshold = Math.min(threshold + 15, 245);
+
+  for (let i = 0; i < pixelCount; i++) {
+    const val = grayscale[i] < binaryThreshold ? 0 : 255;
+    const idx = i * 4;
+    data[idx] = val;
+    data[idx + 1] = val;
+    data[idx + 2] = val;
+    data[idx + 3] = 255;
+  }
+
+  ctx.putImageData(imageData, 0, 0);
+
+  onProgress({ progress: 4, status: 'Image preprocessing complete' });
+
+  // Export as PNG Blob
+  const blob = await new Promise<Blob>((resolve, reject) => {
+    canvas.toBlob(
+      (b) => (b ? resolve(b) : reject(new Error('Canvas export failed'))),
+      'image/png'
+    );
+  });
+
+  return { blob, scale, width: origWidth, height: origHeight };
+}
+
+// ============================================================
 // Phase 1: OCR — extract ALL words with bounding boxes
 // ============================================================
 
 async function performOcr(
-  imageFile: File,
+  imageBlob: Blob,
+  scale: number,
   onProgress: (update: ProcessingUpdate) => void
 ): Promise<{ words: OcrWord[]; rawText: string; confidence: number }> {
-  onProgress({ progress: 2, status: 'Initializing OCR engine...' });
+  onProgress({ progress: 5, status: 'Initializing OCR engine...' });
 
-  const worker = await createWorker('ind+eng', 1, {
+  // Use 'eng' for reliability — Indonesian uses Latin alphabet.
+  // Combined 'ind+eng' often causes download failures or model conflicts.
+  const worker = await createWorker('eng', 1, {
     logger: (m) => {
       if (m.status === 'recognizing text') {
         onProgress({
-          progress: 5 + Math.round(m.progress * 40),
+          progress: 8 + Math.round(m.progress * 35),
           status: 'Recognizing text...',
         });
       } else if (m.status === 'loading language traineddata') {
         onProgress({
-          progress: 3,
+          progress: 6,
           status: 'Loading language data (first time may take a moment)...',
         });
       }
     },
   });
 
-  onProgress({ progress: 5, status: 'Running OCR...' });
+  // Set optimal parameters for financial documents
+  await worker.setParameters({
+    tessedit_pageseg_mode: '6', // Uniform block of text
+    preserve_interword_spaces: '1',
+  });
 
-  const result = await worker.recognize(imageFile);
+  onProgress({ progress: 8, status: 'Running OCR on preprocessed image...' });
+
+  const result = await worker.recognize(imageBlob);
   await worker.terminate();
 
-  onProgress({ progress: 48, status: 'OCR complete, analyzing layout...' });
+  onProgress({ progress: 46, status: 'OCR complete, analyzing layout...' });
 
   // Collect ALL words from ALL blocks/paragraphs/lines
   const allWords: OcrWord[] = [];
@@ -192,10 +341,16 @@ async function performOcr(
         for (const line of paragraph.lines) {
           for (const w of line.words) {
             if (w.text.trim().length > 0) {
+              // Scale bbox coordinates back to original image space
               allWords.push({
                 text: w.text,
                 confidence: w.confidence,
-                bbox: w.bbox,
+                bbox: {
+                  x0: w.bbox.x0 / scale,
+                  y0: w.bbox.y0 / scale,
+                  x1: w.bbox.x1 / scale,
+                  y1: w.bbox.y1 / scale,
+                },
               });
             }
           }
@@ -591,24 +746,15 @@ export async function extractFromImage(
   file: File,
   onProgress: (update: ProcessingUpdate) => void
 ): Promise<ExtractionResult> {
-  // Get image dimensions
-  const img = new Image();
-  const imgUrl = URL.createObjectURL(file);
+  // Phase 0: Preprocess image for OCR accuracy
+  const { blob: processedBlob, scale, width: imageWidth, height: imageHeight } =
+    await preprocessImage(file, onProgress);
 
-  await new Promise<void>((resolve, reject) => {
-    img.onload = () => resolve();
-    img.onerror = () => reject(new Error('Failed to load image'));
-    img.src = imgUrl;
-  });
+  // Phase 1a: OCR on preprocessed image — get all words
+  // Coordinates are scaled back to original image space inside performOcr
+  const ocrResult = await performOcr(processedBlob, scale, onProgress);
 
-  const imageWidth = img.naturalWidth;
-  const imageHeight = img.naturalHeight;
-  URL.revokeObjectURL(imgUrl);
-
-  // Phase 1a: OCR — get all words
-  const ocrResult = await performOcr(file, onProgress);
-
-  onProgress({ progress: 50, status: 'Regrouping words into rows...' });
+  onProgress({ progress: 48, status: 'Regrouping words into rows...' });
 
   // Phase 1b: Re-group words by Y-coordinate (fixes Tesseract line merging)
   const wordRows = groupWordsIntoRows(ocrResult.words, imageHeight);
