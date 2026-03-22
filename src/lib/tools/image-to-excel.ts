@@ -101,6 +101,102 @@ const TOTAL_KEYWORDS = [
 ];
 
 // ============================================================
+// Post-OCR Correction Layer
+// ============================================================
+
+/**
+ * Indonesian financial term dictionary for OCR correction.
+ * Maps common OCR misreads to correct Indonesian accounting terms.
+ * These patterns are derived from systematic OCR error analysis on
+ * Indonesian financial statements (Laporan Laba Rugi, Neraca, etc.).
+ *
+ * Categories of OCR errors corrected:
+ * 1. rn/m confusion — OCR reads "m" as "rn" (e.g., Pernbelian → Pembelian)
+ * 2. Character substitution — similar-looking chars (e.g., fi → &, I → J)
+ * 3. Trailing artifacts — junk chars appended to words (e.g., "Ap", "Hp")
+ * 4. Common misreads of Indonesian words
+ */
+const LABEL_CORRECTIONS: [RegExp, string][] = [
+  // --- rn/m confusion (very common OCR error) ---
+  [/\bPernbellan\b/gi, 'Pembelian'],
+  [/\bPermbellan\b/gi, 'Pembelian'],
+  [/\bPernbelian\b/gi, 'Pembelian'],
+  [/\bPermbelian\b/gi, 'Pembelian'],
+  [/\bPerneliharaan\b/gi, 'Pemeliharaan'],
+  [/\bPerrneliharaan\b/gi, 'Pemeliharaan'],
+  [/\bPernbuatan\b/gi, 'Pembuatan'],
+  [/\bPerrnbuatan\b/gi, 'Pembuatan'],
+
+  // --- Character substitution ---
+  [/\bBehan\b/gi, 'Beban'],
+  [/\bBlaya\b/gi, 'Biaya'],
+  [/\bBiava\b/gi, 'Biaya'],
+  [/\bSawa\b/g, 'Sewa'],      // case-sensitive: Sawa → Sewa
+  [/\bBPIS\b/g, 'BPJS'],      // I→J
+  [/\bRX5\b/g, 'IKS'],        // complete misread
+  [/\bRXS\b/g, 'IKS'],
+  [/\bIX5\b/g, 'IKS'],
+  [/\bAllowancc\b/gi, 'Allowance'],
+  [/\bAllowanco\b/gi, 'Allowance'],
+  [/\bAllowanee\b/gi, 'Allowance'],
+
+  // --- Symbol/character misreads ---
+  [/\bBarang\s+fi\s+Jasa\b/gi, 'Barang & Jasa'],
+  [/\bBarang\s+fl\s+Jasa\b/gi, 'Barang & Jasa'],
+  [/\bBarang\s+f[il1]\s+Jasa\b/gi, 'Barang & Jasa'],
+  [/\bBank\s+SRI\b/g, 'Bank BRI'],  // S→B in bank name
+
+  // --- Trailing/leading artifacts from OCR ---
+  // These often appear when OCR picks up nearby text or noise
+  [/\s+[AH][pP]$/g, ''],         // trailing "Ap", "Hp" artifacts
+  [/\s+[AH]p\b/g, ''],           // mid-word trailing artifacts
+  [/^\d+\)\s*/, ''],              // leading "20)" → strip paren
+];
+
+/**
+ * Apply dictionary-based label correction to fix common OCR misreads.
+ * Processes all correction rules in order.
+ */
+function correctLabel(label: string): string {
+  let corrected = label;
+  for (const [pattern, replacement] of LABEL_CORRECTIONS) {
+    corrected = corrected.replace(pattern, replacement);
+  }
+  // Final cleanup: ensure no double spaces after replacements
+  corrected = corrected.replace(/\s{2,}/g, ' ').trim();
+  return corrected;
+}
+
+/**
+ * Post-process numeric value strings from OCR to fix common digit errors:
+ * 1. Remove spurious dots in pure digit sequences (e.g., "32.07121" → "3207121")
+ *    OCR sometimes inserts dots where there are none in the original.
+ * 2. Validate that dot-separated groups follow Indonesian thousand-separator pattern.
+ *    Valid: "1.975.155.731" (groups of 3). Invalid: "32.07121" (not groups of 3).
+ */
+function correctNumericValue(text: string): string {
+  let cleaned = text.trim();
+
+  // If the text has dots, check if they're valid Indonesian thousand separators
+  // Valid pattern: optional leading group of 1-3 digits, then groups of exactly 3
+  // e.g., "1.975.155.731", "24.223.997.498", "320.805.097.70" (invalid)
+  if (cleaned.includes('.') && !cleaned.includes(',')) {
+    const parts = cleaned.split('.');
+    // Check if ALL parts after the first are exactly 3 digits
+    const allGroupsOf3 = parts.slice(1).every((p) => /^\d{3}$/.test(p));
+    const firstGroupValid = /^\d{1,3}$/.test(parts[0]);
+
+    if (!allGroupsOf3 || !firstGroupValid) {
+      // Dots are spurious — remove them all (e.g., "32.07121" → "3207121")
+      cleaned = cleaned.replace(/\./g, '');
+    }
+    // else: dots are valid thousand separators, leave them
+  }
+
+  return cleaned;
+}
+
+// ============================================================
 // Utility Functions
 // ============================================================
 
@@ -1057,6 +1153,9 @@ function analyzeLayout(
       .replace(/\s{2,}/g, ' ')           // Multiple spaces → single space
       .trim();
 
+    // Apply dictionary-based OCR correction for Indonesian financial terms
+    label = correctLabel(label);
+
     if (!label && valuesByColumn.size === 0) continue;
 
     // Detect row number at start of label
@@ -1138,7 +1237,8 @@ function assignToColumn(
     const existing = valuesByColumn.get(bestCol) || '';
     // Only set if not already set (first value wins to avoid overwriting)
     if (!existing) {
-      valuesByColumn.set(bestCol, numText);
+      // Apply numeric post-processing to fix spurious dots and digit errors
+      valuesByColumn.set(bestCol, correctNumericValue(numText));
     }
     return true;
   }
