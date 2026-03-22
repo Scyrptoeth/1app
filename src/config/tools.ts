@@ -22,7 +22,7 @@ export type ToolCategory =
 
 export const categoryLabels: Record<ToolCategory, string> = {
   watermark: "Watermark",
-  convert: "Extraction",
+  convert: "Convert",
   merge: "Merge",
   compress: "Compress",
   ocr: "OCR",
@@ -68,15 +68,15 @@ export const tools: ToolConfig[] = [
     isAvailable: true,
   },
   {
-    id: "image-to-excel",
-    name: "Image to Excel",
+    id: "pdf-to-excel",
+    name: "PDF to Excel",
     description:
-      "Extract data from images of financial reports, tables, and invoices into formatted Excel spreadsheets.",
+      "Extract tables, numbers, and structured data from PDF documents into formatted Excel spreadsheets. Supports scanned documents via OCR.",
     category: "convert",
     icon: "FileSpreadsheet",
-    route: "/tools/image-to-excel",
+    route: "/tools/pdf-to-excel",
     accentColor: "blue",
-    inputFormats: [".png", ".jpg", ".jpeg"],
+    inputFormats: [".pdf"],
     outputFormats: [".xlsx"],
     isAvailable: true,
   },
