@@ -8,6 +8,11 @@
  * - Phase 2: generateExcel() — structured data -> .xlsx Blob
  *
  * All processing is client-side (browser). No server-side API calls.
+ *
+ * KEY DESIGN DECISION: We do NOT rely on Tesseract's line grouping.
+ * Tesseract frequently merges multiple visual rows into a single "line",
+ * which destroys the row structure of financial statements.
+ * Instead, we collect ALL words and re-group them by Y-coordinate ourselves.
  */
 
 import { createWorker } from 'tesseract.js';
@@ -58,10 +63,11 @@ interface OcrWord {
   bbox: { x0: number; y0: number; x1: number; y1: number };
 }
 
-interface OcrLine {
+interface WordRow {
   words: OcrWord[];
-  bbox: { x0: number; y0: number; x1: number; y1: number };
-  text: string;
+  minY: number;
+  maxY: number;
+  minX: number;
 }
 
 interface ColumnInfo {
@@ -90,7 +96,7 @@ const HEADER_KEYWORDS = [
 const TOTAL_KEYWORDS = [
   'HARGA POKOK PENJUALAN', 'LABA BERSIH', 'TOTAL', 'LABA SETELAH',
   'PPH TERUTANG', 'JUMLAH', 'PENGHASILAN DARI LUAR',
-  'LABA KOTOR', 'PENDAPATAN DILUAR',
+  'LABA KOTOR', 'PENDAPATAN DILUAR', 'TERSEDIA DIJUAL',
 ];
 
 // ============================================================
@@ -112,7 +118,6 @@ function isRpPrefix(text: string): boolean {
  */
 function isNumericValue(text: string): boolean {
   const cleaned = text.replace(/[.,\s_\-()]/g, '');
-  // Must contain at least 3 consecutive digits
   return /\d{3,}/.test(cleaned);
 }
 
@@ -122,7 +127,6 @@ function isNumericValue(text: string): boolean {
  * Example: "1.975.155.731" -> 1975155731
  */
 function parseIndonesianNumber(text: string): number | null {
-  // Remove Rp prefix variants and whitespace
   let cleaned = text.trim();
   const lowerCleaned = cleaned.toLowerCase();
   for (const variant of RP_VARIANTS) {
@@ -137,10 +141,8 @@ function parseIndonesianNumber(text: string): number | null {
 
   // Indonesian format: dots are thousand separators
   if (cleaned.includes(',')) {
-    // Has comma = decimal separator. Remove dots first.
     cleaned = cleaned.replace(/\./g, '').replace(',', '.');
   } else {
-    // No comma. Dots are thousand separators.
     cleaned = cleaned.replace(/\./g, '');
   }
 
@@ -149,13 +151,13 @@ function parseIndonesianNumber(text: string): number | null {
 }
 
 // ============================================================
-// Phase 1: OCR
+// Phase 1: OCR — extract ALL words with bounding boxes
 // ============================================================
 
 async function performOcr(
   imageFile: File,
   onProgress: (update: ProcessingUpdate) => void
-): Promise<{ lines: OcrLine[]; rawText: string; confidence: number }> {
+): Promise<{ words: OcrWord[]; rawText: string; confidence: number }> {
   onProgress({ progress: 2, status: 'Initializing OCR engine...' });
 
   const worker = await createWorker('ind+eng', 1, {
@@ -181,25 +183,21 @@ async function performOcr(
 
   onProgress({ progress: 48, status: 'OCR complete, analyzing layout...' });
 
-  // Extract lines with word-level bounding boxes
-  const lines: OcrLine[] = [];
+  // Collect ALL words from ALL blocks/paragraphs/lines
+  const allWords: OcrWord[] = [];
 
   if (result.data.blocks) {
     for (const block of result.data.blocks) {
       for (const paragraph of block.paragraphs) {
         for (const line of paragraph.lines) {
-          const words: OcrWord[] = line.words.map((w: any) => ({
-            text: w.text,
-            confidence: w.confidence,
-            bbox: w.bbox,
-          }));
-
-          if (words.length > 0) {
-            lines.push({
-              words,
-              bbox: line.bbox,
-              text: line.text.trim(),
-            });
+          for (const w of line.words) {
+            if (w.text.trim().length > 0) {
+              allWords.push({
+                text: w.text,
+                confidence: w.confidence,
+                bbox: w.bbox,
+              });
+            }
           }
         }
       }
@@ -207,9 +205,79 @@ async function performOcr(
   }
 
   return {
-    lines,
+    words: allWords,
     rawText: result.data.text,
     confidence: result.data.confidence,
+  };
+}
+
+// ============================================================
+// Phase 1: Re-group words into visual rows by Y-coordinate
+// ============================================================
+
+/**
+ * Group words into rows based on Y-coordinate overlap.
+ * This is the KEY function that fixes Tesseract's broken line grouping.
+ *
+ * Two words are in the same row if their Y-ranges overlap significantly.
+ * We sort all words by Y, then merge words whose vertical center
+ * falls within the Y-range of the current row.
+ */
+function groupWordsIntoRows(words: OcrWord[], imageHeight: number): WordRow[] {
+  if (words.length === 0) return [];
+
+  // Sort by vertical center position
+  const sorted = [...words].sort((a, b) => {
+    const centerA = (a.bbox.y0 + a.bbox.y1) / 2;
+    const centerB = (b.bbox.y0 + b.bbox.y1) / 2;
+    return centerA - centerB;
+  });
+
+  // Average word height to calculate gap threshold
+  const heights = sorted.map((w) => w.bbox.y1 - w.bbox.y0);
+  const avgHeight = heights.reduce((a, b) => a + b, 0) / heights.length;
+  // Gap threshold: if center-to-center Y distance > 70% of avg height, new row
+  const yGapThreshold = avgHeight * 0.7;
+
+  const rows: WordRow[] = [];
+  let currentRow: OcrWord[] = [sorted[0]];
+  let currentRowCenterY = (sorted[0].bbox.y0 + sorted[0].bbox.y1) / 2;
+
+  for (let i = 1; i < sorted.length; i++) {
+    const word = sorted[i];
+    const wordCenterY = (word.bbox.y0 + word.bbox.y1) / 2;
+
+    if (Math.abs(wordCenterY - currentRowCenterY) < yGapThreshold) {
+      // Same row
+      currentRow.push(word);
+      // Update row center as running average
+      currentRowCenterY =
+        currentRow.reduce((sum, w) => sum + (w.bbox.y0 + w.bbox.y1) / 2, 0) /
+        currentRow.length;
+    } else {
+      // New row — finalize current
+      rows.push(finalizeRow(currentRow));
+      currentRow = [word];
+      currentRowCenterY = wordCenterY;
+    }
+  }
+
+  // Finalize last row
+  if (currentRow.length > 0) {
+    rows.push(finalizeRow(currentRow));
+  }
+
+  return rows;
+}
+
+function finalizeRow(words: OcrWord[]): WordRow {
+  // Sort words left-to-right within the row
+  words.sort((a, b) => a.bbox.x0 - b.bbox.x0);
+  return {
+    words,
+    minY: Math.min(...words.map((w) => w.bbox.y0)),
+    maxY: Math.max(...words.map((w) => w.bbox.y1)),
+    minX: Math.min(...words.map((w) => w.bbox.x0)),
   };
 }
 
@@ -217,13 +285,15 @@ async function performOcr(
 // Phase 1: Column Detection
 // ============================================================
 
-function detectValueColumns(lines: OcrLine[], imageWidth: number): ColumnInfo[] {
+function detectValueColumns(
+  rows: WordRow[],
+  imageWidth: number
+): ColumnInfo[] {
   // Collect right-edges of all numeric words in the right portion of the image
   const numericRightEdges: number[] = [];
 
-  for (const line of lines) {
-    for (const word of line.words) {
-      // Only consider words in the right 55% of image AND are actual numeric values
+  for (const row of rows) {
+    for (const word of row.words) {
       if (isNumericValue(word.text) && word.bbox.x0 > imageWidth * 0.45) {
         numericRightEdges.push(word.bbox.x1);
       }
@@ -234,7 +304,8 @@ function detectValueColumns(lines: OcrLine[], imageWidth: number): ColumnInfo[] 
 
   // Sort and cluster right edges
   numericRightEdges.sort((a, b) => a - b);
-  const threshold = imageWidth * 0.05;
+  // Use larger threshold (8% of width) to avoid splitting into too many columns
+  const threshold = imageWidth * 0.08;
 
   const clusters: number[][] = [];
   let currentCluster: number[] = [numericRightEdges[0]];
@@ -261,72 +332,99 @@ function detectValueColumns(lines: OcrLine[], imageWidth: number): ColumnInfo[] 
   // Sort by position (left to right)
   columns.sort((a, b) => a.avgRight - b.avgRight);
 
+  // If we detected more than 3 columns, merge the closest pair iteratively
+  // Financial statements typically have at most 2-3 value columns
+  while (columns.length > 3) {
+    let minGap = Infinity;
+    let mergeIdx = -1;
+    for (let i = 0; i < columns.length - 1; i++) {
+      const gap = columns[i + 1].avgRight - columns[i].avgRight;
+      if (gap < minGap) {
+        minGap = gap;
+        mergeIdx = i;
+      }
+    }
+    if (mergeIdx >= 0) {
+      const merged: ColumnInfo = {
+        rightEdge: Math.max(
+          columns[mergeIdx].rightEdge,
+          columns[mergeIdx + 1].rightEdge
+        ),
+        avgRight:
+          (columns[mergeIdx].avgRight * columns[mergeIdx].count +
+            columns[mergeIdx + 1].avgRight * columns[mergeIdx + 1].count) /
+          (columns[mergeIdx].count + columns[mergeIdx + 1].count),
+        count: columns[mergeIdx].count + columns[mergeIdx + 1].count,
+      };
+      columns.splice(mergeIdx, 2, merged);
+    } else {
+      break;
+    }
+  }
+
   return columns;
 }
 
 // ============================================================
-// Phase 1: Layout Analysis
+// Phase 1: Layout Analysis (using re-grouped rows)
 // ============================================================
 
 function analyzeLayout(
-  lines: OcrLine[],
+  wordRows: WordRow[],
+  columns: ColumnInfo[],
   imageWidth: number,
   imageHeight: number,
   onProgress: (update: ProcessingUpdate) => void
-): { rows: RowData[]; columns: ColumnInfo[] } {
-  onProgress({ progress: 50, status: 'Detecting columns...' });
-
-  const columns = detectValueColumns(lines, imageWidth);
-
+): RowData[] {
   onProgress({ progress: 55, status: 'Analyzing structure...' });
 
   // Determine content area: skip header/logo and footer/signature
-  const contentStartY = imageHeight * 0.12;
-  const contentEndY = imageHeight * 0.80;
+  const contentStartY = imageHeight * 0.10;
+  const contentEndY = imageHeight * 0.82;
 
-  // Left margin baseline from content lines only
-  const contentLines = lines.filter(
-    (l) => l.bbox.y0 >= contentStartY && l.bbox.y0 <= contentEndY
+  // Filter to content rows only
+  const contentRows = wordRows.filter(
+    (r) => r.minY >= contentStartY && r.minY <= contentEndY
   );
-  const leftMargins = contentLines.map((l) => l.bbox.x0);
-  const minLeftMargin = leftMargins.length > 0 ? Math.min(...leftMargins) : 0;
-  const indentUnit = imageWidth * 0.02;
 
-  const rows: RowData[] = [];
+  // Left margin baseline
+  const leftMargins = contentRows.map((r) => r.minX);
+  const minLeftMargin =
+    leftMargins.length > 0 ? Math.min(...leftMargins) : 0;
+  const indentUnit = imageWidth * 0.025;
 
-  for (let li = 0; li < lines.length; li++) {
-    const line = lines[li];
+  const result: RowData[] = [];
+
+  for (let ri = 0; ri < contentRows.length; ri++) {
+    const row = contentRows[ri];
 
     onProgress({
-      progress: 55 + Math.round((li / lines.length) * 30),
-      status: `Processing line ${li + 1}/${lines.length}...`,
+      progress: 55 + Math.round((ri / contentRows.length) * 30),
+      status: `Processing row ${ri + 1}/${contentRows.length}...`,
     });
 
-    // Skip header/footer lines
-    if (line.bbox.y0 < contentStartY || line.bbox.y0 > contentEndY) continue;
-
-    // Skip empty lines
-    if (line.text.trim().length === 0) continue;
-
-    // Separate words into: label parts, Rp prefixes, and numeric values
+    // Separate words into: label parts and numeric values
     const labelParts: string[] = [];
     const valuesByColumn: Map<number, string> = new Map();
 
     let wi = 0;
-    while (wi < line.words.length) {
-      const word = line.words[wi];
+    while (wi < row.words.length) {
+      const word = row.words[wi];
 
-      // Case 1: Rp prefix — look for following number
+      // Case 1: Rp prefix — look for following number(s)
       if (isRpPrefix(word.text)) {
         const numParts: string[] = [];
         let j = wi + 1;
 
-        while (j < line.words.length) {
-          const nextWord = line.words[j];
+        while (j < row.words.length) {
+          const nextWord = row.words[j];
           if (isNumericValue(nextWord.text)) {
             numParts.push(nextWord.text);
             j++;
-          } else if (nextWord.text === '.' || nextWord.text === ',') {
+          } else if (
+            nextWord.text === '.' ||
+            nextWord.text === ','
+          ) {
             numParts.push(nextWord.text);
             j++;
           } else {
@@ -336,47 +434,34 @@ function analyzeLayout(
 
         if (numParts.length > 0) {
           const numText = numParts.join('');
-          const numRight = line.words[j - 1].bbox.x1;
-
-          // Find closest column
-          let bestCol = -1;
-          let bestDist = Infinity;
-          for (let ci = 0; ci < columns.length; ci++) {
-            const dist = Math.abs(numRight - columns[ci].avgRight);
-            if (dist < bestDist) {
-              bestDist = dist;
-              bestCol = ci;
-            }
-          }
-
-          if (bestCol >= 0 && bestDist < imageWidth * 0.15) {
-            valuesByColumn.set(bestCol, numText);
-          }
-
+          const numRight = row.words[j - 1].bbox.x1;
+          assignToColumn(numText, numRight, columns, valuesByColumn, imageWidth);
           wi = j;
           continue;
         } else {
-          // Standalone Rp without number — skip
           wi++;
           continue;
         }
       }
 
-      // Case 2: Standalone number in the right portion of the image
+      // Case 2: Standalone number in the right portion
       if (
         isNumericValue(word.text) &&
         word.bbox.x0 > imageWidth * 0.4
       ) {
-        // Look ahead for continuation: adjacent numeric fragments
+        // Look ahead for adjacent numeric fragments (handles OCR splitting)
         let combinedText = word.text;
         let combinedRight = word.bbox.x1;
         let j = wi + 1;
 
-        while (j < line.words.length) {
-          const nextWord = line.words[j];
+        while (j < row.words.length) {
+          const nextWord = row.words[j];
           const gap = nextWord.bbox.x0 - combinedRight;
-          // If very close and numeric-like, merge (handles split values like "16.378" + "910")
-          if (gap < imageWidth * 0.02 && /[\d.,]/.test(nextWord.text) && !isRpPrefix(nextWord.text)) {
+          if (
+            gap < imageWidth * 0.025 &&
+            /[\d.,]/.test(nextWord.text) &&
+            !isRpPrefix(nextWord.text)
+          ) {
             combinedText += nextWord.text;
             combinedRight = nextWord.bbox.x1;
             j++;
@@ -385,31 +470,20 @@ function analyzeLayout(
           }
         }
 
-        let bestCol = -1;
-        let bestDist = Infinity;
-        for (let ci = 0; ci < columns.length; ci++) {
-          const dist = Math.abs(combinedRight - columns[ci].avgRight);
-          if (dist < bestDist) {
-            bestDist = dist;
-            bestCol = ci;
-          }
-        }
-
-        if (bestCol >= 0 && bestDist < imageWidth * 0.15) {
-          const existing = valuesByColumn.get(bestCol) || '';
-          valuesByColumn.set(bestCol, (existing + combinedText).trim());
+        if (assignToColumn(combinedText, combinedRight, columns, valuesByColumn, imageWidth)) {
           wi = j;
           continue;
         }
       }
 
       // Case 3: Regular text word — part of label
-      // Skip standalone short numbers at the left (line item numbers like "1", "2", etc.)
-      if (word.bbox.x0 < imageWidth * 0.25 && /^\d{1,2}[.:]?$/.test(word.text.trim())) {
-        // Could be a line item number — we'll capture it separately
+      // Skip standalone 1-2 digit numbers at far left (line item numbers)
+      if (
+        word.bbox.x0 < imageWidth * 0.2 &&
+        /^\d{1,2}[.:]?$/.test(word.text.trim())
+      ) {
         const maybeNum = parseInt(word.text);
         if (maybeNum > 0 && maybeNum <= 50) {
-          // Store as potential rowNumber, handled later
           labelParts.push(word.text);
           wi++;
           continue;
@@ -423,7 +497,7 @@ function analyzeLayout(
     let label = labelParts.join(' ').trim();
     if (!label && valuesByColumn.size === 0) continue;
 
-    // Detect row number at the start of label
+    // Detect row number at start of label
     let rowNumber: number | null = null;
     const numMatch = label.match(/^(\d{1,2})[\s.:]+(.+)$/);
     if (numMatch && parseInt(numMatch[1]) <= 50) {
@@ -434,7 +508,7 @@ function analyzeLayout(
     // Calculate indent level
     const indent = Math.max(
       0,
-      Math.round((line.bbox.x0 - minLeftMargin) / indentUnit)
+      Math.round((row.minX - minLeftMargin) / indentUnit)
     );
     const clampedIndent = Math.min(indent, 5);
 
@@ -443,15 +517,15 @@ function analyzeLayout(
     const hasValues = valuesByColumn.size > 0;
 
     const isHeader =
-      !hasValues && (
-        HEADER_KEYWORDS.some((kw) => upperLabel.includes(kw)) ||
-        (upperLabel === upperLabel && /^[A-Z\s]+$/.test(upperLabel) && upperLabel.length > 5)
-      );
+      !hasValues &&
+      (HEADER_KEYWORDS.some((kw) => upperLabel.includes(kw)) ||
+        (/^[A-Z\s]+$/.test(upperLabel) && upperLabel.length > 5));
 
-    const isSectionTitle =
-      ['BIAYA LANGSUNG', 'BIAYA UMUM', 'PENDAPATAN BUNGA'].some((kw) =>
-        upperLabel.includes(kw)
-      );
+    const isSectionTitle = [
+      'BIAYA LANGSUNG',
+      'BIAYA UMUM',
+      'PENDAPATAN BUNGA',
+    ].some((kw) => upperLabel.includes(kw));
 
     const isTotal =
       TOTAL_KEYWORDS.some((kw) => upperLabel.includes(kw)) && hasValues;
@@ -462,7 +536,7 @@ function analyzeLayout(
       values.push(valuesByColumn.get(ci) || '');
     }
 
-    rows.push({
+    result.push({
       id: generateId(),
       rowNumber,
       label,
@@ -474,7 +548,39 @@ function analyzeLayout(
     });
   }
 
-  return { rows, columns };
+  return result;
+}
+
+/**
+ * Assign a numeric value to the closest detected column.
+ * Returns true if successfully assigned.
+ */
+function assignToColumn(
+  numText: string,
+  numRight: number,
+  columns: ColumnInfo[],
+  valuesByColumn: Map<number, string>,
+  imageWidth: number
+): boolean {
+  let bestCol = -1;
+  let bestDist = Infinity;
+  for (let ci = 0; ci < columns.length; ci++) {
+    const dist = Math.abs(numRight - columns[ci].avgRight);
+    if (dist < bestDist) {
+      bestDist = dist;
+      bestCol = ci;
+    }
+  }
+
+  if (bestCol >= 0 && bestDist < imageWidth * 0.12) {
+    const existing = valuesByColumn.get(bestCol) || '';
+    // Only set if not already set (first value wins to avoid overwriting)
+    if (!existing) {
+      valuesByColumn.set(bestCol, numText);
+    }
+    return true;
+  }
+  return false;
 }
 
 // ============================================================
@@ -499,12 +605,23 @@ export async function extractFromImage(
   const imageHeight = img.naturalHeight;
   URL.revokeObjectURL(imgUrl);
 
-  // OCR
+  // Phase 1a: OCR — get all words
   const ocrResult = await performOcr(file, onProgress);
 
-  // Layout analysis
-  const { rows, columns } = analyzeLayout(
-    ocrResult.lines,
+  onProgress({ progress: 50, status: 'Regrouping words into rows...' });
+
+  // Phase 1b: Re-group words by Y-coordinate (fixes Tesseract line merging)
+  const wordRows = groupWordsIntoRows(ocrResult.words, imageHeight);
+
+  onProgress({ progress: 52, status: 'Detecting columns...' });
+
+  // Phase 1c: Detect value columns
+  const columns = detectValueColumns(wordRows, imageWidth);
+
+  // Phase 1d: Layout analysis
+  const rows = analyzeLayout(
+    wordRows,
+    columns,
     imageWidth,
     imageHeight,
     onProgress
@@ -520,7 +637,6 @@ export async function extractFromImage(
     }
   }
 
-  // If no columns detected, add at least one value column
   if (columns.length === 0) {
     headers.push('Jumlah (Rp)');
   }
@@ -547,7 +663,6 @@ export async function generateExcel(
   headers: string[],
   title: string = 'Extracted Data'
 ): Promise<Blob> {
-  // Dynamic import for code splitting
   const ExcelJS = (await import('exceljs')).default;
 
   const workbook = new ExcelJS.Workbook();
@@ -576,7 +691,6 @@ export async function generateExcel(
   headerRow.alignment = { horizontal: 'center', vertical: 'middle' };
   headerRow.height = 28;
 
-  // Add border to header
   headerRow.eachCell((cell) => {
     cell.border = {
       top: { style: 'thin' },
@@ -637,13 +751,9 @@ export async function generateExcel(
     }
 
     // Format individual cells
-    // No column
     row.getCell(1).alignment = { horizontal: 'center' };
-
-    // Keterangan column
     row.getCell(2).alignment = { horizontal: 'left', wrapText: true };
 
-    // Value columns
     for (let vi = 0; vi < rowData.values.length; vi++) {
       const cell = row.getCell(3 + vi);
       if (typeof cell.value === 'number') {
@@ -656,10 +766,10 @@ export async function generateExcel(
   }
 
   // ---- Column Widths ----
-  worksheet.getColumn(1).width = 6; // No
-  worksheet.getColumn(2).width = 50; // Keterangan
+  worksheet.getColumn(1).width = 6;
+  worksheet.getColumn(2).width = 50;
   for (let i = 3; i <= headers.length; i++) {
-    worksheet.getColumn(i).width = 22; // Value columns
+    worksheet.getColumn(i).width = 22;
   }
 
   // ---- Freeze header ----
