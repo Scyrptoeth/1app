@@ -477,8 +477,7 @@ export default function ImageToExcelPage() {
                                 onChange={(e) =>
                                   updateCell(row.id, 'label', e.target.value)
                                 }
-                                        }
-                                  className={`w-full px-1 py-0.5 text-xs bg-transparent
+                                className={`w-full px-1 py-0.5 text-xs bg-transparent
                                            border border-transparent hover:border-gray-300 focus:border-blue-400
                                            focus:outline-none rounded ${
                                              row.isHeader || row.isTotal
@@ -541,7 +540,7 @@ export default function ImageToExcelPage() {
                                       : 'text-gray-400 hover:text-blue-600'
                                   }`}
                                 >
-                                   H
+                                  H
                                 </button>
                                 <button
                                   onClick={() =>
