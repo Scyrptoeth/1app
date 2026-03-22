@@ -190,8 +190,9 @@ async function preprocessImage(
   const origHeight = img.naturalHeight;
   URL.revokeObjectURL(imgUrl);
 
-  // Determine scale factor: target at least 2500px width
-  const MIN_WIDTH = 2500;
+  // Determine scale factor: target at least 3400px width (~400 DPI equivalent)
+  // Higher resolution significantly improves digit and character recognition
+  const MIN_WIDTH = 3400;
   const scale = origWidth < MIN_WIDTH
     ? Math.ceil(MIN_WIDTH / origWidth)
     : 1;
@@ -220,7 +221,30 @@ async function preprocessImage(
   const data = imageData.data;
   const pixelCount = data.length / 4;
 
-  onProgress({ progress: 3, status: 'Converting to grayscale and binarizing...' });
+  onProgress({ progress: 3, status: 'Sharpening and converting to grayscale...' });
+
+  // Step 0.5: Apply unsharp mask (sharpen) to improve character edges
+  // This makes thin strokes and digits much clearer for OCR
+  {
+    const w = scaledWidth;
+    const h = scaledHeight;
+    const src = new Uint8ClampedArray(data);
+    // 3x3 sharpen kernel: center=9, edges=-1
+    const kernel = [-1, -1, -1, -1, 9, -1, -1, -1, -1];
+    for (let y = 1; y < h - 1; y++) {
+      for (let x = 1; x < w - 1; x++) {
+        for (let c = 0; c < 3; c++) {
+          let val = 0;
+          for (let ky = -1; ky <= 1; ky++) {
+            for (let kx = -1; kx <= 1; kx++) {
+              val += src[((y + ky) * w + (x + kx)) * 4 + c] * kernel[(ky + 1) * 3 + (kx + 1)];
+            }
+          }
+          data[(y * w + x) * 4 + c] = Math.max(0, Math.min(255, val));
+        }
+      }
+    }
+  }
 
   // Step 1: Convert to grayscale (luminance)
   const grayscale = new Uint8Array(pixelCount);
@@ -263,8 +287,9 @@ async function preprocessImage(
   }
 
   // Step 3: Apply binarization
-  // Slight bias toward preserving text (lower threshold = more black pixels preserved)
-  const binaryThreshold = Math.min(threshold + 15, 245);
+  // Moderate bias toward preserving text (lower threshold = more black pixels preserved)
+  // Reduced from +15 to +10 to preserve more thin strokes and digits
+  const binaryThreshold = Math.min(threshold + 10, 245);
 
   for (let i = 0; i < pixelCount; i++) {
     const val = grayscale[i] < binaryThreshold ? 0 : 255;
@@ -301,23 +326,44 @@ async function performOcr(
 ): Promise<{ words: OcrWord[]; rawText: string; confidence: number }> {
   onProgress({ progress: 5, status: 'Initializing OCR engine...' });
 
-  // Use 'eng' for reliability — Indonesian uses Latin alphabet.
-  // Combined 'ind+eng' often causes download failures or model conflicts.
-  const worker = await createWorker('eng', 1, {
-    logger: (m) => {
-      if (m.status === 'recognizing text') {
-        onProgress({
-          progress: 8 + Math.round(m.progress * 35),
-          status: 'Recognizing text...',
-        });
-      } else if (m.status === 'loading language traineddata') {
-        onProgress({
-          progress: 6,
-          status: 'Loading language data (first time may take a moment)...',
-        });
-      }
-    },
-  });
+  // Try Indonesian language first for much better text accuracy on Indonesian documents.
+  // Fall back to English if Indonesian language data fails to load.
+  let worker;
+  try {
+    worker = await createWorker('ind', 1, {
+      logger: (m) => {
+        if (m.status === 'recognizing text') {
+          onProgress({
+            progress: 8 + Math.round(m.progress * 35),
+            status: 'Recognizing text...',
+          });
+        } else if (m.status === 'loading language traineddata') {
+          onProgress({
+            progress: 6,
+            status: 'Loading Indonesian language data (first time may take a moment)...',
+          });
+        }
+      },
+    });
+  } catch {
+    // Fallback to English if Indonesian data unavailable
+    onProgress({ progress: 5, status: 'Falling back to English OCR...' });
+    worker = await createWorker('eng', 1, {
+      logger: (m) => {
+        if (m.status === 'recognizing text') {
+          onProgress({
+            progress: 8 + Math.round(m.progress * 35),
+            status: 'Recognizing text...',
+          });
+        } else if (m.status === 'loading language traineddata') {
+          onProgress({
+            progress: 6,
+            status: 'Loading language data (first time may take a moment)...',
+          });
+        }
+      },
+    });
+  }
 
   // Set optimal parameters for financial documents
   await worker.setParameters({
