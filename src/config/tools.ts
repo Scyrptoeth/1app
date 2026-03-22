@@ -45,15 +45,16 @@ export const tools: Tool[] = [
   },
 ];
 
-export const categories = [
-  {
-    id: 'watermark',
-    name: 'Watermark Removal',
-    description: 'Remove watermarks from your documents and images',
-  },
-  {
-    id: 'convert',
-    name: 'Convert',
-    description: 'Convert documents between different formats',
-  },
-] as const;
+export const categoryLabels: Record<string, string> = {
+  watermark: 'Watermark',
+  convert: 'Convert',
+};
+
+export function getAllCategories(): string[] {
+  const cats = new Set(tools.map((t) => t.category));
+  return Array.from(cats);
+}
+
+export function getToolsByCategory(category: string): Tool[] {
+  return tools.filter((t) => t.category === category);
+}
