@@ -465,10 +465,23 @@ async function extractTextTable(page: any): Promise<string[][]> {
     band.items.sort((a, b) => a.x - b.x);
     const cells = new Array<string>(numCols).fill('');
     for (const item of band.items) {
-      // Assign to column based on nearest x-break boundary
+      // Bias-aware column assignment:
+      // - Short numeric items (1-3 chars: dashes, single digits) are often right-aligned
+      //   and overshoot column boundaries slightly. Apply +10px right bias so they stay
+      //   in their natural column.
+      // - Long text items (descriptions, labels) are left-aligned and can start slightly
+      //   before the column boundary. Apply -15px left bias so they cross into the next
+      //   column more readily.
+      const isNumericLike = /^[-\d.,]+$/.test(item.text);
+      const bias = isNumericLike && item.text.length <= 3
+        ? 10    // short numeric/dash: boundary shifts right → harder to cross
+        : !isNumericLike && item.text.length > 8
+          ? -15 // long text (description): boundary shifts left → easier to cross
+          : 0;  // normal items: no bias
+
       let col = 0;
       for (let i = 0; i < xBreaks.length; i++) {
-        if (item.x > xBreaks[i]) col = i + 1;
+        if (item.x > xBreaks[i] + bias) col = i + 1;
         else break;
       }
       cells[col] = cells[col] ? cells[col] + ' ' + item.text : item.text;
@@ -1034,13 +1047,27 @@ async function generateExcel(extraction: PdfExtractionResult, onProgress?: (u: P
         // Pad row to numCols
         const cells: (string | number | null)[] = row.slice(0, numCols);
         while (cells.length < numCols) cells.push(null);
-        // Try to convert numeric strings to numbers
+        // Convert numeric strings to numbers (Indonesian format: dots=thousands, comma=decimal).
+        // Conservative rule: only convert if the string has at least one dot separator
+        // (unambiguous Indonesian thousands format) or is purely numeric with no separators.
+        // Strings with only commas and no dots are kept as-is — they are ambiguous
+        // (comma could be thousands or decimal) and should not be silently mis-converted.
         const typed = cells.map(c => {
           if (!c) return null;
-          // Indonesian number format: dots as thousands sep, comma as decimal
-          const clean = String(c).replace(/\./g, '').replace(',', '.');
-          const n = Number(clean);
-          return !isNaN(n) && clean.trim() !== '' ? n : c;
+          const s = String(c).trim();
+          const hasDot = s.includes('.');
+          const hasComma = s.includes(',');
+          // Purely numeric (no separators) → direct conversion
+          if (/^\d+$/.test(s)) return Number(s);
+          // Has dots (Indonesian thousands) → strip dots, treat comma as decimal if present
+          if (hasDot && /^[\d.,]+$/.test(s)) {
+            const clean = s.replace(/\./g, '').replace(',', '.');
+            const n = Number(clean);
+            if (!isNaN(n)) return n;
+          }
+          // Has only commas (no dots) → ambiguous, keep as string
+          if (hasComma && !hasDot) return s;
+          return c;
         });
         ws.addRow(typed);
       }
