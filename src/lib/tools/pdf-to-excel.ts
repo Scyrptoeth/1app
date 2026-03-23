@@ -119,12 +119,14 @@ const LABEL_CORRECTIONS: [RegExp, string][] = [
   [/^[!$#@&*]+\s*/g, ''],
   // OCR: dah → dan (common misread)
   [/\bdah\b/g, 'dan'],
-  // OCR: comma between adjacent label words (e.g. "Hutang,PPh" → "Hutang PPh")
-  [/\bHutang,\s*PPh\b/g, 'Hutang PPh'],
-  // OCR: lowercase inventaris
-  [/\binventaris\b/g, 'Inventaris'],
-  // OCR: Jumlah-Aktiva with spurious hyphen
-  [/\bJumlah-Aktiva\b/g, 'Jumlah Aktiva'],
+  // OCR: comma noise between adjacent words (generic — word,Word → word Word)
+  [/([a-zA-Z]),([A-Z])/g, '$1 $2'],
+  // OCR: trailing colon+short-caps noise at end of label (e.g. "BRI: RB", "Bank: RE")
+  // These are systematic OCR artifacts — colon followed by 1-3 uppercase chars at end
+  [/:\s*[A-Z]{1,3}\s*$/g, ''],
+  // OCR: hyphen between words that form a phrase with "dan/atau/dan"
+  // (e.g. "BRI-dan" → "BRI dan") — but NOT compound words (Lain-Lain stays)
+  [/([a-zA-Z])-(dan|atau|dengan|dari|ke|di|dan)\b/g, '$1 $2'],
 ];
 
 // ---------------------------------------------------------------------------
@@ -194,7 +196,35 @@ function correctLabel(label: string): string {
   for (const [pattern, replacement] of LABEL_CORRECTIONS) {
     corrected = corrected.replace(pattern, replacement);
   }
-  return corrected.replace(/\s{2,}/g, ' ').trim();
+  corrected = corrected.replace(/\s{2,}/g, ' ').trim();
+
+  // Generic: capitalize the first letter of each word that is currently all-lowercase
+  // and ≥4 chars (shorter words like "dan", "di", "ke", "dan", "dan" stay lowercase).
+  // This handles any OCR case-drop without hardcoding specific words.
+  // Generic: capitalize the first letter of each word that is currently all-lowercase
+  // and ≥4 chars, EXCEPT common Indonesian function words (prepositions, conjunctions).
+  // This handles OCR case-drops (e.g. "iklan"→"Iklan") without hardcoding specific words.
+  const ID_PARTICLES = new Set(['dan', 'atau', 'dari', 'untuk', 'dengan', 'pada', 'dalam',
+    'atas', 'bawah', 'antara', 'oleh', 'serta', 'beserta', 'yang', 'ini', 'itu', 'juga',
+    'saja', 'pula', 'lagi', 'sudah', 'akan', 'telah', 'adalah', 'yaitu', 'yakni']);
+  corrected = corrected.replace(/\b([a-z])([a-zA-Z]{3,})\b/g, (_, first, rest) => {
+    const word = first + rest;
+    if (ID_PARTICLES.has(word.toLowerCase())) return word; // keep prepositions/conjunctions lowercase
+    return first.toUpperCase() + rest;
+  });
+
+  // Generic: strip spurious dot immediately after a short abbreviation token (e.g. "Adm. " → "Adm ")
+  corrected = corrected.replace(/\b([A-Z][a-z]{1,3})\.\s/g, '$1 ');
+
+  // Generic: normalize hyphens between two DIFFERENT letter-only words into space.
+  // Keeps reduplication ("Lain-Lain"), number hyphens ("Covid-19"), and acronym hyphens ("PPh-21").
+  // Removes OCR-noise hyphens ("Jumlah-Aktiva"→"Jumlah Aktiva", "Pajak-Kendaraan"→"Pajak Kendaraan").
+  corrected = corrected.replace(/\b([a-zA-Z]{2,})-([a-zA-Z]{2,})\b/g, (match, a, b) => {
+    if (a.toLowerCase() === b.toLowerCase()) return match; // keep reduplication: Lain-Lain
+    return `${a} ${b}`; // OCR-noise hyphen → space
+  });
+
+  return corrected.trim();
 }
 
 function correctNumericValue(text: string): string {
@@ -523,7 +553,7 @@ function parseLabaRugiFromOcr(wordRows: WordRow[], imgW: number, imgH: number): 
       wi++;
     }
 
-    let label = correctLabel(labelParts.join(' ').trim().replace(/^["":\-\u2014|.;,\s]+/, '').replace(/[.""!":\-\u2014|;,\s]+$/, ''));
+    let label = correctLabel(labelParts.join(' ').trim().replace(/^[\u0022\u0027\u201A-\u201F:\-\u2014|.;,\s]+/, '').replace(/[\u0022\u0027\u201A-\u201F.!":\-\u2014|;,\s]+$/, ''));
     if (!label && subValue === null && mainValue === null) continue;
 
     if (!rowNum) { const m = label.match(/^(\d{1,2})[\s.:]+(.+)$/); if (m && parseInt(m[1]) <= 50) { rowNum = m[1]; label = m[2].trim(); } }
@@ -609,6 +639,18 @@ function parseNeracaFromOcr(wordRows: WordRow[], imgW: number, imgH: number): { 
   mergeOrphanNumbers(leftRows);
   mergeOrphanNumbers(rightRows);
 
+  // Post-process: Passiva individual items should go to subValue, totals to mainValue.
+  // parseSideFromOcr defaults to mainValue when single column; fix by label-based reclassification.
+  for (const row of rightRows) {
+    if (row.mainValue !== null && row.subValue === null && row.label) {
+      const isTotal = /\bjumlah\b|\btotal\b/i.test(row.label);
+      if (!isTotal) {
+        row.subValue = row.mainValue;
+        row.mainValue = null;
+      }
+    }
+  }
+
   return {
     leftRows,
     rightRows,
@@ -678,7 +720,17 @@ function parseSideFromOcr(wordRows: WordRow[], sideWidth: number): RowData[] {
       wi++;
     }
 
-    let label = correctLabel(lp.join(' ').trim().replace(/^[:\-\u2014|.;,\s]+/, '').replace(/[.:\-\u2014|;,\s]+$/, ''));
+    let label = correctLabel(lp.join(' ').trim().replace(/^[\u0022\u0027\u201A-\u201F:\-\u2014|.;,\s]+/, '').replace(/[\u0022\u0027\u201A-\u201F.:\-\u2014|;,\s]+$/, ''));
+    // Strip trailing OCR noise ONLY on header/label-only rows (no values).
+    // Run in a loop because "Dn C" needs two passes: strip "C" first, then "Dn".
+    if (sv === null && mv === null) {
+      let prev;
+      do {
+        prev = label;
+        label = label.replace(/\s+\d{1,2}\s*$/, '').trim();       // trailing digit noise
+        label = label.replace(/\s+[A-Za-z]{1,2}\s*$/, '').trim(); // trailing 1-2 letter stub
+      } while (label !== prev);
+    }
     if (!label && sv === null && mv === null) continue;
 
     result.push({ label, subValue: sv, mainValue: mv, isHeader: isSectionHeader(label) && !sv && !mv, isTotal: isTotalLine(label), isIndented: false, isNumbered: false, rowNumber: '' });
