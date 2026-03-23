@@ -1104,23 +1104,55 @@ async function generateExcel(extraction: PdfExtractionResult, onProgress?: (u: P
         // (unambiguous Indonesian thousands format) or is purely numeric with no separators.
         // Strings with only commas and no dots are kept as-is — they are ambiguous
         // (comma could be thousands or decimal) and should not be silently mis-converted.
-        const typed = cells.map(c => {
-          if (!c) return null;
-          const s = String(c).trim();
+        // Convert a single numeric string (Indonesian or plain) to a JS number.
+        // Returns the original string if conversion is ambiguous or not applicable.
+        const toNumber = (s: string): string | number => {
           const hasDot = s.includes('.');
           const hasComma = s.includes(',');
-          // Purely numeric (no separators) → direct conversion
           if (/^\d+$/.test(s)) return Number(s);
-          // Has dots (Indonesian thousands) → strip dots, treat comma as decimal if present
+          // Indonesian thousands with dots: "1.234.567" → 1234567
           if (hasDot && /^[\d.,]+$/.test(s)) {
             const clean = s.replace(/\./g, '').replace(',', '.');
             const n = Number(clean);
             if (!isNaN(n)) return n;
           }
-          // Has only commas (no dots) → ambiguous, keep as string
+          // Parenthesized negative (accounting notation): "(5.222.504)" → -5222504
+          // Also handles "(86)" → -86.  Ambiguous comma-only kept as string.
+          if (/^\([\d.,]+\)$/.test(s)) {
+            const inner = s.slice(1, -1);
+            const iHasDot = inner.includes('.');
+            if (/^\d+$/.test(inner)) return -Number(inner);
+            if (iHasDot && /^[\d.,]+$/.test(inner)) {
+              const clean = inner.replace(/\./g, '').replace(',', '.');
+              const n = Number(clean);
+              if (!isNaN(n)) return -n;
+            }
+          }
+          // Comma-only (no dots) → ambiguous, keep as string
           if (hasComma && !hasDot) return s;
-          return c;
+          return s;
+        };
+
+        const typed: (string | number | null)[] = cells.map(c => {
+          if (!c) return null;
+          const s = String(c).trim();
+          return toNumber(s) as string | number | null;
         });
+
+        // Post-process: split cells that contain "number text" (merged value+description).
+        // This happens when a value and description end up on the same x-line and the
+        // column boundary placed them in the same cell.  Pattern: "46.351 Exchange di"
+        // → split into number (keep in current column) and text (move to next empty column).
+        for (let i = 0; i < typed.length - 1; i++) {
+          const v = typed[i];
+          if (typeof v !== 'string') continue;
+          const m = v.match(/^([\d.,]+|\([\d.,]+\))\s+([A-Za-z].+)$/);
+          if (m && (typed[i + 1] === null || typed[i + 1] === '')) {
+            typed[i] = toNumber(m[1]) as string | number;
+            typed[i + 1] = m[2];
+          }
+        }
+
         ws.addRow(typed);
       }
     } else if (pd.rows) {
