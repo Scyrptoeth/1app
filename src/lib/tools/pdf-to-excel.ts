@@ -117,8 +117,29 @@ function parseIndonesianNumber(raw: string): number | null {
   if (isNeg) s = s.substring(1, s.length - 1);
   const hasMinus = s.startsWith('-');
   if (hasMinus) s = s.substring(1);
-  s = s.replace(/\./g, '');
-  s = s.replace(/,/g, '.');
+
+  const hasDots = s.includes('.');
+  const hasCommas = s.includes(',');
+
+  // Determine if comma is a true decimal separator:
+  // In Indonesian financial docs, decimals have exactly 1-2 digits after the comma.
+  // If digits after the last comma are > 2, the comma is likely a misread dot (OCR noise).
+  const commaGroups = s.split(',');
+  const lastCommaGroup = commaGroups[commaGroups.length - 1];
+  const commaIsDecimal = commaGroups.length === 2 && /^\d{1,2}$/.test(lastCommaGroup.replace(/[^0-9]/g, ''));
+
+  if (hasDots && hasCommas && commaIsDecimal) {
+    // Standard Indonesian: dots = thousands, last comma = decimal
+    // e.g. "14.674.164,58" → 14674164.58
+    s = s.replace(/\./g, '').replace(',', '.');
+  } else {
+    // All dots and commas are thousands separators (or OCR noise) — strip them all
+    // e.g. "14.674.164.585" → 14674164585
+    // e.g. ".14.674,164.580" (OCR misread dot as comma) → 14674164580
+    // e.g. "14674,16458" (OCR dropped thousands dots) → 1467416458
+    s = s.replace(/[.,]/g, '');
+  }
+
   s = s.replace(/[^0-9.]/g, '');
   if (s.length === 0) return null;
   const num = parseFloat(s);
