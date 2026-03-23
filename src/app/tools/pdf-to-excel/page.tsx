@@ -279,6 +279,10 @@ function PreviewTable({
     );
   }
 
+  if (page.rawTable && page.rawTable.length > 0) {
+    return <RawTablePreview rows={page.rawTable} />;
+  }
+
   if (page.rows) {
     return (
       <SingleColumnPreview rows={page.rows} formatNumber={formatNumber} />
@@ -349,6 +353,60 @@ function SingleColumnPreview({
             >
               {formatNumber(row.mainValue)}
             </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+function RawTablePreview({ rows }: { rows: string[][] }) {
+  const numCols = Math.max(...rows.map((r) => r.length));
+  // Scan the first 20 rows to find one that looks like a column header
+  // (contains ≥2 year-like tokens or contains "Uraian"/"Description"/"No"/"Keterangan")
+  const yearRe = /^(19|20)\d{2}$/;
+  const labelRe = /^(uraian|no|description|keterangan)$/i;
+  const headerIdx = rows.slice(0, 20).findIndex((row) =>
+    row.filter((c) => yearRe.test((c || "").trim())).length >= 2 ||
+    (row.some((c) => labelRe.test((c || "").trim())) && row.filter(Boolean).length >= 3)
+  );
+  const headerRow = headerIdx >= 0 ? rows[headerIdx] : null;
+  const dataRows = headerIdx >= 0 ? rows.filter((_, i) => i !== headerIdx) : rows;
+
+  return (
+    <table className="w-full text-sm">
+      <thead className="bg-slate-100 sticky top-0">
+        <tr>
+          {Array.from({ length: numCols }, (_, i) => (
+            <th
+              key={i}
+              className="px-3 py-2.5 text-left font-semibold text-slate-700 whitespace-nowrap"
+            >
+              {headerRow ? headerRow[i] || "" : `Col ${i + 1}`}
+            </th>
+          ))}
+        </tr>
+      </thead>
+      <tbody>
+        {dataRows.map((row, rowIdx) => (
+          <tr
+            key={rowIdx}
+            className="border-t border-slate-100 hover:bg-slate-50/50"
+          >
+            {Array.from({ length: numCols }, (_, colIdx) => {
+              const val = row[colIdx] || "";
+              const isNumeric = /^[\d,.\s]+$/.test(val) && val.trim() !== "";
+              return (
+                <td
+                  key={colIdx}
+                  className={`px-3 py-2 text-slate-800 ${
+                    isNumeric ? "text-right font-mono text-slate-700" : ""
+                  }`}
+                >
+                  {val}
+                </td>
+              );
+            })}
           </tr>
         ))}
       </tbody>

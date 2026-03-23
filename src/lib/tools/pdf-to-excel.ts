@@ -23,7 +23,7 @@ export interface ProcessingUpdate {
   status: string;
 }
 
-interface RowData {
+export interface RowData {
   label: string;
   subValue: number | null;
   mainValue: number | null;
@@ -34,7 +34,7 @@ interface RowData {
   rowNumber: string;
 }
 
-interface PageData {
+export interface PageData {
   pageNumber: number;
   sheetName: string;
   isSideBySide: boolean;
