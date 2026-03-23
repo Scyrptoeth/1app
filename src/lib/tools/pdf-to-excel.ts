@@ -43,6 +43,7 @@ interface PageData {
   rightRows?: RowData[];
   leftTitle?: string;
   rightTitle?: string;
+  rawTable?: string[][];  // generic text-based table (variable columns per row)
 }
 
 interface PdfExtractionResult {
@@ -386,6 +387,96 @@ async function hasTextContent(page: any): Promise<boolean> {
     if ((item.str || '').trim().length >= 3) meaningful++;
   }
   return meaningful >= 20;
+}
+
+// ---------------------------------------------------------------------------
+// Extract generic table from text-based PDF page
+// Groups text items into rows by y-coordinate, then separates cells by x-gap.
+// Works for any columnar PDF without requiring knowledge of document structure.
+// ---------------------------------------------------------------------------
+async function extractTextTable(page: any): Promise<string[][]> {
+  const textContent = await page.getTextContent();
+
+  const items: Array<{ text: string; x: number; y: number }> = [];
+  for (const item of textContent.items) {
+    const text = (item.str || '').trim();
+    if (text) items.push({ text, x: item.transform[4], y: item.transform[5] });
+  }
+  if (items.length === 0) return [];
+
+  // Exclude top/bottom 3% (page header/footer)
+  const yVals = items.map(i => i.y);
+  const yMin = Math.min(...yVals), yMax = Math.max(...yVals);
+  const margin = (yMax - yMin) * 0.03;
+  const content = items.filter(i => i.y > yMin + margin && i.y < yMax - margin);
+
+  // Group items into y-row bands first (needed for column detection step)
+  const preBands: Array<{ y: number; items: typeof content }> = [];
+  for (const item of content) {
+    const b = preBands.find(b => Math.abs(b.y - item.y) <= 5);
+    if (b) b.items.push(item);
+    else preBands.push({ y: item.y, items: [item] });
+  }
+
+  // Detect column x-boundaries.
+  // Strategy 1: find a header row (contains ≥2 year-like tokens or "Uraian"/"No"/"Description").
+  // Use header item x-positions directly as column anchors — most accurate.
+  // Strategy 2: fall back to numeric-row x-gap detection.
+  const yearRe = /^(19|20)\d{2}$/;
+  const headerRe = /^(uraian|no|description|keterangan|catatan|note)$/i;
+  const headerBand = preBands.find(band =>
+    band.items.filter(i => yearRe.test(i.text.trim())).length >= 2 ||
+    (band.items.some(i => headerRe.test(i.text.trim())) && band.items.length >= 3)
+  );
+
+  let xBreaks: number[];
+  if (headerBand) {
+    const hx = headerBand.items.map(i => i.x).sort((a, b) => a - b);
+    xBreaks = [];
+    for (let i = 1; i < hx.length; i++) {
+      if (hx[i] - hx[i - 1] > 10) xBreaks.push((hx[i] + hx[i - 1]) / 2);
+    }
+  } else {
+    // Fall back: use x-gaps from numeric rows
+    const numericRe = /^[\d.,]+$/;
+    const tableRows = preBands.filter(band =>
+      band.items.some(item => numericRe.test(item.text.replace(/\s/g, '')))
+    );
+    const sourceItems = tableRows.length >= 3 ? tableRows.flatMap(b => b.items) : content;
+    const BUCKET = 5;
+    const xSorted = sourceItems.map(i => Math.round(i.x / BUCKET) * BUCKET).sort((a, b) => a - b);
+    xBreaks = [];
+    const COL_GAP = 30;
+    let prev = xSorted[0];
+    for (let i = 1; i < xSorted.length; i++) {
+      if (xSorted[i] - prev > COL_GAP) xBreaks.push((xSorted[i] + prev) / 2);
+      prev = xSorted[i];
+    }
+  }
+
+  // Reuse preBands for row iteration — sort top-to-bottom
+  preBands.sort((a, b) => b.y - a.y);
+  const bands = preBands;
+
+  const numCols = xBreaks.length + 1;
+  const table: string[][] = [];
+
+  for (const band of bands) {
+    band.items.sort((a, b) => a.x - b.x);
+    const cells = new Array<string>(numCols).fill('');
+    for (const item of band.items) {
+      // Assign to column based on nearest x-break boundary
+      let col = 0;
+      for (let i = 0; i < xBreaks.length; i++) {
+        if (item.x > xBreaks[i]) col = i + 1;
+        else break;
+      }
+      cells[col] = cells[col] ? cells[col] + ' ' + item.text : item.text;
+    }
+    if (cells.some(c => c.trim())) table.push(cells);
+  }
+
+  return table;
 }
 
 // ---------------------------------------------------------------------------
@@ -935,6 +1026,24 @@ async function generateExcel(extraction: PdfExtractionResult, onProgress?: (u: P
         if (r?.isHeader || r?.isTotal) { er.getCell(5).font = { bold: true }; if (r?.mainValue !== null) er.getCell(7).font = { bold: true }; }
         for (const col of [2, 3, 6, 7]) { const c = er.getCell(col); if (c.value !== null && c.value !== undefined) c.numFmt = '#,##0'; }
       }
+    } else if (pd.rawTable && pd.rawTable.length > 0) {
+      // Generic text-based table — variable columns, output as-is
+      const numCols = Math.max(...pd.rawTable.map(r => r.length));
+      ws.columns = Array.from({ length: numCols }, () => ({ width: 25 }));
+      for (const row of pd.rawTable) {
+        // Pad row to numCols
+        const cells: (string | number | null)[] = row.slice(0, numCols);
+        while (cells.length < numCols) cells.push(null);
+        // Try to convert numeric strings to numbers
+        const typed = cells.map(c => {
+          if (!c) return null;
+          // Indonesian number format: dots as thousands sep, comma as decimal
+          const clean = String(c).replace(/\./g, '').replace(',', '.');
+          const n = Number(clean);
+          return !isNaN(n) && clean.trim() !== '' ? n : c;
+        });
+        ws.addRow(typed);
+      }
     } else if (pd.rows) {
       ws.columns = [{ width: 6 }, { width: 50 }, { width: 20 }, { width: 20 }];
       const hr = ws.addRow(['No', 'Keterangan', 'Sub-Amount (Rp)', 'Amount (Rp)']);
@@ -1012,9 +1121,9 @@ export async function convertPdfToExcel(
       }
     } else {
       // TEXT-BASED: use getTextContent() — fast path
-      // (Placeholder: same structure, returns empty for now since test PDF is image-based)
       onProgress?.({ progress: Math.round(ppBase + ppPerPage - 2), status: `Page ${pageNum}: Extracting text...` });
-      pages.push({ pageNumber: pageNum, sheetName, isSideBySide: false, rows: [] });
+      const rawTable = await extractTextTable(page);
+      pages.push({ pageNumber: pageNum, sheetName, isSideBySide: false, rawTable });
     }
   }
 
