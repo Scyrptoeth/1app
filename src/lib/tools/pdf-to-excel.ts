@@ -93,41 +93,166 @@ const LABA_RUGI_KEYWORDS = ['Laba Rugi', 'Profit', 'Loss', 'Penerimaan'];
 
 const RP_VARIANTS = ['rp', 'fp', 'ip', 'ro', 'np', 'mp', 'bp', 'kp', 're', 'ry', 'me'];
 
+// ---------------------------------------------------------------------------
+// Structural regex corrections — pattern-based noise removal that does not
+// depend on knowing the document content. These handle systematic OCR layout
+// artifacts that cannot be caught by single-word edit-distance correction.
+// ---------------------------------------------------------------------------
 const LABEL_CORRECTIONS: [RegExp, string][] = [
-  [/\bPernbellan\b/gi, 'Pembelian'], [/\bPermbellan\b/gi, 'Pembelian'],
-  [/\bPernbelian\b/gi, 'Pembelian'], [/\bPermbelian\b/gi, 'Pembelian'],
-  [/\bPerneliharaan\b/gi, 'Pemeliharaan'], [/\bPerrneliharaan\b/gi, 'Pemeliharaan'],
-  [/\bPernbuatan\b/gi, 'Pembuatan'], [/\bPerrnbuatan\b/gi, 'Pembuatan'],
-  [/\bBehan\b/gi, 'Beban'], [/\bBlaya\b/gi, 'Biaya'], [/\bBiava\b/gi, 'Biaya'],
-  [/\bSawa\b/g, 'Sewa'], [/\bBPIS\b/g, 'BPJS'],
-  [/\bAllowancc\b/gi, 'Allowance'], [/\bAllowanco\b/gi, 'Allowance'],
-  [/\bBarang\s+fi\s+Jasa\b/gi, 'Barang & Jasa'],
-  [/\bBarang\s+fl\s+Jasa\b/gi, 'Barang & Jasa'],
-  [/\bBank\s+SRI\b/g, 'Bank BRI'],
-  // OCR: lowercase L misread as i
-  [/\biaba\b/g, 'Laba'],
-  // OCR: trailing character noise on common words
-  [/\bAbonemen[r]\b/gi, 'Abonemen'],
-  [/\bAbonemer\b/gi, 'Abonemen'],
-  // OCR: colon/number noise in labels
-  [/\bProvisi[:\s]+\d+\b/gi, 'Provisi'],
-  // OCR: "Rp" or ".Rp" captured at end of label (belongs to value column)
+  // Trailing "Rp" or ".Rp" captured from value column
   [/\s*[.,]?\s*Rp\s*$/gi, ''],
-  // OCR: abbreviation dots (PBB. → PBB) — no \b after dot since dot is non-word char
-  [/\bPBB\./g, 'PBB'],
-  // OCR: leading noise characters ($, !, etc.)
+  // Leading symbol noise ($, !, #, etc.)
   [/^[!$#@&*]+\s*/g, ''],
-  // OCR: dah → dan (common misread)
-  [/\bdah\b/g, 'dan'],
-  // OCR: comma noise between adjacent words (generic — word,Word → word Word)
+  // OCR false word boundary: "word.Word" → "word Word" (e.g. "Hutang.PPh")
+  [/([a-z])\.([A-Z])/g, '$1 $2'],
+  // Ampersand OCR'd as "fi" or "fl" as a standalone word
+  [/\b(fi|fl)\b/g, '&'],
+  // Comma between adjacent words (word,Word → word Word)
   [/([a-zA-Z]),([A-Z])/g, '$1 $2'],
-  // OCR: trailing colon+short-caps noise at end of label (e.g. "BRI: RB", "Bank: RE")
-  // These are systematic OCR artifacts — colon followed by 1-3 uppercase chars at end
+  // Trailing colon + 1-3 uppercase chars (e.g. "BRI: RB" noise at end of label)
   [/:\s*[A-Z]{1,3}\s*$/g, ''],
-  // OCR: hyphen between words that form a phrase with "dan/atau/dan"
-  // (e.g. "BRI-dan" → "BRI dan") — but NOT compound words (Lain-Lain stays)
-  [/([a-zA-Z])-(dan|atau|dengan|dari|ke|di|dan)\b/g, '$1 $2'],
+  // Hyphen before Indonesian conjunctions/prepositions (OCR split noise)
+  [/([a-zA-Z])-(dan|atau|dengan|dari|ke|di)\b/g, '$1 $2'],
 ];
+
+// ---------------------------------------------------------------------------
+// Indonesian financial vocabulary — canonical display forms (lowercase → display)
+// Used by the OCR spell corrector to fix character-level misreads generically.
+// Edit distance ≤ threshold → return canonical form; ambiguous → keep original.
+// ---------------------------------------------------------------------------
+const ID_FINANCIAL_VOCAB = new Map<string, string>([
+  // Balance sheet structure
+  ['aktiva', 'Aktiva'], ['passiva', 'Passiva'], ['neraca', 'Neraca'],
+  ['laporan', 'Laporan'], ['ekuitas', 'Ekuitas'], ['modal', 'Modal'],
+  // P&L structure
+  ['laba', 'Laba'], ['rugi', 'Rugi'], ['penerimaan', 'Penerimaan'],
+  ['pendapatan', 'Pendapatan'], ['penghasilan', 'Penghasilan'],
+  ['penjualan', 'Penjualan'], ['bruto', 'Bruto'], ['neto', 'Neto'],
+  ['bersih', 'Bersih'], ['kotor', 'Kotor'], ['usaha', 'Usaha'],
+  // Subtotals
+  ['jumlah', 'Jumlah'], ['total', 'Total'], ['harga', 'Harga'],
+  ['pokok', 'Pokok'], ['tersedia', 'Tersedia'], ['dijual', 'Dijual'],
+  // Asset terms
+  ['kas', 'Kas'], ['bank', 'Bank'], ['piutang', 'Piutang'],
+  ['persediaan', 'Persediaan'], ['deposito', 'Deposito'],
+  ['bangunan', 'Bangunan'], ['kendaraan', 'Kendaraan'],
+  ['inventaris', 'Inventaris'], ['tanah', 'Tanah'],
+  ['pembayaran', 'Pembayaran'], ['dimuka', 'Dimuka'],
+  ['kompensasi', 'Kompensasi'],
+  // Liability terms
+  ['hutang', 'Hutang'], ['utang', 'Utang'], ['pinjaman', 'Pinjaman'],
+  ['kewajiban', 'Kewajiban'], ['jangka', 'Jangka'],
+  ['panjang', 'Panjang'], ['pendek', 'Pendek'], ['lancar', 'Lancar'],
+  // Expense / cost category
+  ['biaya', 'Biaya'], ['beban', 'Beban'],
+  ['pembelian', 'Pembelian'], ['pembuatan', 'Pembuatan'],
+  ['pemeliharaan', 'Pemeliharaan'], ['penyusutan', 'Penyusutan'],
+  ['pengiriman', 'Pengiriman'], ['pengurusan', 'Pengurusan'],
+  ['perjalanan', 'Perjalanan'], ['perlengkapan', 'Perlengkapan'],
+  ['pengeluaran', 'Pengeluaran'],
+  // Expense types
+  ['gaji', 'Gaji'], ['upah', 'Upah'], ['listrik', 'Listrik'],
+  ['telepon', 'Telepon'], ['internet', 'Internet'],
+  ['sewa', 'Sewa'], ['asuransi', 'Asuransi'], ['materai', 'Materai'],
+  ['pajak', 'Pajak'], ['provisi', 'Provisi'], ['iklan', 'Iklan'],
+  ['referensi', 'Referensi'], ['keamanan', 'Keamanan'], ['denda', 'Denda'],
+  ['allowance', 'Allowance'], ['sumbangan', 'Sumbangan'],
+  ['abonemen', 'Abonemen'], ['notaris', 'Notaris'], ['rks', 'RKS'],
+  ['jaminan', 'Jaminan'],
+  // Tax & regulatory
+  ['pasal', 'Pasal'], ['lebih', 'Lebih'], ['bayar', 'Bayar'],
+  // Business operations
+  ['dagang', 'Dagang'], ['jasa', 'Jasa'], ['barang', 'Barang'],
+  ['operasional', 'Operasional'], ['administrasi', 'Administrasi'],
+  ['transportasi', 'Transportasi'], ['profesional', 'Profesional'],
+  ['rapat', 'Rapat'], ['dokumen', 'Dokumen'],
+  // People & org units
+  ['pegawai', 'Pegawai'], ['karyawan', 'Karyawan'],
+  ['kantor', 'Kantor'], ['makan', 'Makan'], ['lapangan', 'Lapangan'],
+  // Qualifiers / modifiers
+  ['awal', 'Awal'], ['akhir', 'Akhir'], ['tetap', 'Tetap'],
+  ['sebelumnya', 'Sebelumnya'], ['disetor', 'Disetor'],
+  ['kesehatan', 'Kesehatan'], ['pengiriman', 'Pengiriman'],
+  ['bunga', 'Bunga'], ['deposit', 'Deposit'],
+  // Function words (needed so they're not falsely spell-corrected)
+  ['dan', 'dan'], ['atau', 'atau'], ['dari', 'dari'], ['untuk', 'untuk'],
+  ['dengan', 'dengan'], ['pada', 'pada'], ['dalam', 'dalam'],
+  ['yang', 'yang'], ['atas', 'atas'], ['diluar', 'Diluar'],
+  // Acronyms — stored all-caps/mixed so canonical form is correct
+  ['bpjs', 'BPJS'], ['pph', 'PPh'], ['ppn', 'PPN'], ['pbb', 'PBB'],
+  ['atk', 'ATK'], ['bri', 'BRI'], ['bni', 'BNI'], ['btn', 'BTN'],
+  ['bca', 'BCA'], ['bsi', 'BSI'],
+  // Bank names (full)
+  ['permata', 'Permata'], ['mandiri', 'Mandiri'], ['danamon', 'Danamon'],
+]);
+
+// ---------------------------------------------------------------------------
+// Levenshtein edit distance — O(m×n), fast for OCR word lengths (< 20 chars)
+// ---------------------------------------------------------------------------
+function levenshtein(a: string, b: string): number {
+  const m = a.length, n = b.length;
+  if (m === 0) return n;
+  if (n === 0) return m;
+  // Single-row DP — O(n) space
+  const row = Array.from({ length: n + 1 }, (_, i) => i);
+  for (let i = 1; i <= m; i++) {
+    let prev = i;
+    for (let j = 1; j <= n; j++) {
+      const cur = a[i - 1] === b[j - 1] ? row[j - 1] : 1 + Math.min(row[j - 1], row[j], prev);
+      row[j - 1] = prev;
+      prev = cur;
+    }
+    row[n] = prev;
+  }
+  return row[n];
+}
+
+// ---------------------------------------------------------------------------
+// OCR word spell corrector — vocabulary lookup + edit-distance fallback
+//
+// Distance thresholds (conservative to avoid false positives):
+//   ≤ 3 chars : exact match only (short words have too many edit-distance neighbours)
+//   4–5 chars : edit distance ≤ 1
+//   6–8 chars : edit distance ≤ 2
+//   ≥ 9 chars : edit distance ≤ 3 (long words have fewer accidental neighbours)
+// All-caps abbreviations (3–4 chars) get threshold 1 (e.g. "SRI"→"BRI").
+// Correction only applied if the closest match is UNAMBIGUOUS (exactly one winner).
+// ---------------------------------------------------------------------------
+function correctOcrWord(word: string): string {
+  if (!word || word.length <= 2) return word;
+  if (/^\d+[.,\d]*$/.test(word)) return word; // skip numbers
+
+  const lower = word.toLowerCase();
+
+  // Exact match — return canonical form immediately
+  const exact = ID_FINANCIAL_VOCAB.get(lower);
+  if (exact) return exact;
+
+  const len = lower.length;
+  const isAllCaps = /^[A-Z]{2,4}$/.test(word);
+  const maxDist = len <= 3 ? (isAllCaps ? 1 : 0)
+    : len <= 5 ? 1
+    : len <= 8 ? 2
+    : 3;
+
+  if (maxDist === 0) return word;
+
+  let minDist = maxDist + 1;
+  const matches: string[] = [];
+
+  for (const [key] of ID_FINANCIAL_VOCAB) {
+    if (Math.abs(key.length - len) > maxDist) continue; // fast reject by length
+    const d = levenshtein(lower, key);
+    if (d < minDist) { minDist = d; matches.length = 0; matches.push(key); }
+    else if (d === minDist) { matches.push(key); }
+  }
+
+  // Only correct if unambiguous (single closest match)
+  if (minDist <= maxDist && matches.length === 1) {
+    return ID_FINANCIAL_VOCAB.get(matches[0])!;
+  }
+  return word; // ambiguous or no close match — keep original
+}
 
 // ---------------------------------------------------------------------------
 // Utilities
@@ -193,32 +318,37 @@ function extractDigitsFromRpWord(text: string): string | null {
 
 function correctLabel(label: string): string {
   let corrected = label;
+
+  // Step 1: Structural regex corrections (layout/punctuation artifacts)
   for (const [pattern, replacement] of LABEL_CORRECTIONS) {
     corrected = corrected.replace(pattern, replacement);
   }
   corrected = corrected.replace(/\s{2,}/g, ' ').trim();
 
-  // Generic: capitalize the first letter of each word that is currently all-lowercase
-  // and ≥4 chars, EXCEPT common Indonesian function words (prepositions, conjunctions).
-  // This handles OCR case-drops (e.g. "iklan"→"Iklan") without hardcoding specific words.
+  // Step 2: Word-level OCR spell correction using vocabulary + edit distance.
+  // Each token is corrected independently; unknown words (not in vocab, no close
+  // match) are passed through unchanged so correct words are never corrupted.
+  corrected = corrected.split(/\s+/).map(w => correctOcrWord(w)).join(' ');
+
+  // Step 3: Auto-capitalize words not caught by vocabulary (vocab already returns
+  // correct casing for known words; this handles anything that slipped through).
   const ID_PARTICLES = new Set(['dan', 'atau', 'dari', 'untuk', 'dengan', 'pada', 'dalam',
     'atas', 'bawah', 'antara', 'oleh', 'serta', 'beserta', 'yang', 'ini', 'itu', 'juga',
     'saja', 'pula', 'lagi', 'sudah', 'akan', 'telah', 'adalah', 'yaitu', 'yakni']);
   corrected = corrected.replace(/\b([a-z])([a-zA-Z]{3,})\b/g, (_, first, rest) => {
     const word = first + rest;
-    if (ID_PARTICLES.has(word.toLowerCase())) return word; // keep prepositions/conjunctions lowercase
+    if (ID_PARTICLES.has(word.toLowerCase())) return word;
     return first.toUpperCase() + rest;
   });
 
-  // Generic: strip spurious dot immediately after a short abbreviation token (e.g. "Adm. " → "Adm ")
+  // Step 4: Strip spurious dot after short abbreviation token (e.g. "Adm. " → "Adm ")
   corrected = corrected.replace(/\b([A-Z][a-z]{1,3})\.\s/g, '$1 ');
 
-  // Generic: normalize hyphens between two DIFFERENT letter-only words into space.
-  // Keeps reduplication ("Lain-Lain"), number hyphens ("Covid-19"), and acronym hyphens ("PPh-21").
-  // Removes OCR-noise hyphens ("Jumlah-Aktiva"→"Jumlah Aktiva", "Pajak-Kendaraan"→"Pajak Kendaraan").
+  // Step 5: Normalize OCR-noise hyphens between different words → space.
+  // Keeps reduplication (Lain-Lain) and alphanumeric hyphens (Covid-19, PPh-21).
   corrected = corrected.replace(/\b([a-zA-Z]{2,})-([a-zA-Z]{2,})\b/g, (match, a, b) => {
-    if (a.toLowerCase() === b.toLowerCase()) return match; // keep reduplication: Lain-Lain
-    return `${a} ${b}`; // OCR-noise hyphen → space
+    if (a.toLowerCase() === b.toLowerCase()) return match;
+    return `${a} ${b}`;
   });
 
   return corrected.trim();
@@ -665,10 +795,13 @@ function parseNeracaFromOcr(wordRows: WordRow[], imgW: number, imgH: number): { 
     row.label = row.label.replace(/[.:\-\u2014|;,\s]+$/, '').trim();
   }
 
-  // Post-process: Akumulasi Penyusutan is a contra-asset — always negative in balance sheet
+  // Post-process: rows whose label starts with "Akum" represent accumulated depreciation
+  // (Akumulasi Penyusutan). In double-entry accounting this is a contra-asset: it offsets
+  // the gross asset value and must always be negative on the balance sheet. OCR frequently
+  // extracts the raw absolute number from the PDF, so we negate it here if positive.
   for (const row of leftRows) {
     if (!row.label) continue;
-    if (/akum/i.test(row.label)) {
+    if (/^akum/i.test(row.label)) {
       if (row.mainValue !== null && row.mainValue > 0) row.mainValue = -row.mainValue;
       if (row.subValue !== null && row.subValue > 0) row.subValue = -row.subValue;
     }
