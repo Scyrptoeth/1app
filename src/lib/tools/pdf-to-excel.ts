@@ -1099,13 +1099,19 @@ async function generateExcel(extraction: PdfExtractionResult, onProgress?: (u: P
         // Pad row to numCols
         const cells: (string | number | null)[] = row.slice(0, numCols);
         while (cells.length < numCols) cells.push(null);
-        // Convert numeric strings to numbers (Indonesian format: dots=thousands, comma=decimal).
-        // Conservative rule: only convert if the string has at least one dot separator
-        // (unambiguous Indonesian thousands format) or is purely numeric with no separators.
-        // Strings with only commas and no dots are kept as-is — they are ambiguous
-        // (comma could be thousands or decimal) and should not be silently mis-converted.
-        // Convert a single numeric string (Indonesian or plain) to a JS number.
-        // Returns the original string if conversion is ambiguous or not applicable.
+        // Returns true when commas are unambiguously used as thousands separators.
+        // Rule: all comma-separated groups after the first must be exactly 3 digits.
+        // "5,093,179" → true  ("5" | "093" | "179") — US/international thousands
+        // "10,114"    → true  ("10" | "114")
+        // "1,5"       → false (last group is 1 digit — ambiguous decimal)
+        // "10,50"     → false (2 digits — ambiguous)
+        const isUnambiguousThousandsComma = (s: string): boolean =>
+          /^(\d{1,3},)*\d{3}$/.test(s);
+
+        // Convert a numeric string to a JS number.
+        // Handles: plain integers, Indonesian dot-thousands, US comma-thousands,
+        // parenthesized negatives (accounting notation: "(5.222.504)" → -5222504).
+        // Returns the original string for genuinely ambiguous inputs.
         const toNumber = (s: string): string | number => {
           const hasDot = s.includes('.');
           const hasComma = s.includes(',');
@@ -1116,20 +1122,27 @@ async function generateExcel(extraction: PdfExtractionResult, onProgress?: (u: P
             const n = Number(clean);
             if (!isNaN(n)) return n;
           }
-          // Parenthesized negative (accounting notation): "(5.222.504)" → -5222504
-          // Also handles "(86)" → -86.  Ambiguous comma-only kept as string.
+          // US/international comma-thousands (all groups = 3 digits): "10,114" → 10114
+          if (hasComma && !hasDot && /^[\d,]+$/.test(s) && isUnambiguousThousandsComma(s)) {
+            return Number(s.replace(/,/g, ''));
+          }
+          // Parenthesized negative: "(5.222.504)" → -5222504, "(5,093,179)" → -5093179
           if (/^\([\d.,]+\)$/.test(s)) {
             const inner = s.slice(1, -1);
             const iHasDot = inner.includes('.');
+            const iHasComma = inner.includes(',');
             if (/^\d+$/.test(inner)) return -Number(inner);
             if (iHasDot && /^[\d.,]+$/.test(inner)) {
               const clean = inner.replace(/\./g, '').replace(',', '.');
               const n = Number(clean);
               if (!isNaN(n)) return -n;
             }
+            // Comma-only inside parens: apply the same 3-digit rule
+            if (iHasComma && !iHasDot && /^[\d,]+$/.test(inner) && isUnambiguousThousandsComma(inner)) {
+              return -Number(inner.replace(/,/g, ''));
+            }
           }
-          // Comma-only (no dots) → ambiguous, keep as string
-          if (hasComma && !hasDot) return s;
+          // Remaining comma-only strings are genuinely ambiguous — keep as string
           return s;
         };
 
@@ -1139,18 +1152,31 @@ async function generateExcel(extraction: PdfExtractionResult, onProgress?: (u: P
           return toNumber(s) as string | number | null;
         });
 
-        // Post-process: split cells that contain "number text" (merged value+description).
-        // This happens when a value and description end up on the same x-line and the
-        // column boundary placed them in the same cell.  Pattern: "46.351 Exchange di"
-        // → split into number (keep in current column) and text (move to next empty column).
+        // Post-process: split cells containing "number text" (merged value+description).
+        // Happens when a PDF text item spans the column boundary — pdfjs returns the
+        // value and description as one string (e.g. "46.351 Exchange di").
+        //
+        // Strategy:
+        //   - Always extract the number part → put in current column.
+        //   - If next column is empty   → move text part there.
+        //   - If next column has string → prepend text part (reconstruct full description
+        //     from two PDF fragments: "Exchange di" + "fferences on translation of").
+        //   - If next column has number → skip (do not overwrite a numeric value).
         for (let i = 0; i < typed.length - 1; i++) {
           const v = typed[i];
           if (typeof v !== 'string') continue;
           const m = v.match(/^([\d.,]+|\([\d.,]+\))\s+([A-Za-z].+)$/);
-          if (m && (typed[i + 1] === null || typed[i + 1] === '')) {
-            typed[i] = toNumber(m[1]) as string | number;
-            typed[i + 1] = m[2];
+          if (!m) continue;
+          const numConverted = toNumber(m[1]) as string | number;
+          const textPart = m[2];
+          typed[i] = numConverted;
+          const next = typed[i + 1];
+          if (next === null || next === '') {
+            typed[i + 1] = textPart;                    // empty next col
+          } else if (typeof next === 'string') {
+            typed[i + 1] = textPart + ' ' + next;       // prepend to reconstruct description
           }
+          // typeof next === 'number' → leave next column untouched
         }
 
         ws.addRow(typed);
