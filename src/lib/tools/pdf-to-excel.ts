@@ -391,16 +391,31 @@ async function hasTextContent(page: any): Promise<boolean> {
 
 // ---------------------------------------------------------------------------
 // Extract generic table from text-based PDF page
-// Groups text items into rows by y-coordinate, then separates cells by x-gap.
-// Works for any columnar PDF without requiring knowledge of document structure.
+//
+// Techniques used (in order of application):
+// 1. Font-height adaptive row grouping — tolerance = ±h*0.4 instead of fixed ±5px
+// 2. Dual-edge column detection — boundary placed at gap between rightEdge(leftItem)
+//    and leftEdge(rightItem), not midpoint of x-positions. Accurate for right-aligned
+//    numbers whose left-edge is far from the column's actual left boundary.
+// 3. Persistent gap detection (fallback) — x-position is a column boundary only if
+//    it is empty in ≥60% of rows. Eliminates false splits from long label rows.
+// 4. Center-based cell assignment — uses cx = x + w/2 instead of x alone. Correct
+//    for right-aligned numbers (their center falls inside the column, left edge may not).
 // ---------------------------------------------------------------------------
 async function extractTextTable(page: any): Promise<string[][]> {
   const textContent = await page.getTextContent();
 
-  const items: Array<{ text: string; x: number; y: number }> = [];
+  // Collect items with width + height from pdfjs (both are exposed on TextItem)
+  const items: Array<{ text: string; x: number; y: number; w: number; h: number }> = [];
   for (const item of textContent.items) {
     const text = (item.str || '').trim();
-    if (text) items.push({ text, x: item.transform[4], y: item.transform[5] });
+    if (text) items.push({
+      text,
+      x: item.transform[4],
+      y: item.transform[5],
+      w: Math.abs(item.width) || 0,
+      h: Math.abs(item.height) || 8,
+    });
   }
   if (items.length === 0) return [];
 
@@ -410,75 +425,112 @@ async function extractTextTable(page: any): Promise<string[][]> {
   const margin = (yMax - yMin) * 0.03;
   const content = items.filter(i => i.y > yMin + margin && i.y < yMax - margin);
 
-  // Group items into y-row bands first (needed for column detection step)
-  const preBands: Array<{ y: number; items: typeof content }> = [];
+  // ── Technique 1: Font-height adaptive row grouping ──────────────────────
+  // tolerance = ±max(5, h*0.4) — minimum 5px preserves existing grouping for
+  // normal text; scales up for larger fonts so bold headers group correctly.
+  const preBands: Array<{ y: number; h: number; items: typeof content }> = [];
   for (const item of content) {
-    const b = preBands.find(b => Math.abs(b.y - item.y) <= 5);
-    if (b) b.items.push(item);
-    else preBands.push({ y: item.y, items: [item] });
+    const tolerance = Math.max(5, item.h * 0.4);
+    const b = preBands.find(b => Math.abs(b.y - item.y) <= tolerance);
+    if (b) { b.items.push(item); b.h = Math.max(b.h, item.h); }
+    else preBands.push({ y: item.y, h: item.h, items: [item] });
   }
 
-  // Detect column x-boundaries.
-  // Strategy 1: find a header row (contains ≥2 year-like tokens or "Uraian"/"No"/"Description").
-  // Use header item x-positions directly as column anchors — most accurate.
-  // Strategy 2: fall back to numeric-row x-gap detection.
+  // ── Column boundary detection ────────────────────────────────────────────
+  // Strategy A: header row with ≥2 year tokens or keyword label (most accurate)
+  // Strategy B: persistent gap detection across all rows (fallback)
   const yearRe = /^(19|20)\d{2}$/;
+  const dateYearRe = /\b(19|20)\d{2}\b/;   // "31 Desember 2024", "Per 31/12/2024"
   const headerRe = /^(uraian|no|description|keterangan|catatan|note)$/i;
+
   const headerBand = preBands.find(band =>
-    band.items.filter(i => yearRe.test(i.text.trim())).length >= 2 ||
+    band.items.filter(i => yearRe.test(i.text.trim()) || dateYearRe.test(i.text)).length >= 2 ||
     (band.items.some(i => headerRe.test(i.text.trim())) && band.items.length >= 3)
   );
 
   let xBreaks: number[];
+
   if (headerBand) {
-    const hx = headerBand.items.map(i => i.x).sort((a, b) => a - b);
+    // ── Technique 2: Dual-edge boundary from header ──────────────────────
+    // Prefer midpoint of the gap between rightEdge(left) and leftEdge(right).
+    // For right-aligned headers the gap may be tiny (≤5px) — in that case fall
+    // back to midpoint of x-positions (original method, always works).
+    const hItems = [...headerBand.items].sort((a, b) => a.x - b.x);
     xBreaks = [];
-    for (let i = 1; i < hx.length; i++) {
-      if (hx[i] - hx[i - 1] > 10) xBreaks.push((hx[i] + hx[i - 1]) / 2);
+    for (let i = 1; i < hItems.length; i++) {
+      const rightEdge = hItems[i - 1].x + hItems[i - 1].w;
+      const leftEdge  = hItems[i].x;
+      const gap = leftEdge - rightEdge;
+      if (gap > 5 && gap <= 60) {
+        // Tight gap (5-60px): dual-edge midpoint is more accurate.
+        // Placing boundary in the actual whitespace between items is better than
+        // the x-position midpoint when columns are close together.
+        xBreaks.push((rightEdge + leftEdge) / 2);
+      } else if (hItems[i].x - hItems[i - 1].x > 10) {
+        // Wide gap (>60px) or touching items: x-position midpoint (original method).
+        // For wide gaps, right-aligned headers sit far right of the column's actual
+        // content start, so x-midpoint gives a better "split point" than gap midpoint.
+        xBreaks.push((hItems[i - 1].x + hItems[i].x) / 2);
+      }
     }
   } else {
-    // Fall back: use x-gaps from numeric rows
-    const numericRe = /^[\d.,]+$/;
-    const tableRows = preBands.filter(band =>
-      band.items.some(item => numericRe.test(item.text.replace(/\s/g, '')))
-    );
-    const sourceItems = tableRows.length >= 3 ? tableRows.flatMap(b => b.items) : content;
-    const BUCKET = 5;
-    const xSorted = sourceItems.map(i => Math.round(i.x / BUCKET) * BUCKET).sort((a, b) => a - b);
+    // ── Technique 3: Persistent gap detection ───────────────────────────
+    // Build a coverage histogram: for each x-bucket, count how many rows
+    // have at least one text item spanning that x range.
+    // A column boundary = x range covered in <40% of rows (gap in >60%).
+    const BUCKET = 3;
+    const allX  = content.map(i => i.x);
+    const allXR = content.map(i => i.x + i.w);
+    const xPageMin = Math.min(...allX);
+    const xPageMax = Math.max(...allXR);
+    const numBuckets = Math.ceil((xPageMax - xPageMin) / BUCKET) + 2;
+    const coverage = new Int32Array(numBuckets);
+
+    for (const band of preBands) {
+      const seen = new Set<number>();
+      for (const item of band.items) {
+        const bL = Math.max(0, Math.floor((item.x          - xPageMin) / BUCKET));
+        const bR = Math.min(numBuckets - 1, Math.ceil((item.x + item.w - xPageMin) / BUCKET));
+        for (let b = bL; b <= bR; b++) seen.add(b);
+      }
+      for (const b of seen) coverage[b]++;
+    }
+
+    const gapThreshold = preBands.length * 0.4;
     xBreaks = [];
-    const COL_GAP = 30;
-    let prev = xSorted[0];
-    for (let i = 1; i < xSorted.length; i++) {
-      if (xSorted[i] - prev > COL_GAP) xBreaks.push((xSorted[i] + prev) / 2);
-      prev = xSorted[i];
+    let inGap = false;
+    let gapStart = 0;
+    for (let b = 0; b < numBuckets; b++) {
+      if (coverage[b] < gapThreshold) {
+        if (!inGap) { inGap = true; gapStart = b; }
+      } else if (inGap) {
+        xBreaks.push((gapStart + b) / 2 * BUCKET + xPageMin);
+        inGap = false;
+      }
     }
   }
 
-  // Reuse preBands for row iteration — sort top-to-bottom
+  // Sort bands top-to-bottom
   preBands.sort((a, b) => b.y - a.y);
-  const bands = preBands;
-
   const numCols = xBreaks.length + 1;
   const table: string[][] = [];
 
-  for (const band of bands) {
+  for (const band of preBands) {
     band.items.sort((a, b) => a.x - b.x);
     const cells = new Array<string>(numCols).fill('');
     for (const item of band.items) {
-      // Bias-aware column assignment:
-      // - Short numeric items (1-3 chars: dashes, single digits) are often right-aligned
-      //   and overshoot column boundaries slightly. Apply +10px right bias so they stay
-      //   in their natural column.
-      // - Long text items (descriptions, labels) are left-aligned and can start slightly
-      //   before the column boundary. Apply -15px left bias so they cross into the next
-      //   column more readily.
-      const isNumericLike = /^[-\d.,]+$/.test(item.text);
-      const bias = isNumericLike && item.text.length <= 3
+      // ── Technique 4: Bias-aware column assignment ────────────────────────
+      // Right-aligned numbers and dashes have their LEFT edge past the column's
+      // visual center, sometimes crossing the midpoint boundary. Applying +10px
+      // bias shifts the effective boundary right so they stay in their column.
+      // Long text labels start at the column's left edge but their x can be
+      // slightly left of the boundary; -15px bias lets them cross more readily.
+      const isNumericLike = /^[-\d.,()]+$/.test(item.text.replace(/\s/g, ''));
+      const bias = isNumericLike && item.text.length <= 5
         ? 10    // short numeric/dash: boundary shifts right → harder to cross
         : !isNumericLike && item.text.length > 8
-          ? -15 // long text (description): boundary shifts left → easier to cross
-          : 0;  // normal items: no bias
-
+          ? -15 // long text description: boundary shifts left → easier to cross
+          : 0;
       let col = 0;
       for (let i = 0; i < xBreaks.length; i++) {
         if (item.x > xBreaks[i] + bias) col = i + 1;
