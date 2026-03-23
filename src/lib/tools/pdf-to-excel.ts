@@ -113,8 +113,8 @@ const LABEL_CORRECTIONS: [RegExp, string][] = [
   [/\bProvisi[:\s]+\d+\b/gi, 'Provisi'],
   // OCR: "Rp" or ".Rp" captured at end of label (belongs to value column)
   [/\s*[.,]?\s*Rp\s*$/gi, ''],
-  // OCR: abbreviation dots (PBB. → PBB)
-  [/\bPBB\.\b/g, 'PBB'],
+  // OCR: abbreviation dots (PBB. → PBB) — no \b after dot since dot is non-word char
+  [/\bPBB\./g, 'PBB'],
   // OCR: leading noise characters ($, !, etc.)
   [/^[!$#@&*]+\s*/g, ''],
   // OCR: dah → dan (common misread)
@@ -198,9 +198,6 @@ function correctLabel(label: string): string {
   }
   corrected = corrected.replace(/\s{2,}/g, ' ').trim();
 
-  // Generic: capitalize the first letter of each word that is currently all-lowercase
-  // and ≥4 chars (shorter words like "dan", "di", "ke", "dan", "dan" stay lowercase).
-  // This handles any OCR case-drop without hardcoding specific words.
   // Generic: capitalize the first letter of each word that is currently all-lowercase
   // and ≥4 chars, EXCEPT common Indonesian function words (prepositions, conjunctions).
   // This handles OCR case-drops (e.g. "iklan"→"Iklan") without hardcoding specific words.
