@@ -261,7 +261,12 @@ async function hasTextContent(page: any): Promise<boolean> {
 // ---------------------------------------------------------------------------
 // Render PDF page to canvas
 // ---------------------------------------------------------------------------
-async function renderPageToCanvas(page: any, scaleFactor: number = 3): Promise<HTMLCanvasElement> {
+// Scale factor for PDF-to-canvas rendering.
+// PDF.js base = 72 DPI. Scale 4 → 288 DPI (near Tesseract optimal of 300 DPI).
+// Higher = better OCR accuracy, slightly slower processing.
+const OCR_SCALE = 4;
+
+async function renderPageToCanvas(page: any, scaleFactor: number = OCR_SCALE): Promise<HTMLCanvasElement> {
   const viewport = page.getViewport({ scale: scaleFactor });
   const canvas = document.createElement('canvas');
   canvas.width = viewport.width;
@@ -311,38 +316,69 @@ function sauvolaThreshold(gray: Uint8Array, w: number, h: number, blockSize: num
 
 // ---------------------------------------------------------------------------
 // Preprocess canvas for OCR
+// Pipeline:
+//   1. Grayscale (BT.601) — work on single channel for all subsequent ops
+//   2. Contrast normalization — histogram [1%..99%] percentile stretch to [0..255]
+//      normalizes uneven scan exposure without clipping real ink strokes
+//   3. Unsharp mask (gentle, ×1.0) — enhances character edges while suppressing
+//      low-contrast scan artifacts that would otherwise be OCR'd as phantom text
+//   4. Sauvola adaptive binarization — block size scales with scaleFactor so
+//      neighbourhood ≈ 1 char-width at any DPI
 // ---------------------------------------------------------------------------
-async function preprocessCanvasForOcr(canvas: HTMLCanvasElement): Promise<Blob> {
+async function preprocessCanvasForOcr(canvas: HTMLCanvasElement, scaleFactor: number = OCR_SCALE): Promise<Blob> {
   const ctx = canvas.getContext('2d')!;
   const w = canvas.width, h = canvas.height;
   const imageData = ctx.getImageData(0, 0, w, h);
   const data = imageData.data;
-  const pixelCount = data.length / 4;
+  const pixelCount = w * h;
 
-  // Sharpen
-  const src = new Uint8ClampedArray(data);
-  const kernel = [-1, -1, -1, -1, 9, -1, -1, -1, -1];
-  for (let y = 1; y < h - 1; y++) {
-    for (let x = 1; x < w - 1; x++) {
-      for (let c = 0; c < 3; c++) {
-        let val = 0;
-        for (let ky = -1; ky <= 1; ky++)
-          for (let kx = -1; kx <= 1; kx++)
-            val += src[((y + ky) * w + (x + kx)) * 4 + c] * kernel[(ky + 1) * 3 + (kx + 1)];
-        data[(y * w + x) * 4 + c] = Math.max(0, Math.min(255, val));
-      }
-    }
-  }
-
-  // Grayscale
+  // --- Step 1: Grayscale (BT.601 luma) ---
   const gray = new Uint8Array(pixelCount);
   for (let i = 0; i < pixelCount; i++) {
     const idx = i * 4;
     gray[i] = Math.round(0.299 * data[idx] + 0.587 * data[idx + 1] + 0.114 * data[idx + 2]);
   }
 
-  // Sauvola threshold
-  const binary = sauvolaThreshold(gray, w, h);
+  // --- Step 2: Contrast normalization via histogram percentile stretch ---
+  // O(N + 256) — much faster than sort() for large images
+  const hist = new Uint32Array(256);
+  for (let i = 0; i < pixelCount; i++) hist[gray[i]]++;
+  let cumul = 0, p1 = 0, p99 = 255;
+  for (let v = 0; v < 256; v++) {
+    cumul += hist[v];
+    if (cumul / pixelCount < 0.01) p1 = v;
+    if (cumul / pixelCount < 0.99) p99 = v;
+  }
+  const cRange = Math.max(p99 - p1, 1);
+  for (let i = 0; i < pixelCount; i++) {
+    gray[i] = Math.round(Math.max(0, Math.min(255, (gray[i] - p1) / cRange * 255)));
+  }
+
+  // --- Step 3: Unsharp mask (strength 1.0) ---
+  // Blur with 3×3 box filter, then output = original + 1.0 × (original − blurred)
+  // Strength 1.0 is gentler than the previous 1.5: preserves thin character
+  // strokes while still suppressing low-contrast scan artifacts.
+  const blurred = new Uint8Array(pixelCount);
+  for (let y = 1; y < h - 1; y++) {
+    for (let x = 1; x < w - 1; x++) {
+      let sum = 0;
+      for (let dy = -1; dy <= 1; dy++)
+        for (let dx = -1; dx <= 1; dx++)
+          sum += gray[(y + dy) * w + (x + dx)];
+      blurred[y * w + x] = Math.round(sum / 9);
+    }
+  }
+  for (let x = 0; x < w; x++) { blurred[x] = gray[x]; blurred[(h - 1) * w + x] = gray[(h - 1) * w + x]; }
+  for (let y = 0; y < h; y++) { blurred[y * w] = gray[y * w]; blurred[y * w + w - 1] = gray[y * w + w - 1]; }
+  const sharpened = new Uint8Array(pixelCount);
+  for (let i = 0; i < pixelCount; i++) {
+    sharpened[i] = Math.max(0, Math.min(255, Math.round(gray[i] + 1.0 * (gray[i] - blurred[i]))));
+  }
+
+  // --- Step 4: Sauvola adaptive binarization ---
+  // Block size ≈ 1 character-width: baseline 25px at 3× (216 DPI), scales up
+  const blockSize = Math.round(25 * scaleFactor / 3);
+  const binary = sauvolaThreshold(sharpened, w, h, blockSize, 0.15);
 
   for (let i = 0; i < pixelCount; i++) {
     const idx = i * 4;
@@ -390,9 +426,12 @@ async function performOcr(
     });
   }
 
-  await worker.setParameters({ tessedit_pageseg_mode: '6' as any, preserve_interword_spaces: '1' as any });
+  // user_defined_dpi: PDF.js renders at scale×72 DPI. Telling Tesseract the real
+  // DPI lets it calibrate internal character-size expectations correctly.
+  const dpi = String(Math.round(scaleFactor * 72));
+  await worker.setParameters({ tessedit_pageseg_mode: '6' as any, preserve_interword_spaces: '1' as any, user_defined_dpi: dpi as any });
   const result1 = await worker.recognize(imageBlob);
-  await worker.setParameters({ tessedit_pageseg_mode: '4' as any, preserve_interword_spaces: '1' as any });
+  await worker.setParameters({ tessedit_pageseg_mode: '4' as any, preserve_interword_spaces: '1' as any, user_defined_dpi: dpi as any });
   const result2 = await worker.recognize(imageBlob);
   await worker.terminate();
 
@@ -541,8 +580,12 @@ function parseLabaRugiFromOcr(wordRows: WordRow[], imgW: number, imgH: number): 
         wi = j; continue;
       }
 
-      if (word.bbox.x0 < imgW * 0.12 && /^\d{1,2}[.:]?$/.test(word.text.trim())) {
-        const n = parseInt(word.text);
+      // Row numbers appear at left margin as 1-2 digits, optionally followed by
+      // punctuation or a single OCR-noise letter (e.g. "24" misread as "2A").
+      // Extract only the leading digit(s) to be robust against character confusion.
+      if (word.bbox.x0 < imgW * 0.12 && /^\d{1,2}[A-Za-z.:]?$/.test(word.text.trim())) {
+        const digits = word.text.match(/^(\d+)/);
+        const n = digits ? parseInt(digits[1]) : 0;
         if (n > 0 && n <= 50) { rowNum = n.toString(); wi++; continue; }
       }
 
@@ -812,13 +855,13 @@ export async function convertPdfToExcel(
     if (!isText) {
       // IMAGE-BASED: render to canvas -> OCR -> parse
       onProgress?.({ progress: Math.round(ppBase + 2), status: `Page ${pageNum}: Scanned image detected, rendering...` });
-      const canvas = await renderPageToCanvas(page, 3);
+      const canvas = await renderPageToCanvas(page, OCR_SCALE);
 
       onProgress?.({ progress: Math.round(ppBase + 5), status: `Page ${pageNum}: Preprocessing for OCR...` });
-      const preprocessedBlob = await preprocessCanvasForOcr(canvas);
+      const preprocessedBlob = await preprocessCanvasForOcr(canvas, OCR_SCALE);
 
       onProgress?.({ progress: Math.round(ppBase + 8), status: `Page ${pageNum}: Running OCR...` });
-      const ocrWords = await performOcr(preprocessedBlob, 3, onProgress!, Math.round(ppBase + 10));
+      const ocrWords = await performOcr(preprocessedBlob, OCR_SCALE, onProgress!, Math.round(ppBase + 10));
 
       if (ocrWords.length === 0) { pages.push({ pageNumber: pageNum, sheetName, isSideBySide: false, rows: [] }); continue; }
 
