@@ -104,6 +104,27 @@ const LABEL_CORRECTIONS: [RegExp, string][] = [
   [/\bBarang\s+fi\s+Jasa\b/gi, 'Barang & Jasa'],
   [/\bBarang\s+fl\s+Jasa\b/gi, 'Barang & Jasa'],
   [/\bBank\s+SRI\b/g, 'Bank BRI'],
+  // OCR: lowercase L misread as i
+  [/\biaba\b/g, 'Laba'],
+  // OCR: trailing character noise on common words
+  [/\bAbonemen[r]\b/gi, 'Abonemen'],
+  [/\bAbonemer\b/gi, 'Abonemen'],
+  // OCR: colon/number noise in labels
+  [/\bProvisi[:\s]+\d+\b/gi, 'Provisi'],
+  // OCR: "Rp" or ".Rp" captured at end of label (belongs to value column)
+  [/\s*[.,]?\s*Rp\s*$/gi, ''],
+  // OCR: abbreviation dots (PBB. → PBB)
+  [/\bPBB\.\b/g, 'PBB'],
+  // OCR: leading noise characters ($, !, etc.)
+  [/^[!$#@&*]+\s*/g, ''],
+  // OCR: dah → dan (common misread)
+  [/\bdah\b/g, 'dan'],
+  // OCR: comma between adjacent label words (e.g. "Hutang,PPh" → "Hutang PPh")
+  [/\bHutang,\s*PPh\b/g, 'Hutang PPh'],
+  // OCR: lowercase inventaris
+  [/\binventaris\b/g, 'Inventaris'],
+  // OCR: Jumlah-Aktiva with spurious hyphen
+  [/\bJumlah-Aktiva\b/g, 'Jumlah Aktiva'],
 ];
 
 // ---------------------------------------------------------------------------
@@ -424,8 +445,20 @@ function detectPageTypeFromOcr(words: OcrWord[]): 'laba_rugi' | 'neraca' {
 // ---------------------------------------------------------------------------
 function parseLabaRugiFromOcr(wordRows: WordRow[], imgW: number, imgH: number): RowData[] {
   const result: RowData[] = [];
-  const startY = imgH * 0.10, endY = imgH * 0.82;
-  const content = wordRows.filter(r => r.minY >= startY && r.minY <= endY);
+  const startY = imgH * 0.10, endY = imgH * 0.78;
+  const allContent = wordRows.filter(r => r.minY >= startY && r.minY <= endY);
+
+  // Skip company header rows — only start output from first recognized section header
+  // (e.g. PENERIMAAN BRUTO, BIAYA LANGSUNG, etc.)
+  let firstSectionIdx = 0;
+  for (let i = 0; i < allContent.length; i++) {
+    const rowText = allContent[i].words.map(w => w.text).join(' ');
+    if (HEADER_KEYWORDS.some(k => rowText.toUpperCase().includes(k.toUpperCase()))) {
+      firstSectionIdx = i;
+      break;
+    }
+  }
+  const content = allContent.slice(firstSectionIdx);
 
   // Detect value columns
   const numRightEdges: number[] = [];
@@ -490,7 +523,7 @@ function parseLabaRugiFromOcr(wordRows: WordRow[], imgW: number, imgH: number): 
       wi++;
     }
 
-    let label = correctLabel(labelParts.join(' ').trim().replace(/^[:\-\u2014|.;,\s]+/, '').replace(/[:\-\u2014|;,\s]+$/, ''));
+    let label = correctLabel(labelParts.join(' ').trim().replace(/^["":\-\u2014|.;,\s]+/, '').replace(/[.""!":\-\u2014|;,\s]+$/, ''));
     if (!label && subValue === null && mainValue === null) continue;
 
     if (!rowNum) { const m = label.match(/^(\d{1,2})[\s.:]+(.+)$/); if (m && parseInt(m[1]) <= 50) { rowNum = m[1]; label = m[2].trim(); } }
@@ -510,19 +543,75 @@ function assignVal(numText: string, numRight: number, subCol: number, mainCol: n
 }
 
 // ---------------------------------------------------------------------------
+// Merge orphan numeric continuation rows (OCR splits large numbers across lines)
+// ---------------------------------------------------------------------------
+function mergeOrphanNumbers(rows: RowData[]): void {
+  for (let i = rows.length - 1; i >= 1; i--) {
+    const cur = rows[i];
+    const prev = rows[i - 1];
+    const curVal = cur.mainValue ?? cur.subValue;
+    // Current row: no label, value has ≤ 3 digits (continuation fragment like "363")
+    if (cur.label || curVal === null) continue;
+    if (Math.abs(curVal).toString().length > 3) continue;
+    // Previous row: must have a label and a value with ≥ 6 digits (truncated large number)
+    if (!prev.label) continue;
+    const prevMainLen = prev.mainValue !== null ? Math.abs(prev.mainValue).toString().length : 0;
+    const prevSubLen = prev.subValue !== null ? Math.abs(prev.subValue).toString().length : 0;
+    if (prevMainLen >= 6) {
+      const combined = parseFloat(Math.abs(prev.mainValue!).toString() + Math.abs(curVal).toString());
+      if (!isNaN(combined)) { prev.mainValue = prev.mainValue! < 0 ? -combined : combined; rows.splice(i, 1); }
+    } else if (prevSubLen >= 6) {
+      const combined = parseFloat(Math.abs(prev.subValue!).toString() + Math.abs(curVal).toString());
+      if (!isNaN(combined)) { prev.subValue = prev.subValue! < 0 ? -combined : combined; rows.splice(i, 1); }
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Parse Neraca from OCR words (side-by-side)
 // ---------------------------------------------------------------------------
 function parseNeracaFromOcr(wordRows: WordRow[], imgW: number, imgH: number): { leftRows: RowData[]; rightRows: RowData[]; leftTitle: string; rightTitle: string } {
-  const startY = imgH * 0.10, endY = imgH * 0.82;
+  // startY at 30% to skip company letterhead (address, logo, NERACA title) at the top of Neraca pages
+  const startY = imgH * 0.30, endY = imgH * 0.82;
   const contentWords = wordRows.flatMap(r => r.words).filter(w => w.bbox.y0 >= startY && w.bbox.y0 <= endY);
-  const midX = imgW / 2;
+  // Use 48% as midX: right-column label words (e.g. "Hutang", "Jangka") OCR-bbox at ~48-50%
+  // go into RIGHT bucket. 50%+ was too high — those words fell to LEFT then got stripped.
+  const midX = imgW * 0.48;
 
   const leftWR = groupWordsIntoRows(contentWords.filter(w => w.bbox.x0 < midX));
   const rightWR = groupWordsIntoRows(contentWords.filter(w => w.bbox.x0 >= midX));
 
+  const leftRows = parseSideFromOcr(leftWR, midX);
+  const rightRows = parseSideFromOcr(rightWR, midX);
+
+  // Post-process: strip any residual Passiva keywords from left labels (safety net for OCR bleed)
+  for (const row of leftRows) {
+    if (!row.label) continue;
+    row.label = row.label.replace(/\s+Hutang\b.*/i, '').trim();
+    row.label = row.label.replace(/\s+Dn\s+C\b.*/i, '').trim();
+    row.label = row.label.replace(/\s+[|D]\.\s*Ek\w*.*/i, '').trim();
+    row.label = row.label.replace(/\s+Jumlah\s+(?:Hutang|Ekuitas|Passiva)\b.*/i, '').trim();
+    row.label = row.label.replace(/\s+Laba\s+Tahun\b.*/i, '').trim();
+    row.label = row.label.replace(/[.:\-\u2014|;,\s]+$/, '').trim();
+  }
+
+  // Post-process: Akumulasi Penyusutan is a contra-asset — always negative in balance sheet
+  for (const row of leftRows) {
+    if (!row.label) continue;
+    if (/akum/i.test(row.label)) {
+      if (row.mainValue !== null && row.mainValue > 0) row.mainValue = -row.mainValue;
+      if (row.subValue !== null && row.subValue > 0) row.subValue = -row.subValue;
+    }
+  }
+
+  // Post-process: merge OCR-split numbers where a large value was broken across OCR text lines
+  // e.g. "30444563" on one row + orphan "363" on next → 30444563363
+  mergeOrphanNumbers(leftRows);
+  mergeOrphanNumbers(rightRows);
+
   return {
-    leftRows: parseSideFromOcr(leftWR, midX),
-    rightRows: parseSideFromOcr(rightWR, midX),
+    leftRows,
+    rightRows,
     leftTitle: 'Aktiva',
     rightTitle: 'Passiva',
   };
@@ -546,30 +635,50 @@ function parseSideFromOcr(wordRows: WordRow[], sideWidth: number): RowData[] {
     if (l.length >= 2) subCol = l.reduce((a, b) => a + b, 0) / l.length;
     if (r.length >= 2) mainCol = r.reduce((a, b) => a + b, 0) / r.length;
   } else if (numRightEdges.length > 0) {
-    subCol = numRightEdges.reduce((a, b) => a + b, 0) / numRightEdges.length;
+    // Single column: assign to mainCol so values end up in mainValue (not subValue)
+    mainCol = numRightEdges.reduce((a, b) => a + b, 0) / numRightEdges.length;
   }
 
   for (const row of wordRows) {
     const lp: string[] = [];
     let sv: number | null = null, mv: number | null = null;
+    let wi = 0;
 
-    for (const word of row.words) {
-      if (isRpPrefix(word.text)) continue;
+    while (wi < row.words.length) {
+      const word = row.words[wi];
+      if (isRpPrefix(word.text)) { wi++; continue; }
       const emb = extractDigitsFromRpWord(word.text);
       if (emb && isNumericValue(emb)) {
         const n = parseIndonesianNumber(correctNumericValue(emb));
-        if (n !== null) { if (subCol > 0 && mainCol > 0) { if (Math.abs(word.bbox.x1 - mainCol) < Math.abs(word.bbox.x1 - subCol)) mv = n; else sv = n; } else sv = n; }
-        continue;
+        if (n !== null) {
+          if (subCol > 0 && mainCol > 0) {
+            if (Math.abs(word.bbox.x1 - mainCol) < Math.abs(word.bbox.x1 - subCol)) mv = n; else sv = n;
+          } else mv = n;
+        }
+        wi++; continue;
       }
       if (isNumericValue(word.text)) {
-        const n = parseIndonesianNumber(correctNumericValue(word.text));
-        if (n !== null) { if (subCol > 0 && mainCol > 0) { if (Math.abs(word.bbox.x1 - mainCol) < Math.abs(word.bbox.x1 - subCol)) mv = n; else sv = n; } else sv = n; }
-        continue;
+        // Combine consecutive number tokens — handles OCR splitting "1.423.637" + ".783"
+        let combined = word.text, cRight = word.bbox.x1, j = wi + 1;
+        while (j < row.words.length) {
+          const next = row.words[j];
+          if (next.bbox.x0 - cRight < sideWidth * 0.05 && /[\d.,]/.test(next.text) && !isRpPrefix(next.text)) {
+            combined += next.text; cRight = next.bbox.x1; j++;
+          } else break;
+        }
+        const n = parseIndonesianNumber(correctNumericValue(combined));
+        if (n !== null) {
+          if (subCol > 0 && mainCol > 0) {
+            if (Math.abs(cRight - mainCol) < Math.abs(cRight - subCol)) mv = n; else sv = n;
+          } else mv = n;
+        }
+        wi = j; continue;
       }
       lp.push(word.text);
+      wi++;
     }
 
-    let label = correctLabel(lp.join(' ').trim().replace(/^[:\-\u2014|.;,\s]+/, '').replace(/[:\-\u2014|;,\s]+$/, ''));
+    let label = correctLabel(lp.join(' ').trim().replace(/^[:\-\u2014|.;,\s]+/, '').replace(/[.:\-\u2014|;,\s]+$/, ''));
     if (!label && sv === null && mv === null) continue;
 
     result.push({ label, subValue: sv, mainValue: mv, isHeader: isSectionHeader(label) && !sv && !mv, isTotal: isTotalLine(label), isIndented: false, isNumbered: false, rowNumber: '' });
