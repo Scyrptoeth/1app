@@ -14,6 +14,7 @@ export interface ToolConfig {
 export type ToolCategory =
   | "watermark"
   | "convert"
+  | "transform"
   | "merge"
   | "compress"
   | "ocr"
@@ -23,6 +24,7 @@ export type ToolCategory =
 export const categoryLabels: Record<ToolCategory, string> = {
   watermark: "Watermark",
   convert: "Extract",
+  transform: "Convert",
   merge: "Merge",
   compress: "Compress",
   ocr: "OCR",
@@ -33,6 +35,7 @@ export const categoryLabels: Record<ToolCategory, string> = {
 export const categoryColors: Record<ToolCategory, string> = {
   watermark: "bg-rose-500",
   convert: "bg-blue-500",
+  transform: "bg-violet-500",
   merge: "bg-emerald-500",
   compress: "bg-amber-500",
   ocr: "bg-violet-500",
@@ -98,10 +101,10 @@ export const tools: ToolConfig[] = [
     name: "PDF to Image",
     description:
       "Convert PDF documents into high-quality PNG images. Each page becomes a separate image file.",
-    category: "convert",
-    icon: "FileImage",
+    category: "transform",
+    icon: "Images",
     route: "/tools/pdf-to-image",
-    accentColor: "blue",
+    accentColor: "violet",
     inputFormats: [".pdf"],
     outputFormats: [".png"],
     isAvailable: true,
