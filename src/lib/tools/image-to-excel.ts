@@ -16,7 +16,15 @@
  * 2. We do NOT rely on Tesseract's line grouping Ã¢ÂÂ we re-group words by Y-coordinate.
  */
 
-import { createWorker } from 'tesseract.js';
+// Tesseract.js: use dynamic import to avoid Next.js bundling issues with Web Workers
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let _createWorker: any = null;
+async function getCreateWorker() {
+  if (_createWorker) return _createWorker;
+  const Tesseract = await import('tesseract.js');
+  _createWorker = Tesseract.createWorker;
+  return _createWorker;
+}
 
 // ============================================================
 // Public Types
@@ -101,70 +109,202 @@ const TOTAL_KEYWORDS = [
 ];
 
 // ============================================================
-// Post-OCR Correction Layer
+// Post-OCR Correction Layer -- systematic vocabulary + edit-distance approach
 // ============================================================
 
 /**
- * Indonesian financial term dictionary for OCR correction.
- * Maps common OCR misreads to correct Indonesian accounting terms.
- * These patterns are derived from systematic OCR error analysis on
- * Indonesian financial statements (Laporan Laba Rugi, Neraca, etc.).
- *
- * Categories of OCR errors corrected:
- * 1. rn/m confusion Ã¢ÂÂ OCR reads "m" as "rn" (e.g., Pernbelian Ã¢ÂÂ Pembelian)
- * 2. Character substitution Ã¢ÂÂ similar-looking chars (e.g., fi Ã¢ÂÂ &, I Ã¢ÂÂ J)
- * 3. Trailing artifacts Ã¢ÂÂ junk chars appended to words (e.g., "Ap", "Hp")
- * 4. Common misreads of Indonesian words
+ * Structural regex corrections -- generic layout/punctuation artifacts.
+ * These do NOT target specific word misspellings, only structural noise
+ * that appears regardless of document content.
  */
-const LABEL_CORRECTIONS: [RegExp, string][] = [
-  // --- rn/m confusion (very common OCR error) ---
-  [/\bPernbellan\b/gi, 'Pembelian'],
-  [/\bPermbellan\b/gi, 'Pembelian'],
-  [/\bPernbelian\b/gi, 'Pembelian'],
-  [/\bPermbelian\b/gi, 'Pembelian'],
-  [/\bPerneliharaan\b/gi, 'Pemeliharaan'],
-  [/\bPerrneliharaan\b/gi, 'Pemeliharaan'],
-  [/\bPernbuatan\b/gi, 'Pembuatan'],
-  [/\bPerrnbuatan\b/gi, 'Pembuatan'],
-
-  // --- Character substitution ---
-  [/\bBehan\b/gi, 'Beban'],
-  [/\bBlaya\b/gi, 'Biaya'],
-  [/\bBiava\b/gi, 'Biaya'],
-  [/\bSawa\b/g, 'Sewa'],      // case-sensitive: Sawa Ã¢ÂÂ Sewa
-  [/\bBPIS\b/g, 'BPJS'],      // IÃ¢ÂÂJ
-  [/\bRX5\b/g, 'IKS'],        // complete misread
-  [/\bRXS\b/g, 'IKS'],
-  [/\bIX5\b/g, 'IKS'],
-  [/\bAllowancc\b/gi, 'Allowance'],
-  [/\bAllowanco\b/gi, 'Allowance'],
-  [/\bAllowanee\b/gi, 'Allowance'],
-
-  // --- Symbol/character misreads ---
-  [/\bBarang\s+fi\s+Jasa\b/gi, 'Barang & Jasa'],
-  [/\bBarang\s+fl\s+Jasa\b/gi, 'Barang & Jasa'],
-  [/\bBarang\s+f[il1]\s+Jasa\b/gi, 'Barang & Jasa'],
-  [/\bBank\s+SRI\b/g, 'Bank BRI'],  // SÃ¢ÂÂB in bank name
-
-  // --- Trailing/leading artifacts from OCR ---
-  // These often appear when OCR picks up nearby text or noise
-  [/\s+[AH][pP]$/g, ''],         // trailing "Ap", "Hp" artifacts
-  [/\s+[AH]p\b/g, ''],           // mid-word trailing artifacts
-  [/^\d+\)\s*/, ''],              // leading "20)" Ã¢ÂÂ strip paren
+const STRUCTURAL_CORRECTIONS: [RegExp, string][] = [
+  // Trailing "Rp" or ".Rp" captured from value column
+  [/\s*[.,]?\s*Rp\s*$/gi, ''],
+  // Leading symbol noise ($, !, #, etc.)
+  [/^[!$#@&*]+\s*/g, ''],
+  // OCR false word boundary: "word.Word" -> "word Word" (e.g. "Hutang.PPh")
+  [/([a-z])\.([A-Z])/g, '$1 $2'],
+  // Ampersand OCR'd as "fi" or "fl" as a standalone word
+  [/\b(fi|fl)\b/g, '&'],
+  // Comma between adjacent words (word,Word -> word Word)
+  [/([a-zA-Z]),([A-Z])/g, '$1 $2'],
+  // Trailing colon + 1-3 uppercase chars (e.g. "BRI: RB" noise at end of label)
+  [/:\s*[A-Z]{1,3}\s*$/g, ''],
+  // Trailing "Ap" / "Hp" artifacts (OCR picks up nearby text/noise)
+  [/\s+[AH][pP]$/g, ''],
+  [/\s+[AH]p\b/g, ''],
+  // Leading numbered prefix artifacts: "20) " -> ""
+  [/^\d+\)\s*/, ''],
 ];
 
 /**
- * Apply dictionary-based label correction to fix common OCR misreads.
- * Processes all correction rules in order.
+ * Indonesian financial vocabulary -- canonical display forms (lowercase -> display).
+ * Used by OCR spell corrector: edit distance <= threshold -> canonical form.
+ * Only unambiguous corrections applied (single closest match).
+ */
+const ID_FINANCIAL_VOCAB = new Map<string, string>([
+  // Balance sheet structure
+  ['aktiva', 'Aktiva'], ['passiva', 'Passiva'], ['neraca', 'Neraca'],
+  ['laporan', 'Laporan'], ['ekuitas', 'Ekuitas'], ['modal', 'Modal'],
+  // P&L structure
+  ['laba', 'Laba'], ['rugi', 'Rugi'], ['penerimaan', 'Penerimaan'],
+  ['pendapatan', 'Pendapatan'], ['penghasilan', 'Penghasilan'],
+  ['penjualan', 'Penjualan'], ['bruto', 'Bruto'], ['neto', 'Neto'],
+  ['bersih', 'Bersih'], ['kotor', 'Kotor'], ['usaha', 'Usaha'],
+  // Subtotals
+  ['jumlah', 'Jumlah'], ['total', 'Total'], ['harga', 'Harga'],
+  ['pokok', 'Pokok'], ['tersedia', 'Tersedia'], ['dijual', 'Dijual'],
+  // Asset terms
+  ['kas', 'Kas'], ['bank', 'Bank'], ['piutang', 'Piutang'],
+  ['persediaan', 'Persediaan'], ['deposito', 'Deposito'],
+  ['bangunan', 'Bangunan'], ['kendaraan', 'Kendaraan'],
+  ['inventaris', 'Inventaris'], ['tanah', 'Tanah'],
+  ['pembayaran', 'Pembayaran'], ['dimuka', 'Dimuka'],
+  ['kompensasi', 'Kompensasi'],
+  // Liability terms
+  ['hutang', 'Hutang'], ['utang', 'Utang'], ['pinjaman', 'Pinjaman'],
+  ['kewajiban', 'Kewajiban'], ['jangka', 'Jangka'],
+  ['panjang', 'Panjang'], ['pendek', 'Pendek'], ['lancar', 'Lancar'],
+  // Expense / cost
+  ['biaya', 'Biaya'], ['beban', 'Beban'],
+  ['pembelian', 'Pembelian'], ['pembuatan', 'Pembuatan'],
+  ['pemeliharaan', 'Pemeliharaan'], ['penyusutan', 'Penyusutan'],
+  ['pengiriman', 'Pengiriman'], ['pengurusan', 'Pengurusan'],
+  ['perjalanan', 'Perjalanan'], ['perlengkapan', 'Perlengkapan'],
+  ['pengeluaran', 'Pengeluaran'],
+  // Expense types
+  ['gaji', 'Gaji'], ['upah', 'Upah'], ['listrik', 'Listrik'],
+  ['telepon', 'Telepon'], ['internet', 'Internet'],
+  ['sewa', 'Sewa'], ['asuransi', 'Asuransi'], ['materai', 'Materai'],
+  ['pajak', 'Pajak'], ['provisi', 'Provisi'], ['iklan', 'Iklan'],
+  ['referensi', 'Referensi'], ['keamanan', 'Keamanan'], ['denda', 'Denda'],
+  ['allowance', 'Allowance'], ['sumbangan', 'Sumbangan'],
+  ['abonemen', 'Abonemen'], ['notaris', 'Notaris'], ['rks', 'RKS'],
+  ['jaminan', 'Jaminan'],
+  // Tax & regulatory
+  ['pasal', 'Pasal'], ['lebih', 'Lebih'], ['bayar', 'Bayar'],
+  // Business operations
+  ['dagang', 'Dagang'], ['jasa', 'Jasa'], ['barang', 'Barang'],
+  ['operasional', 'Operasional'], ['administrasi', 'Administrasi'],
+  ['transportasi', 'Transportasi'], ['profesional', 'Profesional'],
+  ['rapat', 'Rapat'], ['dokumen', 'Dokumen'],
+  // People & org units
+  ['pegawai', 'Pegawai'], ['karyawan', 'Karyawan'],
+  ['kantor', 'Kantor'], ['makan', 'Makan'], ['lapangan', 'Lapangan'],
+  // Qualifiers
+  ['awal', 'Awal'], ['akhir', 'Akhir'], ['tetap', 'Tetap'],
+  ['sebelumnya', 'Sebelumnya'], ['disetor', 'Disetor'],
+  ['kesehatan', 'Kesehatan'], ['bunga', 'Bunga'], ['deposit', 'Deposit'],
+  // Function words (prevent false correction)
+  ['dan', 'dan'], ['atau', 'atau'], ['dari', 'dari'], ['untuk', 'untuk'],
+  ['dengan', 'dengan'], ['pada', 'pada'], ['dalam', 'dalam'],
+  ['yang', 'yang'], ['atas', 'atas'], ['diluar', 'Diluar'],
+  // Acronyms
+  ['bpjs', 'BPJS'], ['pph', 'PPh'], ['ppn', 'PPN'], ['pbb', 'PBB'],
+  ['atk', 'ATK'], ['bri', 'BRI'], ['bni', 'BNI'], ['btn', 'BTN'],
+  ['bca', 'BCA'], ['bsi', 'BSI'],
+  // Bank names
+  ['permata', 'Permata'], ['mandiri', 'Mandiri'], ['danamon', 'Danamon'],
+]);
+
+/** Levenshtein edit distance -- O(m*n), fast for typical word lengths (< 20 chars) */
+function levenshtein(a: string, b: string): number {
+  const m = a.length, n = b.length;
+  if (m === 0) return n;
+  if (n === 0) return m;
+  const row = Array.from({ length: n + 1 }, (_, i) => i);
+  for (let i = 1; i <= m; i++) {
+    let prev = i;
+    for (let j = 1; j <= n; j++) {
+      const cur = a[i - 1] === b[j - 1] ? row[j - 1] : 1 + Math.min(row[j - 1], row[j], prev);
+      row[j - 1] = prev;
+      prev = cur;
+    }
+    row[n] = prev;
+  }
+  return row[n];
+}
+
+/**
+ * OCR word spell corrector -- vocabulary lookup + edit-distance fallback.
+ * Thresholds (conservative to avoid false positives):
+ *   <= 3 chars: exact match only
+ *   4-5 chars: edit distance <= 1
+ *   6-8 chars: edit distance <= 2
+ *   >= 9 chars: edit distance <= 3
+ * Correction only applied if closest match is unambiguous (exactly one winner).
+ */
+function correctOcrWord(word: string): string {
+  if (!word || word.length <= 2) return word;
+  if (/^\d+[.,\d]*$/.test(word)) return word; // skip numbers
+
+  const lower = word.toLowerCase();
+  const exact = ID_FINANCIAL_VOCAB.get(lower);
+  if (exact) return exact;
+
+  const len = lower.length;
+  const isAllCaps = /^[A-Z]{2,4}$/.test(word);
+  const maxDist = len <= 3 ? (isAllCaps ? 1 : 0)
+    : len <= 5 ? 1
+    : len <= 8 ? 2
+    : 3;
+
+  if (maxDist === 0) return word;
+
+  let minDist = maxDist + 1;
+  const matches: string[] = [];
+  for (const [key] of ID_FINANCIAL_VOCAB) {
+    if (Math.abs(key.length - len) > maxDist) continue;
+    const d = levenshtein(lower, key);
+    if (d < minDist) { minDist = d; matches.length = 0; matches.push(key); }
+    else if (d === minDist) { matches.push(key); }
+  }
+
+  if (minDist <= maxDist && matches.length === 1) {
+    return ID_FINANCIAL_VOCAB.get(matches[0])!;
+  }
+  return word;
+}
+
+/**
+ * Multi-step label correction pipeline:
+ * 1. Structural regex corrections (layout/punctuation artifacts)
+ * 2. Word-level OCR spell correction via vocabulary + edit distance
+ * 3. Auto-capitalize unknown words (vocab already returns correct casing)
+ * 4. Strip spurious dots after short abbreviations
+ * 5. Normalize OCR-noise hyphens between different words -> space
  */
 function correctLabel(label: string): string {
   let corrected = label;
-  for (const [pattern, replacement] of LABEL_CORRECTIONS) {
+
+  // Step 1: Structural regex corrections
+  for (const [pattern, replacement] of STRUCTURAL_CORRECTIONS) {
     corrected = corrected.replace(pattern, replacement);
   }
-  // Final cleanup: ensure no double spaces after replacements
   corrected = corrected.replace(/\s{2,}/g, ' ').trim();
-  return corrected;
+
+  // Step 2: Word-level OCR spell correction
+  corrected = corrected.split(/\s+/).map(w => correctOcrWord(w)).join(' ');
+
+  // Step 3: Auto-capitalize words not caught by vocabulary
+  const ID_PARTICLES = new Set(['dan', 'atau', 'dari', 'untuk', 'dengan', 'pada', 'dalam',
+    'atas', 'bawah', 'antara', 'oleh', 'serta', 'beserta', 'yang', 'ini', 'itu']);
+  corrected = corrected.replace(/\b([a-z])([a-zA-Z]{3,})\b/g, (_, first, rest) => {
+    const word = first + rest;
+    if (ID_PARTICLES.has(word.toLowerCase())) return word;
+    return first.toUpperCase() + rest;
+  });
+
+  // Step 4: Strip spurious dot after short abbreviation token
+  corrected = corrected.replace(/\b([A-Z][a-z]{1,3})\.\s/g, '$1 ');
+
+  // Step 5: Normalize OCR-noise hyphens (keeps reduplication like "Lain-Lain")
+  corrected = corrected.replace(/\b([a-zA-Z]{2,})-([a-zA-Z]{2,})\b/g, (match, a, b) => {
+    if (a.toLowerCase() === b.toLowerCase()) return match;
+    return `${a} ${b}`;
+  });
+
+  return corrected.trim();
 }
 
 /**
@@ -250,27 +390,46 @@ function isNumericValue(text: string): boolean {
  * Example: "1.975.155.731" -> 1975155731
  */
 function parseIndonesianNumber(text: string): number | null {
-  let cleaned = text.trim();
-  const lowerCleaned = cleaned.toLowerCase();
+  if (!text || text.trim().length === 0) return null;
+  let s = text.trim();
+
+  // Strip Rp prefix
+  const lowerS = s.toLowerCase();
   for (const variant of RP_VARIANTS) {
-    if (lowerCleaned.startsWith(variant)) {
-      cleaned = cleaned.substring(variant.length).trim();
+    if (lowerS.startsWith(variant)) {
+      s = s.substring(variant.length).trim();
       break;
     }
   }
-  // Remove all non-numeric except dots, commas, minus
-  cleaned = cleaned.replace(/[^\d.,\-]/g, '');
-  if (!cleaned) return null;
 
-  // Indonesian format: dots are thousand separators
-  if (cleaned.includes(',')) {
-    cleaned = cleaned.replace(/\./g, '').replace(',', '.');
+  // Handle parenthesized negatives: (1.234.567) -> -1234567
+  const isNeg = s.startsWith('(') && s.endsWith(')');
+  if (isNeg) s = s.substring(1, s.length - 1);
+  const hasMinus = s.startsWith('-');
+  if (hasMinus) s = s.substring(1);
+
+  // Remove all non-numeric except dots, commas
+  s = s.replace(/[^\d.,]/g, '');
+  if (!s) return null;
+
+  // Determine if comma is decimal separator:
+  // comma with 1-2 digits after = decimal; otherwise thousands separator
+  const commaGroups = s.split(',');
+  const lastGroup = commaGroups[commaGroups.length - 1];
+  const commaIsDecimal = commaGroups.length === 2 &&
+    /^\d{1,2}$/.test(lastGroup.replace(/[^0-9]/g, ''));
+
+  if (s.includes('.') && s.includes(',') && commaIsDecimal) {
+    // e.g. "14.674.164,58" -> 14674164.58
+    s = s.replace(/\./g, '').replace(',', '.');
   } else {
-    cleaned = cleaned.replace(/\./g, '');
+    // e.g. "1.975.155.731" -> 1975155731
+    s = s.replace(/[.,]/g, '');
   }
 
-  const num = parseFloat(cleaned);
-  return isNaN(num) ? null : num;
+  const num = parseFloat(s);
+  if (isNaN(num)) return null;
+  return (isNeg || hasMinus) ? -num : num;
 }
 
 // ============================================================
@@ -702,17 +861,23 @@ async function performOcr(
 ): Promise<{ words: OcrWord[]; rawText: string; confidence: number }> {
   onProgress({ progress: 5, status: 'Initializing OCR engine...' });
 
-  // Try Indonesian language first for much better text accuracy on Indonesian documents.
-  // Fall back to English if Indonesian language data fails to load.
-  // Use tessdata_best (LSTM best model) for maximum OCR accuracy.
-  // tessdata_best is ~3x larger than tessdata_fast but significantly more accurate.
+  const createWorker = await getCreateWorker();
+  const TESS_CDN = 'https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist';
+  const CORE_CDN = 'https://cdn.jsdelivr.net/npm/tesseract.js-core@5.1.0';
   const BEST_LANG_PATH = 'https://cdn.jsdelivr.net/npm/@tesseract.js-data';
-  let lang = 'ind';
+  const workerOpts = {
+    workerPath: `${TESS_CDN}/worker.min.js`,
+    corePath: `${CORE_CDN}/tesseract-core-simd-lstm.wasm.js`,
+  };
+
+  // Try Indonesian language first; fall back to English if it fails to load.
+  // tessdata_best (LSTM best model) gives significantly higher accuracy than tessdata_fast.
   let worker;
   try {
     worker = await createWorker('ind', 1, {
+      ...workerOpts,
       langPath: `${BEST_LANG_PATH}/ind@1.0.0/4.0.0_best_int`,
-      logger: (m) => {
+      logger: (m: { status: string }) => {
         if (m.status === 'loading language traineddata') {
           onProgress({
             progress: 6,
@@ -722,11 +887,11 @@ async function performOcr(
       },
     });
   } catch {
-    lang = 'eng';
     onProgress({ progress: 5, status: 'Falling back to English OCR...' });
     worker = await createWorker('eng', 1, {
+      ...workerOpts,
       langPath: `${BEST_LANG_PATH}/eng@1.0.0/4.0.0_best_int`,
-      logger: (m) => {
+      logger: (m: { status: string }) => {
         if (m.status === 'loading language traineddata') {
           onProgress({
             progress: 6,
@@ -737,27 +902,32 @@ async function performOcr(
     });
   }
 
-  // --- Multi-pass OCR ---
-  // Pass 1: PSM 6 Ã¢ÂÂ assume uniform block of text (good for full-page documents)
-  // Pass 2: PSM 4 Ã¢ÂÂ assume single column of variable-size text (better for tables)
-  // We pick the result with highest confidence.
+  // user_defined_dpi: image was upscaled by scale factor. Phone cameras are ~72-96 DPI,
+  // so scaled image is approximately scale*72 DPI. This lets Tesseract calibrate its
+  // internal character-size expectations correctly for the processed image.
+  const dpi = String(Math.round(scale * 72));
+
+  // --- Dual PSM recognition ---
+  // Pass 1: PSM 6 -- assume uniform block of text (good for full-page documents)
+  // Pass 2: PSM 4 -- assume single column of variable-size text (better for tables)
+  // Pick the result with higher confidence score.
 
   onProgress({ progress: 8, status: 'OCR Pass 1/2 (block mode)...' });
-
   await worker.setParameters({
     // @ts-ignore
     tessedit_pageseg_mode: '6',
     preserve_interword_spaces: '1',
+    user_defined_dpi: dpi as any,
   });
   const result1 = await worker.recognize(imageBlob);
   const conf1 = result1.data.confidence;
 
   onProgress({ progress: 28, status: `Pass 1 confidence: ${conf1.toFixed(1)}%. Running Pass 2...` });
-
   await worker.setParameters({
     // @ts-ignore
     tessedit_pageseg_mode: '4',
     preserve_interword_spaces: '1',
+    user_defined_dpi: dpi as any,
   });
   const result2 = await worker.recognize(imageBlob);
   const conf2 = result2.data.confidence;
@@ -1216,6 +1386,8 @@ function analyzeLayout(
 
 /**
  * Assign a numeric value to the closest detected column.
+ * Applies bias-aware boundary: short numeric values (right-aligned) get a
+ * rightward bias so they don't accidentally cross into the next column.
  * Returns true if successfully assigned.
  */
 function assignToColumn(
@@ -1225,10 +1397,18 @@ function assignToColumn(
   valuesByColumn: Map<number, string>,
   imageWidth: number
 ): boolean {
+  if (columns.length === 0) return false;
+
+  // Bias: short numeric tokens are right-aligned — their right-edge may be
+  // slightly past a column boundary. Apply a small rightward bias to the
+  // effective comparison point so they stay in their column.
+  const isShortNumeric = /^[-\d.,()]+$/.test(numText.replace(/\s/g, '')) && numText.length <= 6;
+  const bias = isShortNumeric ? imageWidth * 0.005 : 0;
+
   let bestCol = -1;
   let bestDist = Infinity;
   for (let ci = 0; ci < columns.length; ci++) {
-    const dist = Math.abs(numRight - columns[ci].avgRight);
+    const dist = Math.abs((numRight + bias) - columns[ci].avgRight);
     if (dist < bestDist) {
       bestDist = dist;
       bestCol = ci;
