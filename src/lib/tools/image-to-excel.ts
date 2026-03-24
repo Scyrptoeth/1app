@@ -45,7 +45,8 @@ export interface RowData {
   id: string;
   rowNumber: number | null;
   label: string;
-  values: string[]; // one per detected column
+  values: string[]; // one per detected value column
+  description: string; // right-side English translation (or empty string)
   indent: number;
   isHeader: boolean;
   isSectionTitle: boolean;
@@ -1049,6 +1050,95 @@ function finalizeRow(words: OcrWord[]): WordRow {
 }
 
 // ============================================================
+// Phase 1: Table Header Detection
+// ============================================================
+
+/**
+ * Scan word rows for a row containing year-like values (e.g. 2024, 2023, 2022)
+ * aligned with the detected value columns. This row marks where the table starts
+ * (rows above it are preamble/section headings to be excluded).
+ * Returns null if no such row is found.
+ */
+function detectTableHeaderRow(
+  wordRows: WordRow[],
+  columns: ColumnInfo[],
+  imageWidth: number,
+  valueLeftBoundary: number,
+  valueRightBoundary: number
+): {
+  headerRowMinY: number;
+  yearLabels: string[];
+  labelColHeader: string;
+  descColHeader: string;
+} | null {
+  if (columns.length === 0) return null;
+
+  for (const row of wordRows) {
+    const yearByCol: Map<number, string> = new Map();
+    const leftWords: string[] = [];
+    const rightWords: string[] = [];
+
+    for (const word of row.words) {
+      const text = word.text.trim();
+      if (!text) continue;
+
+      if (word.bbox.x0 >= valueRightBoundary) {
+        rightWords.push(text);
+      } else if (/^20[0-2][0-9]$/.test(text) && word.bbox.x0 > valueLeftBoundary) {
+        // Year value in the value-column zone — assign to closest column
+        let bestCol = 0;
+        let bestDist = Math.abs(word.bbox.x1 - columns[0].avgRight);
+        for (let ci = 1; ci < columns.length; ci++) {
+          const dist = Math.abs(word.bbox.x1 - columns[ci].avgRight);
+          if (dist < bestDist) { bestDist = dist; bestCol = ci; }
+        }
+        if (bestDist < imageWidth * 0.15) {
+          yearByCol.set(bestCol, text);
+        }
+      } else if (word.bbox.x0 < valueLeftBoundary) {
+        // Left side: label column header candidate
+        // Filter out pure-number tokens (line numbers, page numbers)
+        if (!/^\d+$/.test(text)) leftWords.push(text);
+      }
+    }
+
+    // "Uraian" is a strong anchor for Indonesian financial statement table headers.
+    // Accept this row as the header if:
+    //   (a) "Uraian" appears on the left AND at least 1 year is detected, OR
+    //   (b) at least half the columns have year values (handles non-Indonesian docs)
+    const hasUraian = leftWords.some(w => /^uraian$/i.test(w.trim()));
+    const yearCountNeeded = hasUraian ? 1 : Math.max(2, Math.ceil(columns.length * 0.5));
+
+    if (yearByCol.size >= yearCountNeeded) {
+      // Infer missing year labels: financial statements use consecutive descending years.
+      // If we know year Y is at column ci, then column ci-1 = Y+1, ci+1 = Y-1, etc.
+      if (yearByCol.size < columns.length && yearByCol.size > 0) {
+        const [refCol, refYearStr] = yearByCol.entries().next().value as [number, string];
+        const refYear = parseInt(refYearStr);
+        for (let ci = 0; ci < columns.length; ci++) {
+          if (!yearByCol.has(ci)) {
+            yearByCol.set(ci, String(refYear - (ci - refCol)));
+          }
+        }
+      }
+
+      const yearLabels: string[] = [];
+      for (let ci = 0; ci < columns.length; ci++) {
+        yearLabels.push(yearByCol.get(ci) || '');
+      }
+      return {
+        headerRowMinY: row.minY,
+        yearLabels,
+        labelColHeader: leftWords.filter(w => !/^[\W\d]+$/.test(w)).join(' ').trim() || 'Uraian',
+        descColHeader: rightWords.join(' ').trim() || 'Description',
+      };
+    }
+  }
+
+  return null;
+}
+
+// ============================================================
 // Phase 1: Column Detection
 // ============================================================
 
@@ -1191,17 +1281,19 @@ function analyzeLayout(
   columns: ColumnInfo[],
   imageWidth: number,
   imageHeight: number,
-  onProgress: (update: ProcessingUpdate) => void
+  onProgress: (update: ProcessingUpdate) => void,
+  tableHeaderMinY: number = 0
 ): RowData[] {
   onProgress({ progress: 55, status: 'Analyzing structure...' });
 
-  // Determine content area: skip header/logo and footer/signature
-  const contentStartY = imageHeight * 0.10;
+  // Determine content area: skip header/logo and footer/signature.
+  // Also skip all rows at or above the detected table header row (preamble filter).
+  const contentStartY = Math.max(imageHeight * 0.10, tableHeaderMinY);
   const contentEndY = imageHeight * 0.90;
 
-  // Filter to content rows only
+  // Filter to content rows only (excludes preamble and footer)
   const contentRows = wordRows.filter(
-    (r) => r.minY >= contentStartY && r.minY <= contentEndY
+    (r) => r.minY > contentStartY && r.minY <= contentEndY
   );
 
   // Left margin baseline
@@ -1233,8 +1325,9 @@ function analyzeLayout(
       status: `Processing row ${ri + 1}/${contentRows.length}...`,
     });
 
-    // Separate words into: label parts and numeric values
+    // Separate words into: label parts, numeric values, and right-side description
     const labelParts: string[] = [];
+    const descriptionParts: string[] = [];
     const valuesByColumn: Map<number, string> = new Map();
 
     let wi = 0;
@@ -1327,10 +1420,31 @@ function analyzeLayout(
         }
       }
 
-      // Case 3: Regular text word -- part of label.
-      // Skip words to the RIGHT of valueRightBoundary (e.g. English description column
-      // in bilingual financial statements like GoTo annual report).
+      // Case 2b: Dash/em-dash in the value area — represents empty/zero in financial tables.
+      // Capture as "-" value for the closest column so the cell is not left blank.
+      if (
+        (word.text === '-' || word.text === '\u2014' || word.text === '\u2013') &&
+        word.bbox.x0 > valueLeftBoundary &&
+        word.bbox.x0 < valueRightBoundary &&
+        columns.length > 0
+      ) {
+        let bestCol = 0;
+        let bestDist = Math.abs(word.bbox.x1 - columns[0].avgRight);
+        for (let ci = 1; ci < columns.length; ci++) {
+          const dist = Math.abs(word.bbox.x1 - columns[ci].avgRight);
+          if (dist < bestDist) { bestDist = dist; bestCol = ci; }
+        }
+        if (bestDist < imageWidth * 0.15 && !valuesByColumn.has(bestCol)) {
+          valuesByColumn.set(bestCol, '-');
+        }
+        wi++;
+        continue;
+      }
+
+      // Case 3: Regular text word.
+      // Words to the RIGHT of valueRightBoundary are English description column.
       if (word.bbox.x0 >= valueRightBoundary) {
+        descriptionParts.push(word.text);
         wi++;
         continue;
       }
@@ -1411,6 +1525,7 @@ function analyzeLayout(
       rowNumber,
       label,
       values,
+      description: descriptionParts.join(' ').trim(),
       indent: clampedIndent,
       isHeader,
       isSectionTitle,
@@ -1490,28 +1605,47 @@ export async function extractFromImage(
   // Phase 1c: Detect value columns
   const columns = detectValueColumns(wordRows, imageWidth);
 
-  // Phase 1d: Layout analysis
+  // Compute value boundaries (same logic as analyzeLayout, needed here for header detection)
+  const valueLeftBoundary = columns.length > 0
+    ? columns[0].avgRight - imageWidth * 0.18
+    : imageWidth * 0.30;
+  const valueRightBoundary = columns.length > 0
+    ? columns[columns.length - 1].avgRight + imageWidth * 0.06
+    : imageWidth;
+
+  // Detect table header row: find the row with year labels aligned to value columns.
+  // This also gives us the y-position to filter out preamble rows above the table.
+  const tableHeaderInfo = detectTableHeaderRow(
+    wordRows, columns, imageWidth, valueLeftBoundary, valueRightBoundary
+  );
+  const tableHeaderMinY = tableHeaderInfo?.headerRowMinY ?? 0;
+
+  // Phase 1d: Layout analysis (preamble filtered via tableHeaderMinY)
   const rows = analyzeLayout(
     wordRows,
     columns,
     imageWidth,
     imageHeight,
-    onProgress
+    onProgress,
+    tableHeaderMinY
   );
 
-  // Build headers
-  const headers: string[] = ['No', 'Keterangan'];
-  for (let ci = 0; ci < columns.length; ci++) {
-    if (ci === columns.length - 1) {
-      headers.push('Jumlah (Rp)');
-    } else {
-      headers.push('Sub Jumlah (Rp)');
+  // Build headers from detected year labels (or fallback to generic names)
+  const labelColName = tableHeaderInfo?.labelColHeader || 'Uraian';
+  const descColName = tableHeaderInfo?.descColHeader || 'Description';
+
+  const headers: string[] = [labelColName];
+  if (tableHeaderInfo && tableHeaderInfo.yearLabels.some(y => y)) {
+    for (const year of tableHeaderInfo.yearLabels) {
+      headers.push(year || 'Nilai');
+    }
+  } else {
+    const colCount = Math.max(columns.length, 1);
+    for (let ci = 0; ci < colCount; ci++) {
+      headers.push(ci === colCount - 1 ? 'Jumlah' : `Kolom ${ci + 1}`);
     }
   }
-
-  if (columns.length === 0) {
-    headers.push('Jumlah (Rp)');
-  }
+  headers.push(descColName);
 
   onProgress({ progress: 90, status: 'Extraction complete!' });
 
@@ -1573,34 +1707,43 @@ export async function generateExcel(
   });
 
   // ---- Data Rows ----
+  // Column layout (new structure, no "No" column):
+  //   Col 1           = headers[0]          → label (with indent)
+  //   Cols 2..n-1     = headers[1..n-2]     → numeric value columns
+  //   Col n (last)    = headers[n-1]        → description (English translation)
+  const valueColCount = headers.length - 2; // number of numeric value columns
+
   for (const rowData of rows) {
     const rowValues: (string | number | null)[] = [];
 
-    // Column: No
-    rowValues.push(rowData.rowNumber);
-
-    // Column: Keterangan (with indent)
+    // Column 1: Label (with indent)
     const indentStr = '  '.repeat(rowData.indent);
     rowValues.push(indentStr + rowData.label);
 
-    // Value columns
-    for (const val of rowData.values) {
-      if (val) {
+    // Value columns (2 .. n-1)
+    for (let vi = 0; vi < valueColCount; vi++) {
+      const val = rowData.values[vi] || '';
+      if (val && val !== '-') {
         const num = parseIndonesianNumber(val);
         rowValues.push(num !== null ? num : val);
+      } else if (val === '-') {
+        rowValues.push('-');
       } else {
         rowValues.push(null);
       }
     }
 
-    // Pad if fewer values than expected
+    // Last column: Description
+    rowValues.push(rowData.description || null);
+
+    // Pad if fewer values than expected (shouldn't happen, but guard)
     while (rowValues.length < headers.length) {
       rowValues.push(null);
     }
 
     const row = worksheet.addRow(rowValues);
 
-    // Apply formatting
+    // Apply row formatting
     if (rowData.isHeader || rowData.isSectionTitle) {
       row.font = { bold: true, size: 10 };
       row.fill = {
@@ -1615,19 +1758,16 @@ export async function generateExcel(
         pattern: 'solid',
         fgColor: { argb: 'FFFFF2CC' },
       };
-      row.border = {
-        top: { style: 'thin' },
-      };
+      row.border = { top: { style: 'thin' } };
     } else {
       row.font = { size: 10 };
     }
 
     // Format individual cells
-    row.getCell(1).alignment = { horizontal: 'center' };
-    row.getCell(2).alignment = { horizontal: 'left', wrapText: true };
+    row.getCell(1).alignment = { horizontal: 'left', wrapText: true };
 
-    for (let vi = 0; vi < rowData.values.length; vi++) {
-      const cell = row.getCell(3 + vi);
+    for (let vi = 0; vi < valueColCount; vi++) {
+      const cell = row.getCell(2 + vi);
       if (typeof cell.value === 'number') {
         cell.numFmt = '#,##0';
         cell.alignment = { horizontal: 'right' };
@@ -1635,14 +1775,17 @@ export async function generateExcel(
         cell.alignment = { horizontal: 'right' };
       }
     }
+
+    // Description column: left-aligned text
+    row.getCell(headers.length).alignment = { horizontal: 'left', wrapText: true };
   }
 
   // ---- Column Widths ----
-  worksheet.getColumn(1).width = 6;
-  worksheet.getColumn(2).width = 50;
-  for (let i = 3; i <= headers.length; i++) {
-    worksheet.getColumn(i).width = 22;
+  worksheet.getColumn(1).width = 45; // Label column
+  for (let i = 2; i <= headers.length - 1; i++) {
+    worksheet.getColumn(i).width = 18; // Value columns
   }
+  worksheet.getColumn(headers.length).width = 40; // Description column
 
   // ---- Freeze header ----
   worksheet.views = [{ state: 'frozen', ySplit: 3 }];
