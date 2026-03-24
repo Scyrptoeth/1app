@@ -42,8 +42,10 @@ Skill ini memberikan Claude seluruh konteks tentang proyek 1APP sehingga setiap 
 - **URL**: `/tools/image-to-excel`
 - **Files**: `src/lib/tools/image-to-excel.ts`, `src/app/tools/image-to-excel/page.tsx`
 - **Library**: Tesseract.js v5 (OCR, ind+eng), ExcelJS (xlsx generation)
-- **Teknik**: Client-side OCR → position-based column detection via x-coordinate clustering → editable preview → formatted Excel export
-- **Status**: Production ready, deployed
+- **Teknik**: Dynamic import Tesseract.js → Sauvola binarization → dual PSM OCR → outlier-filtered column detection → `detectTableHeaderRow()` (year inference dari "Uraian" anchor) → preamble filter → 5-column output (label | 3 nilai | description) → formatted Excel export
+- **UI**: ToolPageLayout + FileUploader + ProcessingView + preview tabel + "How it works"
+- **PENTING**: Sama seperti pdf-to-excel, WAJIB dynamic import Tesseract.js. Static import = page freeze.
+- **Status**: Production ready, refactored 24 Mar 2026
 - Baca `resources/algorithms.md` untuk detail teknis
 
 ### 4. PDF-to-Excel Converter
@@ -149,6 +151,9 @@ Pelajaran penting dari pengembangan sebelumnya yang harus diingat:
 - **Comma ambiguity: 3-digit groups = thousands separator** — `"10,114"` unambiguously thousands karena semua post-comma groups persis 3 digit. `"1,5"` tetap string karena bisa desimal. Rule ini tidak perlu heuristic tambahan.
 - **Dual-edge vs x-midpoint column boundary** — Untuk kolom rapat (5-60px gap), midpoint fisik antara right-edge kiri dan left-edge kanan lebih akurat dari x-midpoint. Untuk gap lebar (>60px), x-midpoint lebih aman karena right-aligned content bisa mulai jauh dari header.
 - **Persistent gap detection eliminates false column splits** — Label panjang seperti "Pendapatan bersih dari operasi" sering punya spasi internal yang mirip column boundary. Mensyaratkan whitespace di ≥60% rows sebelum declare boundary mengeliminasi false positives ini.
+- **OCR gagal pada teks berlatar warna (colored headers)** — Tahun "2024", "2023" di dalam kotak hijau tidak bisa dibaca Tesseract. Solusi: cari anchor keyword yang reliabel ("Uraian" di latar putih), lalu inferensikan tahun yang hilang secara matematis (year[n] = year[known] - (n - known_idx)).
+- **Outlier edge filter untuk column detection** — Satu kata numerik yang terisolasi jauh dari cluster (radius > 8% image width) bisa mencuri slot split dan menggabungkan dua kolom yang valid. Filter outlier sebelum gap analysis. Rule: edge tanpa tetangga dalam radius 8% → excluded dari workEdges.
+- **Cek interface TypeScript sebelum akses field** — `PdfToExcelResult` tidak punya field `confidence` (hanya ada di `OcrWord`). Mengakses `result.confidence.toFixed()` = crash saat runtime. Selalu verifikasi interface definition sebelum menambahkan UI yang mengakses field baru.
 
 ## Resources
 

@@ -49,36 +49,56 @@
 - Iterasi 3: Ratio-based detection → breaktrhough (menemukan disruption pattern)
 - Iterasi 4: Reverse alpha blending dengan B-channel anchor → production ready
 
-## 3. Image-to-Excel — OCR + X-Coordinate Clustering
+## 3. Image-to-Excel — OCR + Right-Edge Clustering (Refactored 24 Mar 2026)
 
-**Libraries:** Tesseract.js v5 (OCR), ExcelJS (xlsx generation)
+**Libraries:** Tesseract.js v5 (OCR, dynamic import), ExcelJS (xlsx generation)
 
-**Cara kerja:**
-1. **OCR**: Tesseract.js memproses image, output: array of words dengan bounding box (x, y, width, height)
-2. **Column detection**: X-coordinate clustering — grup kata berdasarkan posisi horizontal (`x`). Kata-kata yang memiliki x-coordinate dekat satu sama lain dianggap satu kolom
-3. **Row detection**: Y-coordinate grouping — kata-kata pada baris yang sama memiliki y-coordinate serupa
-4. **Table construction**: Mapping (row, column) → cell content
-5. **Editable preview**: Tampilkan tabel di UI, user bisa edit sebelum export
-6. **Excel export**: ExcelJS generate .xlsx dengan formatting
+**Pipeline:**
+1. `preprocessImage()` — upscale + grayscale + Sauvola binarization
+2. `performOcr()` — dynamic import Tesseract, dual PSM (PSM 6 + PSM 4), pick higher confidence
+3. `groupWordsIntoRows()` — re-group OCR words by Y-coordinate
+4. `detectValueColumns()` — right-edge clustering dengan outlier filter
+5. `detectTableHeaderRow()` — deteksi header row untuk preamble filter + year labels
+6. `analyzeLayout()` — classify each row: label | values | description
+7. `generateExcel()` — 5-column output: Uraian | 2024 | 2023 | 2022 | Description
 
-**Tesseract.js setup (CRITICAL):**
+**Tesseract.js setup (CRITICAL — sama seperti pdf-to-excel):**
 ```typescript
-// WAJIB dynamic import — static import menyebabkan page freeze
-const Tesseract = await import('tesseract.js');
-
-// WAJIB explicit CDN URLs
-const worker = await Tesseract.createWorker('ind+eng', 1, {
-  workerPath: 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/worker.min.js',
-  corePath: 'https://cdn.jsdelivr.net/npm/tesseract.js-core@5/tesseract-core-simd-lstm.wasm.js',
-  langPath: 'https://tessdata.projectnaptha.com/4.0.0_best',
-});
+let _createWorker: any = null;
+async function getCreateWorker() {
+  if (_createWorker) return _createWorker;
+  const Tesseract = await import('tesseract.js');
+  _createWorker = Tesseract.createWorker;
+  return _createWorker;
+}
+// Gunakan CDN URLs eksplisit dan set user_defined_dpi
 ```
 
-**X-coordinate clustering algorithm:**
-- Collect all x-coordinates dari OCR output
-- Sort x-coordinates
-- Identify gaps > threshold sebagai column boundaries
-- Threshold ditentukan adaptively dari distribusi x-coordinates
+**detectValueColumns() — right-edge clustering dengan outlier filter:**
+- Kumpulkan right-edge semua kata numerik dengan x0 > 25% image width
+- **Outlier filter**: edge tanpa tetangga dalam radius 8% → exclude dari workEdges (mencegah stray numeric word mencuri split slot)
+- Cari gap terbesar antara sorted edges (max 2 splits → max 3 kolom)
+- Gap minimum: 4% image width
+
+**detectTableHeaderRow() — year inference untuk colored headers:**
+- Scan tiap row untuk kata bertipe tahun (`/^20[0-2][0-9]$/`) di area nilai
+- Anchor kuat: "Uraian" (reliably OCR'd, latar putih)
+- Jika "Uraian" ada dan ≥1 tahun terdeteksi → accept sebagai header row
+- **Year inference**: jika 2022 di kolom[2], maka kolom[1]=2023, kolom[0]=2024 (`year[ci] = refYear - (ci - refCol)`)
+- Kenapa perlu: tahun di kotak berwarna (hijau) sering gagal di-OCR Tesseract
+
+**analyzeLayout() — 3-zone word classification per row:**
+- Zone 1 (x0 < valueLeftBoundary): label parts
+- Zone 2 (valueLeftBoundary ≤ x0 < valueRightBoundary): numeric values (+ dash capture)
+- Zone 3 (x0 ≥ valueRightBoundary): description (English translation)
+- Preamble filter: skip rows dengan minY ≤ tableHeaderMinY
+
+**OCR spell correction pipeline (correctLabel):**
+1. Structural regex corrections (angka/simbol OCR noise)
+2. Vocabulary spell check via Levenshtein distance terhadap ID_FINANCIAL_VOCAB
+3. Auto-capitalize first letter
+4. Abbreviation normalization
+5. Hyphen normalization
 
 ## 4. PDF-to-Excel — Hybrid pdfjs + OCR Fallback
 
