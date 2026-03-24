@@ -1,8 +1,30 @@
 import ToolCard from "@/components/ToolCard";
-import { tools, getAllCategories, categoryLabels, getToolsByCategory } from "@/config/tools";
+import { getToolById } from "@/config/tools";
+
+const SECTIONS = [
+  {
+    label: "Watermark",
+    toolIds: ["image-watermark-remove", "pdf-watermark-remove"],
+  },
+  {
+    label: "Convert from PDF",
+    toolIds: ["pdf-to-image", "pdf-to-excel"],
+  },
+  {
+    label: "Convert to Excel",
+    toolIds: ["image-to-excel", "pdf-to-excel"],
+  },
+  {
+    label: "Convert to Image",
+    toolIds: ["pdf-to-image"],
+  },
+  {
+    label: "Convert from Image",
+    toolIds: ["image-to-excel"],
+  },
+];
 
 export default function HomePage() {
-  const categories = getAllCategories();
 
   return (
     <div className="animate-fade-in">
@@ -97,25 +119,26 @@ export default function HomePage() {
 
       {/* Tools Grid */}
       <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pb-20">
-        {categories.map((cat) => {
-          const catTools = getToolsByCategory(cat);
-          if (catTools.length === 0) return null;
+        {SECTIONS.map((section) => {
+          const sectionTools = section.toolIds
+            .map((id) => getToolById(id))
+            .filter(Boolean) as NonNullable<ReturnType<typeof getToolById>>[];
 
           return (
-            <div key={cat} className="mb-12 last:mb-0">
+            <div key={section.label} className="mb-12 last:mb-0">
               <div className="flex items-center gap-3 mb-6">
                 <h2 className="text-lg font-semibold text-slate-900">
-                  {categoryLabels[cat]}
+                  {section.label}
                 </h2>
                 <div className="flex-1 h-px bg-slate-100" />
                 <span className="text-xs text-slate-400 font-medium">
-                  {catTools.length} {catTools.length === 1 ? "tool" : "tools"}
+                  {sectionTools.length} {sectionTools.length === 1 ? "tool" : "tools"}
                 </span>
               </div>
 
               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
-                {catTools.map((tool, i) => (
-                  <ToolCard key={tool.id} tool={tool} index={i} />
+                {sectionTools.map((tool, i) => (
+                  <ToolCard key={`${section.label}-${tool.id}`} tool={tool} index={i} />
                 ))}
               </div>
             </div>
