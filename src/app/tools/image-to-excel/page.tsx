@@ -80,7 +80,7 @@ export default function ImageToExcelPage() {
           maxSizeMB={20}
           multiple={false}
           onFilesSelected={handleFilesSelected}
-          title="Select an image to convert to Excel"
+          title="Select an image to extract data from"
           subtitle="Supports PNG, JPG, JPEG — financial reports, tables, invoices"
         />
       )}

@@ -22,7 +22,7 @@ export type ToolCategory =
 
 export const categoryLabels: Record<ToolCategory, string> = {
   watermark: "Watermark",
-  convert: "Convert",
+  convert: "Extract",
   merge: "Merge",
   compress: "Compress",
   ocr: "OCR",
@@ -71,7 +71,7 @@ export const tools: ToolConfig[] = [
     id: "image-to-excel",
     name: "Image to Excel",
     description:
-      "Convert images of tables and spreadsheets into editable Excel files using OCR technology.",
+      "Extract tables and data from images into editable Excel files using OCR technology.",
     category: "convert",
     icon: "FileImage",
     route: "/tools/image-to-excel",
