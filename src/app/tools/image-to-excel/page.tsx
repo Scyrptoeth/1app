@@ -137,8 +137,8 @@ export default function ImageToExcelPage() {
           </div>
 
           {/* Confidence badge */}
-          <div className="mb-4 flex items-center gap-2">
-            <span className={`inline-flex items-center gap-1.5 px-3 py-1 text-xs font-medium rounded-full ${
+          <div className="mb-4 flex items-start gap-3 p-3 bg-slate-50 border border-slate-100 rounded-xl">
+            <span className={`inline-flex items-center gap-1.5 px-3 py-1 text-xs font-medium rounded-full shrink-0 ${
               result.confidence >= 85
                 ? 'bg-emerald-50 text-emerald-700'
                 : result.confidence >= 65
@@ -148,8 +148,11 @@ export default function ImageToExcelPage() {
               <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
                 <circle cx="12" cy="12" r="10" />
               </svg>
-              OCR Confidence: {result.confidence.toFixed(1)}%
+              Image Data Quality: {result.confidence.toFixed(1)}%
             </span>
+            <p className="text-xs text-slate-500 leading-relaxed">
+              Extraction accuracy depends on Image Data Quality — the higher the score, the more precise the extracted data. For best results, use high-resolution images with clear, high-contrast text.
+            </p>
           </div>
 
           {/* Table Preview */}

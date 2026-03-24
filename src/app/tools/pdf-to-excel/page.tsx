@@ -148,6 +148,25 @@ export default function PdfToExcelPage() {
             </div>
           </div>
 
+          {/* PDF Data Quality */}
+          <div className="mb-4 flex items-start gap-3 p-3 bg-slate-50 border border-slate-100 rounded-xl">
+            <span className={`inline-flex items-center gap-1.5 px-3 py-1 text-xs font-medium rounded-full shrink-0 ${
+              result.confidence >= 85
+                ? "bg-emerald-50 text-emerald-700"
+                : result.confidence >= 65
+                ? "bg-amber-50 text-amber-700"
+                : "bg-red-50 text-red-700"
+            }`}>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+                <circle cx="12" cy="12" r="10" />
+              </svg>
+              PDF Data Quality: {result.confidence.toFixed(1)}%
+            </span>
+            <p className="text-xs text-slate-500 leading-relaxed">
+              Extraction accuracy depends on PDF Data Quality — the higher the score, the more precise the extracted data. For best results, use high-resolution, text-based PDFs with clear formatting.
+            </p>
+          </div>
+
           {/* Tab Navigation */}
           {result.pages.length > 1 && (
             <div className="flex gap-1 mb-4 border-b border-slate-200">
