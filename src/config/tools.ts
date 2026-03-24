@@ -93,6 +93,19 @@ export const tools: ToolConfig[] = [
     outputFormats: [".xlsx"],
     isAvailable: true,
   },
+  {
+    id: "pdf-to-image",
+    name: "PDF to Image",
+    description:
+      "Convert PDF documents into high-quality PNG images. Each page becomes a separate image file.",
+    category: "convert",
+    icon: "FileImage",
+    route: "/tools/pdf-to-image",
+    accentColor: "blue",
+    inputFormats: [".pdf"],
+    outputFormats: [".png"],
+    isAvailable: true,
+  },
 ];
 
 export function getToolById(id: string): ToolConfig | undefined {
