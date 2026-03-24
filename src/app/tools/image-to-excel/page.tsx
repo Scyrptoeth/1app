@@ -1,6 +1,10 @@
 'use client';
 
-import { useState, useCallback, useRef, useEffect } from 'react';
+import { useState, useCallback } from 'react';
+import ToolPageLayout from '@/components/ToolPageLayout';
+import FileUploader from '@/components/FileUploader';
+import ProcessingView from '@/components/ProcessingView';
+import { getToolById } from '@/config/tools';
 import {
   extractFromImage,
   generateExcel,
@@ -9,314 +13,290 @@ import {
   type RowData,
 } from '@/lib/tools/image-to-excel';
 
-// ============================================================
-// Types
-// ============================================================
-
-type AppState = 'upload' | 'processing' | 'result';
-
-// ============================================================
-// Main Page Component
-// ============================================================
+type Stage = 'upload' | 'processing' | 'preview';
 
 export default function ImageToExcelPage() {
-  const [state, setState] = useState<AppState>('upload');
-  const [progress, setProgress] = useState<ProcessingUpdate>({
-    progress: 0,
-    status: '',
-  });
-  const [imagePreviewUrl, setImagePreviewUrl] = useState<string>('');
-  const [extractionResult, setExtractionResult] =
-    useState<ExtractionResult | null>(null);
-  const [confidence, setConfidence] = useState<number>(0);
-  const [error, setError] = useState<string>('');
-  const [fileName, setFileName] = useState<string>('');
+  const tool = getToolById('image-to-excel')!;
+
+  const [stage, setStage] = useState<Stage>('upload');
+  const [file, setFile] = useState<File | null>(null);
+  const [progress, setProgress] = useState<ProcessingUpdate>({ progress: 0, status: '' });
+  const [result, setResult] = useState<ExtractionResult | null>(null);
   const [isExporting, setIsExporting] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // ---- File Upload Handler ----
-  const handleFile = useCallback(async (file: File) => {
-    if (!file.type.startsWith('image/')) {
-      setError('Please upload an image file (PNG, JPEG, JPG).');
-      return;
-    }
-
-    setError('');
-    setFileName(file.name);
-    setImagePreviewUrl(URL.createObjectURL(file));
-    setState('processing');
-    setProgress({ progress: 0, status: 'Starting...' });
+  const handleFilesSelected = useCallback(async (files: File[]) => {
+    const selected = files[0];
+    setFile(selected);
+    setStage('processing');
 
     try {
-      const result = await extractFromImage(file, (update) => {
-        setProgress(update);
-      });
-
-      setExtractionResult(result);
-      setConfidence(result.confidence);
-      setState('result');
+      const extraction = await extractFromImage(selected, (update) => setProgress(update));
+      setResult(extraction);
+      setStage('preview');
     } catch (err) {
       console.error('Extraction failed:', err);
-      setError(
-        `Extraction failed: ${err instanceof Error ? err.message : 'Unknown error'}`
+      setStage('upload');
+      alert(
+        `Extraction failed: ${err instanceof Error ? err.message : 'Unknown error'}. Please try a different image.`
       );
-      setState('upload');
     }
   }, []);
 
-  // ---- Drag & Drop ----
-  const handleDrop = useCallback(
-    (e: React.DragEvent) => {
-      e.preventDefault();
-      const file = e.dataTransfer.files[0];
-      if (file) handleFile(file);
-    },
-    [handleFile]
-  );
-
-  const handleDragOver = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-  }, []);
-
-  // ---- Export to Excel ----
-  const handleExport = useCallback(async () => {
-    if (!extractionResult) return;
+  const handleDownload = useCallback(async () => {
+    if (!result || !file) return;
     setIsExporting(true);
-
     try {
-      const blob = await generateExcel(
-        extractionResult.rows,
-        extractionResult.headers,
-        fileName.replace(/\.[^/.]+$/, '') || 'Extracted Data'
-      );
-
-      // Download
+      const baseName = file.name.replace(/\.[^/.]+$/, '');
+      const blob = await generateExcel(result.rows, result.headers, baseName);
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `${fileName.replace(/\.[^/.]+$/, '') || 'extracted-data'}.xlsx`;
+      a.download = `${baseName}.xlsx`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
     } catch (err) {
       console.error('Excel generation failed:', err);
-      setError(
-        `Excel generation failed: ${err instanceof Error ? err.message : 'Unknown error'}`
-      );
+      alert(`Failed to generate Excel: ${err instanceof Error ? err.message : 'Unknown error'}`);
     } finally {
       setIsExporting(false);
     }
-  }, [extractionResult, fileName]);
+  }, [result, file]);
 
-  // ---- Reset ----
   const handleReset = useCallback(() => {
-    setState('upload');
+    setStage('upload');
+    setFile(null);
     setProgress({ progress: 0, status: '' });
-    setImagePreviewUrl('');
-    setExtractionResult(null);
-    setConfidence(0);
-    setError('');
-    setFileName('');
+    setResult(null);
     setIsExporting(false);
   }, []);
 
-  // ---- Cleanup ----
-  useEffect(() => {
-    return () => {
-      if (imagePreviewUrl) URL.revokeObjectURL(imagePreviewUrl);
-    };
-  }, [imagePreviewUrl]);
+  return (
+    <ToolPageLayout tool={tool}>
+      {stage === 'upload' && (
+        <FileUploader
+          acceptedFormats={['.png', '.jpg', '.jpeg']}
+          maxSizeMB={20}
+          multiple={false}
+          onFilesSelected={handleFilesSelected}
+          title="Select an image to convert to Excel"
+          subtitle="Supports PNG, JPG, JPEG — financial reports, tables, invoices"
+        />
+      )}
+
+      {stage === 'processing' && file && (
+        <ProcessingView
+          fileName={file.name}
+          progress={progress.progress}
+          status={progress.status}
+        />
+      )}
+
+      {stage === 'preview' && result && file && (
+        <div className="w-full">
+          {/* Preview Header */}
+          <div className="flex items-center justify-between mb-6">
+            <div>
+              <h3 className="text-lg font-semibold text-slate-900">Preview</h3>
+              <p className="text-sm text-slate-500">
+                {result.rows.length} rows extracted — review before downloading
+              </p>
+            </div>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={handleDownload}
+                disabled={isExporting}
+                className="flex items-center gap-2 px-5 py-2.5 bg-accent-500 text-white font-semibold rounded-xl hover:bg-accent-600 active:bg-accent-700 disabled:opacity-60 transition-colors shadow-md shadow-accent-500/25"
+              >
+                {isExporting ? (
+                  <>
+                    <svg className="animate-spin" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0" />
+                    </svg>
+                    Generating...
+                  </>
+                ) : (
+                  <>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                      <polyline points="7 10 12 15 17 10" />
+                      <line x1="12" y1="15" x2="12" y2="3" />
+                    </svg>
+                    Download .xlsx
+                  </>
+                )}
+              </button>
+              <button
+                onClick={handleReset}
+                className="px-5 py-2.5 text-slate-600 font-medium rounded-xl border border-slate-200 hover:bg-slate-50 transition-colors"
+              >
+                Process Another
+              </button>
+            </div>
+          </div>
+
+          {/* Confidence badge */}
+          <div className="mb-4 flex items-center gap-2">
+            <span className={`inline-flex items-center gap-1.5 px-3 py-1 text-xs font-medium rounded-full ${
+              result.confidence >= 85
+                ? 'bg-emerald-50 text-emerald-700'
+                : result.confidence >= 65
+                ? 'bg-amber-50 text-amber-700'
+                : 'bg-red-50 text-red-700'
+            }`}>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+                <circle cx="12" cy="12" r="10" />
+              </svg>
+              OCR Confidence: {result.confidence.toFixed(1)}%
+            </span>
+          </div>
+
+          {/* Table Preview */}
+          <div className="border border-slate-200 rounded-xl overflow-hidden">
+            <div className="overflow-x-auto max-h-[600px] overflow-y-auto">
+              <ImagePreviewTable rows={result.rows} headers={result.headers} />
+            </div>
+          </div>
+
+          {/* File info */}
+          <div className="mt-4 flex items-center justify-center gap-6 text-sm text-slate-500">
+            <div className="flex items-center gap-1.5">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-slate-400">
+                <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+                <circle cx="8.5" cy="8.5" r="1.5" />
+                <polyline points="21 15 16 10 5 21" />
+              </svg>
+              <span>{file.name}</span>
+            </div>
+            <div className="text-slate-300">|</div>
+            <div>{result.imageWidth} × {result.imageHeight} px</div>
+          </div>
+        </div>
+      )}
+
+      {/* How it works */}
+      <div className="mt-16 pt-12 border-t border-slate-100">
+        <h2 className="text-lg font-semibold text-slate-900 mb-6">How it works</h2>
+        <div className="grid sm:grid-cols-4 gap-6">
+          {[
+            {
+              step: '1',
+              title: 'Upload Image',
+              desc: 'Select a PNG or JPG image containing a table or financial data.',
+            },
+            {
+              step: '2',
+              title: 'OCR Extraction',
+              desc: 'Tesseract.js reads every number, label, and description using bilingual OCR (Indonesian + English).',
+            },
+            {
+              step: '3',
+              title: 'Preview',
+              desc: 'Review the extracted data in a structured table. Columns and descriptions are detected automatically.',
+            },
+            {
+              step: '4',
+              title: 'Download Excel',
+              desc: 'Download a formatted .xlsx file with headers, number formatting, and auto-fit column widths.',
+            },
+          ].map((item) => (
+            <div key={item.step} className="flex flex-col items-center text-center">
+              <div className="w-10 h-10 rounded-full bg-accent-50 flex items-center justify-center mb-3">
+                <span className="text-sm font-bold text-accent-600">{item.step}</span>
+              </div>
+              <h3 className="text-sm font-semibold text-slate-900 mb-1">{item.title}</h3>
+              <p className="text-xs text-slate-500">{item.desc}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+    </ToolPageLayout>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  Preview Table Component                                             */
+/* ------------------------------------------------------------------ */
+
+function ImagePreviewTable({
+  rows,
+  headers,
+}: {
+  rows: RowData[];
+  headers: string[];
+}) {
+  // headers = [labelCol, ...yearCols, descCol]
+  // rows have: label, values[], description
+  const labelHeader = headers[0] ?? 'Uraian';
+  const valueHeaders = headers.slice(1, headers.length - 1);
+  const descHeader = headers[headers.length - 1] ?? 'Description';
+
+  const formatNum = (val: string): string => {
+    if (!val || val === '-') return val;
+    const n = parseFloat(val.replace(/\./g, '').replace(',', '.'));
+    if (isNaN(n)) return val;
+    return n.toLocaleString('id-ID');
+  };
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      {/* Header */}
-      <header className="bg-white border-b border-gray-200 px-6 py-4">
-        <div className="max-w-4xl mx-auto flex items-center justify-between">
-          <div>
-            <a href="/" className="text-sm text-blue-600 hover:underline">
-              &larr; Back to 1APP
-            </a>
-            <h1 className="text-2xl font-bold text-gray-900 mt-1">
-              Image to Excel
-            </h1>
-            <p className="text-sm text-gray-500">
-              Convert data from images to formatted Excel spreadsheets
-            </p>
-          </div>
-          {state !== 'upload' && (
-            <button
-              onClick={handleReset}
-              className="px-4 py-2 text-sm bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
-            >
-              &#8634; Start Over
-            </button>
-          )}
-        </div>
-      </header>
-
-      <main className="max-w-4xl mx-auto px-6 py-8">
-        {/* Error Display */}
-        {error && (
-          <div className="mb-6 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">
-            {error}
-            <button
-              onClick={() => setError('')}
-              className="float-right text-red-500 hover:text-red-700"
-            >
-              &#10005;
-            </button>
-          </div>
-        )}
-
-        {/* ============ UPLOAD STATE ============ */}
-        {state === 'upload' && (
-          <div
-            onDrop={handleDrop}
-            onDragOver={handleDragOver}
-            onClick={() => fileInputRef.current?.click()}
-            className="border-2 border-dashed border-gray-300 rounded-xl p-16 text-center cursor-pointer hover:border-blue-400 hover:bg-blue-50 transition-all"
+    <table className="w-full text-sm">
+      <thead className="bg-slate-100 sticky top-0">
+        <tr>
+          <th className="px-3 py-2.5 text-left font-semibold text-slate-700 min-w-[200px]">
+            {labelHeader}
+          </th>
+          {valueHeaders.map((h) => (
+            <th key={h} className="px-3 py-2.5 text-right font-semibold text-slate-700 w-36 whitespace-nowrap">
+              {h}
+            </th>
+          ))}
+          <th className="px-3 py-2.5 text-left font-semibold text-slate-700 min-w-[160px]">
+            {descHeader}
+          </th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((row, idx) => (
+          <tr
+            key={idx}
+            className={`border-t border-slate-100 ${
+              row.isHeader || row.isSectionTitle
+                ? 'bg-slate-50'
+                : row.isTotal
+                ? 'bg-amber-50'
+                : 'hover:bg-slate-50/50'
+            }`}
           >
-            <div className="text-6xl mb-4">&#128202;</div>
-            <h2 className="text-xl font-semibold text-gray-700 mb-2">
-              Upload an image to extract data
-            </h2>
-            <p className="text-gray-500 mb-4">
-              Supports PNG, JPEG, JPG &mdash; financial reports, tables,
-              invoices, receipts
-            </p>
-            <p className="text-sm text-gray-400">
-              Drag &amp; drop or click to browse
-            </p>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="image/png,image/jpeg,image/jpg"
-              className="hidden"
-              onChange={(e) => {
-                const file = e.target.files?.[0];
-                if (file) handleFile(file);
-              }}
-            />
-          </div>
-        )}
+            {/* Label column */}
+            <td
+              className={`px-3 py-2 text-slate-800 ${
+                row.isHeader || row.isTotal ? 'font-semibold' : ''
+              }`}
+              style={{ paddingLeft: `${12 + row.indent * 16}px` }}
+            >
+              {row.label}
+            </td>
 
-        {/* ============ PROCESSING STATE ============ */}
-        {state === 'processing' && (
-          <div className="bg-white rounded-xl shadow-sm border p-8">
-            <div className="max-w-lg mx-auto text-center">
-              {/* Image preview */}
-              {imagePreviewUrl && (
-                <div className="mb-6">
-                  <img
-                    src={imagePreviewUrl}
-                    alt="Uploaded"
-                    className="max-h-48 mx-auto rounded-lg shadow-sm opacity-70"
-                  />
-                </div>
-              )}
+            {/* Value columns */}
+            {valueHeaders.map((_, vi) => (
+              <td
+                key={vi}
+                className={`px-3 py-2 text-right font-mono ${
+                  row.isTotal ? 'font-semibold text-slate-900' : 'text-slate-700'
+                }`}
+              >
+                {formatNum(row.values[vi] ?? '')}
+              </td>
+            ))}
 
-              <h2 className="text-lg font-semibold text-gray-700 mb-4">
-                Processing: {fileName}
-              </h2>
-
-              {/* Progress bar */}
-              <div className="w-full bg-gray-200 rounded-full h-3 mb-3">
-                <div
-                  className="bg-blue-600 h-3 rounded-full transition-all duration-300"
-                  style={{ width: `${progress.progress}%` }}
-                />
-              </div>
-              <p className="text-sm text-gray-500">{progress.status}</p>
-              <p className="text-xs text-gray-400 mt-1">
-                {progress.progress}% complete
-              </p>
-
-              {progress.progress < 50 && (
-                <p className="text-xs text-amber-600 mt-4">
-                  First-time OCR may take 30-60 seconds to download language
-                  data.
-                </p>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* ============ RESULT STATE ============ */}
-        {state === 'result' && extractionResult && (
-          <div className="space-y-6">
-            {/* Stats bar */}
-            <div className="bg-white rounded-xl shadow-sm border p-4 flex items-center justify-between flex-wrap gap-4">
-              <div className="flex items-center gap-6 text-sm">
-                <span className="text-gray-500">
-                  Data Quality:{' '}
-                  <strong
-                    className={
-                      confidence >= 70
-                        ? 'text-green-600'
-                        : confidence >= 50
-                          ? 'text-amber-600'
-                          : 'text-red-600'
-                    }
-                  >
-                    {confidence >= 70 ? 'High' : confidence >= 50 ? 'Medium' : 'Low'}{' '}
-                    ({confidence.toFixed(1)}%)
-                  </strong>
-                </span>
-              </div>
-            </div>
-
-            {/* Info notice */}
-            <div className="bg-blue-50 border border-blue-200 rounded-xl px-4 py-3 flex items-start gap-3">
-              <span className="text-blue-500 mt-0.5">&#9432;</span>
-              <p className="text-sm text-blue-700">
-                Extraction quality depends on the input image. Higher resolution and clearer images produce better results.
-              </p>
-            </div>
-
-            {/* Image preview + Export */}
-            <div className="bg-white rounded-xl shadow-sm border overflow-hidden">
-              {/* Image */}
-              <div className="p-6">
-                <h3 className="text-sm font-semibold text-gray-700 mb-4">
-                  Original Image
-                </h3>
-                {imagePreviewUrl && (
-                  <div className="flex justify-center">
-                    <img
-                      src={imagePreviewUrl}
-                      alt="Original"
-                      className="max-h-[500px] rounded-lg border shadow-sm"
-                    />
-                  </div>
-                )}
-              </div>
-
-              {/* Export section */}
-              <div className="border-t bg-gray-50 p-6 text-center">
-                <p className="text-sm text-gray-600 mb-4">
-                  Data has been extracted and formatted. Click below to download
-                  your Excel file.
-                </p>
-                <button
-                  onClick={handleExport}
-                  disabled={isExporting}
-                  className="px-8 py-3 bg-green-600 hover:bg-green-700 disabled:bg-gray-400 text-white font-semibold rounded-xl transition-colors text-base shadow-lg inline-flex items-center gap-2"
-                >
-                  {isExporting ? (
-                    <>
-                      <span className="animate-spin">&#9203;</span> Generating
-                      Excel...
-                    </>
-                  ) : (
-                    <>&#128229; Export to Excel (.xlsx)</>
-                  )}
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-      </main>
-    </div>
+            {/* Description column */}
+            <td className="px-3 py-2 text-slate-500 text-xs">
+              {row.description || ''}
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
   );
 }
