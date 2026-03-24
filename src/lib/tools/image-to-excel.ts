@@ -1061,7 +1061,10 @@ function detectValueColumns(
 
   for (const row of rows) {
     for (const word of row.words) {
-      if (isNumericValue(word.text) && word.bbox.x0 > imageWidth * 0.35) {
+      // Use 25% threshold (lower than 35%) so leftmost value columns starting at ~30-33%
+      // of image width are included. isNumericValue requires 3+ digits so label words
+      // (single/double digit numbers, text) won't be accidentally included.
+      if (isNumericValue(word.text) && word.bbox.x0 > imageWidth * 0.25) {
         numericRightEdges.push(word.bbox.x1);
       }
     }
@@ -1069,8 +1072,20 @@ function detectValueColumns(
 
   if (numericRightEdges.length === 0) return [];
 
-  // Sort right edges
-  numericRightEdges.sort((a, b) => a - b);
+  // Filter isolated outlier edges: a numeric word with no other numeric words
+  // within 8% of image width is likely a stray header/description artifact
+  // (e.g. "2024" year in a bilingual description column far from the value area).
+  // Keeping such outliers creates spurious large gaps that steal one of the 2
+  // available split slots, merging legitimate value columns together.
+  const neighborRadius = imageWidth * 0.08;
+  const filteredEdges = numericRightEdges.filter(e =>
+    numericRightEdges.some(other => other !== e && Math.abs(other - e) <= neighborRadius)
+  );
+  const workEdges = filteredEdges.length >= 3 ? filteredEdges : numericRightEdges;
+  workEdges.sort((a, b) => a - b);
+
+  // Replace workEdges with filtered set for all subsequent operations
+  // (reassign to const-compatible pattern by using workEdges going forward)
 
   // Strategy: Find the LARGEST GAP in sorted right-edges to split columns.
   // This is much more robust than fixed-threshold sequential clustering,
@@ -1080,8 +1095,8 @@ function detectValueColumns(
 
   // Find all gaps between adjacent sorted edges
   const gaps: { index: number; gap: number }[] = [];
-  for (let i = 1; i < numericRightEdges.length; i++) {
-    const gap = numericRightEdges[i] - numericRightEdges[i - 1];
+  for (let i = 1; i < workEdges.length; i++) {
+    const gap = workEdges[i] - workEdges[i - 1];
     if (gap >= minGapForSplit) {
       gaps.push({ index: i, gap });
     }
@@ -1096,7 +1111,7 @@ function detectValueColumns(
     if (splitIndices.length >= 2) break;
     // Ensure split points are not too close to each other
     const tooClose = splitIndices.some(
-      (si) => Math.abs(numericRightEdges[g.index] - numericRightEdges[si]) < imageWidth * 0.06
+      (si) => Math.abs(workEdges[g.index] - workEdges[si]) < imageWidth * 0.04
     );
     if (!tooClose) {
       splitIndices.push(g.index);
@@ -1108,10 +1123,10 @@ function detectValueColumns(
   const clusters: number[][] = [];
   let start = 0;
   for (const si of splitIndices) {
-    clusters.push(numericRightEdges.slice(start, si));
+    clusters.push(workEdges.slice(start, si));
     start = si;
   }
-  clusters.push(numericRightEdges.slice(start));
+  clusters.push(workEdges.slice(start));
 
   // Keep significant clusters (at least 3 values)
   const significant = clusters.filter((c) => c.length >= 3);
@@ -1119,9 +1134,9 @@ function detectValueColumns(
   // If no significant splits found, try single cluster
   if (significant.length === 0) {
     return [{
-      rightEdge: Math.max(...numericRightEdges),
-      avgRight: numericRightEdges.reduce((a, b) => a + b, 0) / numericRightEdges.length,
-      count: numericRightEdges.length,
+      rightEdge: Math.max(...workEdges),
+      avgRight: workEdges.reduce((a, b) => a + b, 0) / workEdges.length,
+      count: workEdges.length,
     }];
   }
 
@@ -1133,6 +1148,7 @@ function detectValueColumns(
 
   // Sort by position (left to right)
   columns.sort((a, b) => a.avgRight - b.avgRight);
+
 
   // If we detected more than 3 columns, merge the closest pair iteratively
   while (columns.length > 3) {
@@ -1180,9 +1196,8 @@ function analyzeLayout(
   onProgress({ progress: 55, status: 'Analyzing structure...' });
 
   // Determine content area: skip header/logo and footer/signature
-  // Reduced endY from 0.82 to 0.78 to exclude footer text and signature
   const contentStartY = imageHeight * 0.10;
-  const contentEndY = imageHeight * 0.78;
+  const contentEndY = imageHeight * 0.90;
 
   // Filter to content rows only
   const contentRows = wordRows.filter(
@@ -1194,6 +1209,19 @@ function analyzeLayout(
   const minLeftMargin =
     leftMargins.length > 0 ? Math.min(...leftMargins) : 0;
   const indentUnit = imageWidth * 0.025;
+
+  // Dynamic boundaries based on detected column positions.
+  // value columns are detected by right-edge clustering, so:
+  //   valueLeftBoundary  = leftmost col avgRight - 18% of width
+  //   valueRightBoundary = rightmost col avgRight + 6% of width
+  // Everything left of valueLeftBoundary and numeric -> value in a column
+  // Everything right of valueRightBoundary and non-numeric -> skip (e.g. English descriptions)
+  const valueLeftBoundary = columns.length > 0
+    ? columns[0].avgRight - imageWidth * 0.18
+    : imageWidth * 0.30;
+  const valueRightBoundary = columns.length > 0
+    ? columns[columns.length - 1].avgRight + imageWidth * 0.06
+    : imageWidth;
 
   const result: RowData[] = [];
 
@@ -1213,7 +1241,7 @@ function analyzeLayout(
     while (wi < row.words.length) {
       const word = row.words[wi];
 
-      // Case 1: Rp prefix Ã¢ÂÂ look for following number(s)
+      // Case 1: Rp prefix -- look for following number(s)
       if (isRpPrefix(word.text)) {
         // First check: does the Rp word itself contain digits? (e.g., "Rp61.039")
         const embeddedDigits = extractDigitsFromRpWord(word.text);
@@ -1258,17 +1286,19 @@ function analyzeLayout(
       // but isRpPrefix returned false because of the digits
       {
         const embeddedDigits = extractDigitsFromRpWord(word.text);
-        if (embeddedDigits && isNumericValue(embeddedDigits) && word.bbox.x0 > imageWidth * 0.35) {
+        if (embeddedDigits && isNumericValue(embeddedDigits) && word.bbox.x0 > valueLeftBoundary) {
           assignToColumn(embeddedDigits, word.bbox.x1, columns, valuesByColumn, imageWidth);
           wi++;
           continue;
         }
       }
 
-      // Case 2: Standalone number in the right portion
+      // Case 2: Standalone number -- use dynamic left boundary from column positions.
+      // Dynamic boundary prevents leftmost value column from being treated as label text
+      // when column starts at <40% of image width (e.g. 3-column financial statements).
       if (
         isNumericValue(word.text) &&
-        word.bbox.x0 > imageWidth * 0.4
+        word.bbox.x0 > valueLeftBoundary
       ) {
         // Look ahead for adjacent numeric fragments (handles OCR splitting)
         let combinedText = word.text;
@@ -1297,7 +1327,14 @@ function analyzeLayout(
         }
       }
 
-      // Case 3: Regular text word Ã¢ÂÂ part of label
+      // Case 3: Regular text word -- part of label.
+      // Skip words to the RIGHT of valueRightBoundary (e.g. English description column
+      // in bilingual financial statements like GoTo annual report).
+      if (word.bbox.x0 >= valueRightBoundary) {
+        wi++;
+        continue;
+      }
+
       // Skip standalone 1-2 digit numbers at far left (line item numbers)
       if (
         word.bbox.x0 < imageWidth * 0.2 &&
@@ -1320,9 +1357,9 @@ function analyzeLayout(
     // Post-process label cleanup: remove OCR junk characters
     // Strip leading/trailing punctuation noise from OCR artifacts
     label = label
-      .replace(/^[:\-Ã¢ÂÂ|.;,\s]+/, '')    // Leading junk
-      .replace(/[:\-Ã¢ÂÂ|;,\s]+$/, '')      // Trailing junk
-      .replace(/\s{2,}/g, ' ')           // Multiple spaces Ã¢ÂÂ single space
+      .replace(/^[:\-\u2014|.;,\s]+/, '')    // Leading junk
+      .replace(/[:\-\u2014|;,\s]+$/, '')      // Trailing junk
+      .replace(/\s{2,}/g, ' ')                  // Multiple spaces -> single space
       .trim();
 
     // Apply dictionary-based OCR correction for Indonesian financial terms
