@@ -2,11 +2,10 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { tools, categoryLabels, getAllCategories } from "@/config/tools";
+import { getToolById, SECTIONS } from "@/config/tools";
 
 export default function Header() {
   const [menuOpen, setMenuOpen] = useState(false);
-  const categories = getAllCategories();
 
   return (
     <header className="sticky top-0 z-50 bg-white/80 backdrop-blur-lg border-b border-slate-100">
@@ -26,17 +25,23 @@ export default function Header() {
 
           {/* Desktop Nav */}
           <nav className="hidden md:flex items-center gap-1">
-            {categories.map((cat) => (
-              <div key={cat} className="relative group">
-                <button className="px-3 py-2 text-sm font-medium text-slate-600 hover:text-slate-900 rounded-lg hover:bg-slate-50 transition-colors">
-                  {categoryLabels[cat]}
-                </button>
-                {/* Dropdown */}
-                <div className="absolute top-full left-0 pt-2 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200">
-                  <div className="bg-white rounded-xl shadow-xl shadow-slate-200/50 border border-slate-100 p-2 min-w-[240px]">
-                    {tools
-                      .filter((t) => t.category === cat)
-                      .map((tool) => (
+            {SECTIONS.map((section) => {
+              const sectionTools = section.toolIds
+                .map((id) => getToolById(id))
+                .filter(Boolean) as NonNullable<ReturnType<typeof getToolById>>[];
+              // Deduplicate tools within the same section dropdown
+              const unique = sectionTools.filter(
+                (t, i, arr) => arr.findIndex((x) => x.id === t.id) === i
+              );
+              return (
+                <div key={section.label} className="relative group">
+                  <button className="px-3 py-2 text-sm font-medium text-slate-600 hover:text-slate-900 rounded-lg hover:bg-slate-50 transition-colors">
+                    {section.label}
+                  </button>
+                  {/* Dropdown */}
+                  <div className="absolute top-full left-0 pt-2 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200">
+                    <div className="bg-white rounded-xl shadow-xl shadow-slate-200/50 border border-slate-100 p-2 min-w-[240px]">
+                      {unique.map((tool) => (
                         <Link
                           key={tool.id}
                           href={tool.route}
@@ -53,10 +58,11 @@ export default function Header() {
                           </div>
                         </Link>
                       ))}
+                    </div>
                   </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </nav>
 
           {/* Privacy badge */}
@@ -101,20 +107,35 @@ export default function Header() {
       {/* Mobile menu */}
       {menuOpen && (
         <div className="md:hidden border-t border-slate-100 bg-white animate-fade-in">
-          <div className="px-4 py-4 space-y-1">
-            {tools.map((tool) => (
-              <Link
-                key={tool.id}
-                href={tool.route}
-                onClick={() => setMenuOpen(false)}
-                className="flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-slate-50 transition-colors"
-              >
-                <div className="w-2 h-2 rounded-full bg-accent-500" />
-                <span className="text-sm font-medium text-slate-700">
-                  {tool.name}
-                </span>
-              </Link>
-            ))}
+          <div className="px-4 py-4 space-y-4">
+            {SECTIONS.map((section) => {
+              const sectionTools = section.toolIds
+                .map((id) => getToolById(id))
+                .filter(Boolean) as NonNullable<ReturnType<typeof getToolById>>[];
+              const unique = sectionTools.filter(
+                (t, i, arr) => arr.findIndex((x) => x.id === t.id) === i
+              );
+              return (
+                <div key={section.label}>
+                  <p className="px-3 pb-1 text-xs font-semibold text-slate-400 uppercase tracking-wide">
+                    {section.label}
+                  </p>
+                  {unique.map((tool) => (
+                    <Link
+                      key={tool.id}
+                      href={tool.route}
+                      onClick={() => setMenuOpen(false)}
+                      className="flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-slate-50 transition-colors"
+                    >
+                      <div className="w-2 h-2 rounded-full bg-accent-500" />
+                      <span className="text-sm font-medium text-slate-700">
+                        {tool.name}
+                      </span>
+                    </Link>
+                  ))}
+                </div>
+              );
+            })}
           </div>
         </div>
       )}

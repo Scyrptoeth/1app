@@ -111,6 +111,34 @@ export const tools: ToolConfig[] = [
   },
 ];
 
+export interface ToolSection {
+  label: string;
+  toolIds: string[];
+}
+
+export const SECTIONS: ToolSection[] = [
+  {
+    label: "Watermark",
+    toolIds: ["image-watermark-remove", "pdf-watermark-remove"],
+  },
+  {
+    label: "Convert from PDF",
+    toolIds: ["pdf-to-image", "pdf-to-excel"],
+  },
+  {
+    label: "Convert to Excel",
+    toolIds: ["image-to-excel", "pdf-to-excel"],
+  },
+  {
+    label: "Convert to Image",
+    toolIds: ["pdf-to-image"],
+  },
+  {
+    label: "Convert from Image",
+    toolIds: ["image-to-excel"],
+  },
+];
+
 export function getToolById(id: string): ToolConfig | undefined {
   return tools.find((t) => t.id === id);
 }
