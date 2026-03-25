@@ -74,16 +74,14 @@ interface ConsolidatedRun {
   color: string;
 }
 
-interface TableBlock {
-  rows: CellGrid[];
-  yMin: number;
-  yMax: number;
-  lineIndices: Set<number>;
-}
-
-interface CellGrid {
-  cells: ConsolidatedRun[][];
-  y: number;
+// A paragraph block groups adjacent lines that belong to the same visual paragraph.
+// Adjacent lines are merged when they share similar fontSize, x-position, and have
+// a normal line spacing gap (< 1.5× line height). Each block becomes one text box.
+interface ParagraphBlock {
+  lines: TextLine[];
+  refX: number;   // minX of first line — reference for x-alignment checks
+  minX: number;   // min of all lines' minX (for text box left edge)
+  maxX: number;   // max of all lines' maxX (for text box width)
 }
 
 interface OcrParagraph {
@@ -125,6 +123,7 @@ const OPS_SHOW_TEXT       = 44;  // showText
 const OPS_SHOW_SPACED     = 45;  // showSpacedText
 const OPS_NEXT_LINE_SHOW  = 46;  // nextLineShowText
 const OPS_NEXT_LINE_SET   = 47;  // nextLineSetSpacingShowText
+const OPS_END_TEXT        = 32;  // endText: closes text block (ET)
 const OPS_PAINT_IMAGE     = 85;  // paintImageXObject
 const OPS_PAINT_INLINE    = 86;  // paintInlineImageXObject
 const OPS_PAINT_IMG_RPT   = 88;  // paintImageXObjectRepeat
@@ -177,6 +176,12 @@ async function analyzePageOperators(page: unknown): Promise<PageAnalysis> {
   let tmX = 0, tmY = 0;
   let tlmX = 0, tlmY = 0; // text line matrix
 
+  // Only record colors when inside a BT/ET text block.
+  // Background shapes (drawn outside BT) use the same fill operators but must
+  // not pollute the text color map — otherwise white background fills overwrite
+  // the actual text color at those y positions.
+  let inTextBlock = false;
+
   const IMAGE_OPS = new Set([OPS_PAINT_IMAGE, OPS_PAINT_INLINE, OPS_PAINT_IMG_RPT]);
   const SHOW_OPS = new Set([OPS_SHOW_TEXT, OPS_SHOW_SPACED, OPS_NEXT_LINE_SHOW, OPS_NEXT_LINE_SET]);
 
@@ -200,7 +205,11 @@ async function analyzePageOperators(page: unknown): Promise<PageAnalysis> {
         currentColor = cmykToHex(args[0], args[1], args[2], args[3]);
         break;
       case OPS_BEGIN_TEXT:
+        inTextBlock = true;
         tmX = 0; tmY = 0; tlmX = 0; tlmY = 0;
+        break;
+      case OPS_END_TEXT:
+        inTextBlock = false;
         break;
       case OPS_SET_TEXT_MATRIX:
         // [a, b, c, d, e, f] — e=x, f=y (translation components)
@@ -215,9 +224,9 @@ async function analyzePageOperators(page: unknown): Promise<PageAnalysis> {
         break;
     }
 
-    if (SHOW_OPS.has(fn)) {
+    if (SHOW_OPS.has(fn) && inTextBlock) {
       // Map this y position to the current fill color.
-      // Use rounded integer key for fuzzy matching (+/-3pt tolerance applied at lookup).
+      // Use rounded integer key for fuzzy matching (+/-5pt tolerance applied at lookup).
       const yKey = Math.round(tmY).toString();
       colorMap.set(yKey, currentColor);
     }
@@ -419,109 +428,51 @@ function extractFontFamily(fontName: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// ═══════════════════ TASK 2: TABLE DETECTION ════════════════════════════════
+// ═══════════════════ TASK 2: PARAGRAPH CONSOLIDATION ════════════════════════
 // ---------------------------------------------------------------------------
+// Group adjacent lines into paragraph blocks so that multiple lines of the
+// same paragraph become one text box instead of N separate boxes.
+//
+// Merge conditions (all must hold):
+//   • fontSize within ±2pt of the block's reference (first) line
+//   • minX within ±0.3in (±21.6pt) of the block's reference line
+//   • baseline y-gap < 1.5× expected line height (fontSize × 1.2)
+//   • gap must be positive (i.e., lines must be below each other, not above)
+//
+// Lines coming from groupIntoLines() are already in top-to-bottom order
+// (descending PDF y-coordinate), so we process them in sequence.
 
-function clusterXPositions(xPositions: number[], tolerance: number): number[] {
-  const clusters: number[] = [];
-  for (const x of xPositions) {
-    const nearest = clusters.findIndex((c) => Math.abs(c - x) <= tolerance);
-    if (nearest >= 0) {
-      clusters[nearest] = (clusters[nearest] + x) / 2;
-    } else {
-      clusters.push(x);
-    }
-  }
-  return clusters.sort((a, b) => a - b);
-}
-
-function assignToColumn(x: number, columns: number[], tolerance: number): number {
-  let best = 0;
-  let bestDist = Infinity;
-  for (let i = 0; i < columns.length; i++) {
-    const dist = Math.abs(columns[i] - x);
-    if (dist < bestDist) {
-      bestDist = dist;
-      best = i;
-    }
-  }
-  return bestDist <= tolerance * 2 ? best : -1;
-}
-
-function isTableLikeLine(line: TextLine): boolean {
-  if (line.items.length < 2) return false;
-  const sorted = [...line.items].sort((a, b) => a.x - b.x);
-  const columnGapThreshold = line.avgFontSize * 3;
-  for (let i = 1; i < sorted.length; i++) {
-    const gap = sorted[i].x - (sorted[i - 1].x + sorted[i - 1].width);
-    if (gap > columnGapThreshold) return true;
-  }
-  return false;
-}
-
-function detectTables(lines: TextLine[]): TableBlock[] {
+function groupLinesIntoParagraphs(lines: TextLine[]): ParagraphBlock[] {
   if (lines.length === 0) return [];
 
-  const allX: number[] = lines.flatMap((l) => l.items.map((i) => i.x));
-  const avgFontSize = lines.reduce((s, l) => s + l.avgFontSize, 0) / lines.length;
-  const xTolerance = avgFontSize * 2.0;
-  const globalColumns = clusterXPositions(allX, xTolerance);
+  const blocks: ParagraphBlock[] = [];
 
-  if (globalColumns.length < 2) return [];
+  for (const line of lines) {
+    if (blocks.length === 0) {
+      blocks.push({ lines: [line], refX: line.minX, minX: line.minX, maxX: line.maxX });
+      continue;
+    }
 
-  const isTableLike = lines.map((l) => isTableLikeLine(l));
-  const blocks: TableBlock[] = [];
-  let i = 0;
+    const block = blocks[blocks.length - 1];
+    const refLine = block.lines[0];
+    const lastLine = block.lines[block.lines.length - 1];
 
-  while (i < lines.length) {
-    if (!isTableLike[i]) { i++; continue; }
+    const refFontSize = refLine.avgFontSize;
+    const fontSizeMatch = Math.abs(line.avgFontSize - refFontSize) <= 2;
+    const xAligned = Math.abs(line.minX - block.refX) <= 21.6; // ±0.3in in pt
 
-    const blockStart = i;
-    while (i < lines.length && isTableLike[i]) i++;
-    const blockEnd = i;
+    // Baseline gap (lastLine.y > line.y in PDF coords: last is above current)
+    const yGap = lastLine.y - line.y;
+    const expectedLineHeight = refFontSize * 1.2;
+    const yGapOk = yGap > 0 && yGap <= expectedLineHeight * 1.5;
 
-    const blockLines = lines.slice(blockStart, blockEnd);
-    // Require at least 3 rows to avoid false positives from aligned text pairs
-    if (blockLines.length < 3) continue;
-
-    const blockX: number[] = blockLines.flatMap((l) => l.items.map((item) => item.x));
-    const blockColumns = clusterXPositions(blockX, xTolerance);
-    if (blockColumns.length < 2) continue;
-
-    const cellGrid: CellGrid[] = blockLines.map((line) => {
-      const cells: ConsolidatedRun[][] = Array.from({ length: blockColumns.length }, () => []);
-      const sortedItems = [...line.items].sort((a, b) => a.x - b.x);
-      const columnGapThreshold = line.avgFontSize * 3;
-      let groupItems: RawTextItem[] = [sortedItems[0]];
-
-      const flushGroup = () => {
-        if (groupItems.length === 0) return;
-        const cellLine = buildLine(groupItems);
-        const col = assignToColumn(groupItems[0].x, blockColumns, xTolerance);
-        if (col >= 0) cells[col].push(...consolidateLineRuns(cellLine));
-        groupItems = [];
-      };
-
-      for (let j = 1; j < sortedItems.length; j++) {
-        const gap = sortedItems[j].x - (sortedItems[j - 1].x + sortedItems[j - 1].width);
-        if (gap > columnGapThreshold) flushGroup();
-        groupItems.push(sortedItems[j]);
-      }
-      flushGroup();
-
-      return { cells, y: line.y };
-    });
-
-    const lineIndices = new Set<number>(
-      Array.from({ length: blockEnd - blockStart }, (_, k) => blockStart + k)
-    );
-
-    blocks.push({
-      rows: cellGrid,
-      yMin: blockLines[blockLines.length - 1].y,
-      yMax: blockLines[0].y,
-      lineIndices,
-    });
+    if (fontSizeMatch && xAligned && yGapOk) {
+      block.lines.push(line);
+      block.minX = Math.min(block.minX, line.minX);
+      block.maxX = Math.max(block.maxX, line.maxX);
+    } else {
+      blocks.push({ lines: [line], refX: line.minX, minX: line.minX, maxX: line.maxX });
+    }
   }
 
   return blocks;
@@ -867,93 +818,75 @@ function consolidateOcrParagraphs(paragraphs: OcrParagraph[]): OcrParagraph[] {
 //         ≈ (pageHeight - y - fontSize * 0.85) * PT_TO_IN
 // ---------------------------------------------------------------------------
 
-function lineToPptBounds(
-  line: TextLine,
+// Render a ParagraphBlock as a single text box.
+// Multi-line blocks use breakLine:true between lines so all lines share one box.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function addParagraphBlockToSlide(
+  slide: any,
+  block: ParagraphBlock,
   pageWidth: number,
   pageHeight: number
-): { x: number; y: number; w: number; h: number } {
-  const fontSize = line.avgFontSize;
-  const yTopPt = pageHeight - line.y - fontSize * 0.85;
-  const x = Math.max(0, line.minX * PT_TO_IN);
+): void {
+  const firstLine = block.lines[0];
+  const lastLine = block.lines[block.lines.length - 1];
+  const firstFontSize = firstLine.avgFontSize;
+  const lastFontSize = lastLine.avgFontSize;
+
+  // Convert PDF coordinates (bottom-left origin) → PPT inches (top-left origin)
+  const yTopPt = pageHeight - firstLine.y - firstFontSize * 0.85;
+  const yBotPt = pageHeight - lastLine.y + lastFontSize * 0.15;
+
+  const x = Math.max(0, block.minX * PT_TO_IN);
   const y = Math.max(0, yTopPt * PT_TO_IN);
-  const wPt = Math.max(line.maxX - line.minX, fontSize * 2);
+  const wPt = Math.max(block.maxX - block.minX, firstFontSize * 2);
   const w = Math.min(wPt * PT_TO_IN + 0.15, pageWidth * PT_TO_IN - x);
-  const h = Math.max(fontSize * 1.4 * PT_TO_IN, 0.08);
-  return { x, y, w, h };
-}
+  const hRaw = (yBotPt - yTopPt) * PT_TO_IN;
+  const h = Math.max(hRaw, firstFontSize * 1.4 * PT_TO_IN, 0.08);
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function addLineToSlide(slide: any, line: TextLine, pageWidth: number, pageHeight: number): void {
-  const runs = consolidateLineRuns(line);
-  if (runs.every((r) => !r.text.trim())) return;
+  // Build text run array — paragraph breaks between lines via breakLine:true
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const textRuns: Array<{ text: string; options: Record<string, any> }> = [];
 
-  const { x, y, w, h } = lineToPptBounds(line, pageWidth, pageHeight);
+  for (let lineIdx = 0; lineIdx < block.lines.length; lineIdx++) {
+    const line = block.lines[lineIdx];
+    const runs = consolidateLineRuns(line);
+    if (runs.every((r) => !r.text.trim())) continue;
 
-  const textRuns = runs
-    .filter((r) => r.text.length > 0)
-    .map((run) => ({
-      text: run.text,
-      options: {
-        bold: run.isBold,
-        italic: run.isItalic,
-        fontSize: Math.max(6, Math.round(run.fontSize)),
-        fontFace: run.fontFamily || DEFAULT_FONT,
-        color: run.color || DEFAULT_COLOR,
-      },
-    }));
+    const isLastLine = lineIdx === block.lines.length - 1;
+
+    for (let runIdx = 0; runIdx < runs.length; runIdx++) {
+      const run = runs[runIdx];
+      if (!run.text) continue;
+      const isLastRun = runIdx === runs.length - 1;
+
+      textRuns.push({
+        text: run.text,
+        options: {
+          bold: run.isBold,
+          italic: run.isItalic,
+          fontSize: Math.max(6, Math.round(run.fontSize)),
+          fontFace: run.fontFamily || DEFAULT_FONT,
+          color: run.color || DEFAULT_COLOR,
+          // Add a paragraph break after the last run of each line (except the last line)
+          breakLine: isLastRun && !isLastLine,
+        },
+      });
+    }
+  }
 
   if (textRuns.length === 0) return;
 
   slide.addText(textRuns, {
     x, y, w, h,
     fit: 'none',
-    wrap: false,
+    wrap: true,
     margin: 0,
-    // No fill/border — transparent text box overlaid on background image
   });
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function addTableToSlide(slide: any, table: TableBlock, pageWidth: number, pageHeight: number): void {
-  if (table.rows.length === 0) return;
-
-  const numCols = Math.max(...table.rows.map((r) => r.cells.length));
-  if (numCols === 0) return;
-
-  const tableYTopPt = pageHeight - table.yMax;
-  const tableX = 0.1;
-  const tableY = Math.max(0, tableYTopPt * PT_TO_IN);
-  const tableW = pageWidth * PT_TO_IN - tableX * 2;
-
-  const pptRows = table.rows.map((gridRow) => {
-    return Array.from({ length: numCols }, (_, colIdx) => {
-      const cellRuns = gridRow.cells[colIdx] || [];
-      const cellText = cellRuns.map((r) => r.text).join('').trim() || ' ';
-      return {
-        text: cellText,
-        options: {
-          fontSize: 11,
-          fontFace: DEFAULT_FONT,
-          color: DEFAULT_COLOR,
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          margin: [2, 4, 2, 4] as any,
-        },
-      };
-    });
-  });
-
-  slide.addTable(pptRows, {
-    x: tableX,
-    y: tableY,
-    w: tableW,
-    border: { type: 'solid' as const, pt: 0.5, color: 'AAAAAA' },
-    fontSize: 11,
-    fontFace: DEFAULT_FONT,
-    color: DEFAULT_COLOR,
-  });
-}
-
-// Add all text boxes (and tables) for a text-based page
+// Add all text boxes for a text-based page.
+// Lines are consolidated into paragraph blocks before rendering to reduce
+// the number of text boxes and improve readability of the output.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function addTextPageToSlide(
   slide: any,
@@ -963,19 +896,9 @@ function addTextPageToSlide(
 ): void {
   if (lines.length === 0) return;
 
-  const tables = detectTables(lines);
-  const tableLineIndices = new Set<number>();
-  for (const table of tables) {
-    for (const idx of table.lineIndices) tableLineIndices.add(idx);
-  }
-
-  for (let i = 0; i < lines.length; i++) {
-    if (tableLineIndices.has(i)) continue;
-    addLineToSlide(slide, lines[i], pageWidth, pageHeight);
-  }
-
-  for (const table of tables) {
-    addTableToSlide(slide, table, pageWidth, pageHeight);
+  const blocks = groupLinesIntoParagraphs(lines);
+  for (const block of blocks) {
+    addParagraphBlockToSlide(slide, block, pageWidth, pageHeight);
   }
 }
 
