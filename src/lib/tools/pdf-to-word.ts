@@ -723,8 +723,88 @@ async function runOcrOnPage(imageBlob: Blob): Promise<OcrPageResult> {
   return {
     confidence: data.confidence || 0,
     wordCount,
-    paragraphs,
+    paragraphs: consolidateOcrParagraphs(paragraphs),
   };
+}
+
+// ---------------------------------------------------------------------------
+// Post-process: consolidate OCR paragraph fragments into coherent blocks
+//
+// PSM 3 sometimes over-segments:
+//   1. Standalone question numbers ("12.") detected as a separate text column
+//      from the question body — merge with the following paragraph.
+//   2. Sentence continuations starting with a lowercase word (not an answer
+//      option like "a)") split onto a new block — merge with the previous.
+//   3. Normalize font sizes within a page: all body paragraphs should use the
+//      most common (mode) font size detected, preventing the 7pt/9pt/12pt
+//      scatter that PSM 3 introduces for differently-sized text regions.
+// ---------------------------------------------------------------------------
+function consolidateOcrParagraphs(paragraphs: OcrParagraph[]): OcrParagraph[] {
+  if (paragraphs.length === 0) return paragraphs;
+
+  // Pass 1: merge standalone numbers ("12." or "12") forward into next paragraph
+  const pass1: OcrParagraph[] = [];
+  for (let i = 0; i < paragraphs.length; i++) {
+    const para = paragraphs[i];
+    const t = para.text.trim();
+    if (/^\d{1,2}\.?\s*$/.test(t) && i + 1 < paragraphs.length) {
+      const next = paragraphs[++i];
+      pass1.push({
+        ...next,
+        text: t + ' ' + next.text.trim(),
+        y0Px: para.y0Px,
+        estimatedFontSizePt: Math.max(para.estimatedFontSizePt, next.estimatedFontSizePt),
+      });
+    } else {
+      pass1.push(para);
+    }
+  }
+
+  // Pass 2: merge continuation fragments (lowercase start, not an answer option)
+  // into the preceding paragraph
+  const pass2: OcrParagraph[] = [];
+  for (const para of pass1) {
+    const t = para.text.trim();
+    // Answer options: start with single letter + closing paren e.g. "a)" "e)"
+    const isAnswerOption = /^[a-e]\)/.test(t);
+    // Continuation: starts with two consecutive lowercase letters (not option)
+    const isContinuation = !isAnswerOption && /^[a-z][a-z]/.test(t);
+
+    if (isContinuation && pass2.length > 0) {
+      const prev = pass2[pass2.length - 1];
+      pass2[pass2.length - 1] = {
+        ...prev,
+        text: prev.text.trimEnd() + ' ' + t,
+        y1Px: para.y1Px,
+      };
+    } else {
+      pass2.push(para);
+    }
+  }
+
+  // Pass 3: normalize font size to the mode of content paragraphs
+  // (paragraphs with >= 20 chars considered body text)
+  const bodyParas = pass2.filter((p) => p.text.length >= 20);
+  if (bodyParas.length > 0) {
+    // Compute mode font size
+    const freq = new Map<number, number>();
+    for (const p of bodyParas) {
+      freq.set(p.estimatedFontSizePt, (freq.get(p.estimatedFontSizePt) ?? 0) + 1);
+    }
+    const modeFontSize = [...freq.entries()].sort((a, b) => b[1] - a[1])[0][0];
+
+    return pass2.map((p) => ({
+      ...p,
+      // Apply mode only for paragraphs within ±3pt of mode (genuine body text),
+      // keep outliers as-is (real headings, footnotes, etc.)
+      estimatedFontSizePt:
+        Math.abs(p.estimatedFontSizePt - modeFontSize) <= 3
+          ? modeFontSize
+          : p.estimatedFontSizePt,
+    }));
+  }
+
+  return pass2;
 }
 
 async function canvasToArrayBuffer(canvas: HTMLCanvasElement): Promise<ArrayBuffer> {
