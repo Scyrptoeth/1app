@@ -5,7 +5,7 @@
 ## 25 Maret 2026 (Sesi Lanjutan — PDF-to-PPT + Consistency Audit)
 
 ### PDF-to-PPT Converter (fitur ke-7) + 3-mode output + UI redesign
-- **Commit**: (belum di-push — perlu git push)
+- **Commit**: (local — push ke GitHub saat siap deploy)
 - **File baru**: `src/lib/tools/pdf-to-ppt.ts`, `src/app/tools/pdf-to-ppt/page.tsx`
 - **Perubahan**:
   - Fix GAP C (color extraction): tambah `inTextBlock` flag di `analyzePageOperators()` — hanya tulis ke `colorMap` saat `inTextBlock=true` (BT/ET boundary), cegah background shape fills pollute text color map
