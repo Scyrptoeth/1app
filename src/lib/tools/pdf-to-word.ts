@@ -642,8 +642,11 @@ async function runOcrOnPage(imageBlob: Blob): Promise<OcrPageResult> {
   }
 
   const dpi = String(Math.round(OCR_SCALE * 72));
+  // PSM 3: fully automatic page segmentation (no OSD) — detects multiple
+  // independent text blocks per page, giving better paragraph granularity
+  // than PSM 6 ("single uniform block") which merges whole page into one block.
   await worker.setParameters({
-    tessedit_pageseg_mode: '6' as unknown,
+    tessedit_pageseg_mode: '3' as unknown,
     preserve_interword_spaces: '1' as unknown,
     user_defined_dpi: dpi as unknown,
   });
@@ -689,7 +692,13 @@ async function runOcrOnPage(imageBlob: Blob): Promise<OcrPageResult> {
           }
         }
 
-        const text = paraLines.join(' ');
+        const rawText = paraLines.join(' ');
+        // Strip inline URLs that Tesseract may have merged into the same line
+        // as real content (e.g. footer URL appended to the last answer-key line)
+        const text = rawText
+          .replace(/\s*https?:\/\/\S+/g, '')
+          .replace(/\s{2,}/g, ' ')
+          .trim();
         if (!text) continue;
 
         // Font size: average line height → pt → divide by 1.2 (standard line-height ratio)
