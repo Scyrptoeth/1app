@@ -382,20 +382,35 @@ function detectTables(lines: TextLine[]): TableBlock[] {
     const blockColumns = clusterXPositions(blockX, xTolerance);
     if (blockColumns.length < 2) continue;
 
-    // Build cell grid for each row
+    // Build cell grid for each row.
+    // Strategy: split items into cell groups at column-gap boundaries FIRST,
+    // then consolidate runs within each group. This avoids the bug where
+    // consolidateLineRuns() merges all items into one run before column
+    // assignment, causing everything to land in column 0.
     const cellGrid: CellGrid[] = blockLines.map((line) => {
       const cells: ConsolidatedRun[][] = Array.from({ length: blockColumns.length }, () => []);
-      const runs = consolidateLineRuns(line);
+      const sorted = [...line.items].sort((a, b) => a.x - b.x);
 
-      for (const run of runs) {
-        // Map run to nearest column using the first item's x
-        const firstItem = line.items.find(
-          (item) => item.str === run.text.trim() || run.text.includes(item.str)
-        );
-        const x = firstItem ? firstItem.x : line.minX;
-        const col = assignToColumn(x, blockColumns, xTolerance);
-        if (col >= 0) cells[col].push(run);
+      // Group items into cell regions using the same gap threshold as isTableLikeLine
+      const columnGapThreshold = line.avgFontSize * 3;
+      let groupItems: RawTextItem[] = [sorted[0]];
+
+      const flushGroup = () => {
+        if (groupItems.length === 0) return;
+        const cellLine = buildLine(groupItems);
+        const col = assignToColumn(groupItems[0].x, blockColumns, xTolerance);
+        if (col >= 0) cells[col].push(...consolidateLineRuns(cellLine));
+        groupItems = [];
+      };
+
+      for (let j = 1; j < sorted.length; j++) {
+        const gap = sorted[j].x - (sorted[j - 1].x + sorted[j - 1].width);
+        if (gap > columnGapThreshold) {
+          flushGroup();
+        }
+        groupItems.push(sorted[j]);
       }
+      flushGroup(); // flush the last group
 
       return { cells, y: line.y };
     });
