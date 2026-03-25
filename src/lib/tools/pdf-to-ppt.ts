@@ -35,10 +35,14 @@ export interface ProcessingUpdate {
 }
 
 export interface PdfToPptResult {
-  blob: Blob;
+  // Output 1: full-page JPEG background + white text boxes overlay
+  hybridBlob: Blob;
+  // Output 2: full-page JPEG image only, no text boxes
+  imageOnlyBlob: Blob;
+  // Output 3: editable text boxes only (black/original colors), no background image
+  textOnlyBlob: Blob;
   pageCount: number;
   originalSize: number;
-  processedSize: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -233,6 +237,21 @@ async function analyzePageOperators(page: unknown): Promise<PageAnalysis> {
   }
 
   return { hasImages, colorMap };
+}
+
+// Resolve the effective color for a text run based on output mode:
+//   forceColor (truthy)  → always use this color (Hybrid mode: 'FFFFFF')
+//   run color = FFFFFF   → would be invisible on white background, use fallbackColor
+//   run color set        → use extracted color as-is
+//   run color unset/''   → use fallbackColor
+function effectiveTextColor(
+  runColor: string,
+  forceColor: string | undefined,
+  fallbackColor: string
+): string {
+  if (forceColor) return forceColor;
+  if (!runColor || /^f{6}$/i.test(runColor)) return fallbackColor;
+  return runColor;
 }
 
 // Look up color for a text item's y-position with ±5pt tolerance
@@ -818,6 +837,15 @@ function consolidateOcrParagraphs(paragraphs: OcrParagraph[]): OcrParagraph[] {
 //         ≈ (pageHeight - y - fontSize * 0.85) * PT_TO_IN
 // ---------------------------------------------------------------------------
 
+// Options controlling text color per output mode.
+// force: if set, all runs use this exact color (e.g. 'FFFFFF' for Hybrid overlay).
+// fallback: color used when run has no extracted color, or when extracted color
+//           is white (which would be invisible on a white background in Text Only mode).
+interface ColorOpts {
+  force?: string;
+  fallback: string;
+}
+
 // Render a ParagraphBlock as a single text box.
 // Multi-line blocks use breakLine:true between lines so all lines share one box.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -825,7 +853,8 @@ function addParagraphBlockToSlide(
   slide: any,
   block: ParagraphBlock,
   pageWidth: number,
-  pageHeight: number
+  pageHeight: number,
+  colorOpts: ColorOpts
 ): void {
   const firstLine = block.lines[0];
   const lastLine = block.lines[block.lines.length - 1];
@@ -866,7 +895,7 @@ function addParagraphBlockToSlide(
           italic: run.isItalic,
           fontSize: Math.max(6, Math.round(run.fontSize)),
           fontFace: run.fontFamily || DEFAULT_FONT,
-          color: run.color || DEFAULT_COLOR,
+          color: effectiveTextColor(run.color, colorOpts.force, colorOpts.fallback),
           // Add a paragraph break after the last run of each line (except the last line)
           breakLine: isLastRun && !isLastLine,
         },
@@ -892,13 +921,14 @@ function addTextPageToSlide(
   slide: any,
   lines: TextLine[],
   pageWidth: number,
-  pageHeight: number
+  pageHeight: number,
+  colorOpts: ColorOpts
 ): void {
   if (lines.length === 0) return;
 
   const blocks = groupLinesIntoParagraphs(lines);
   for (const block of blocks) {
-    addParagraphBlockToSlide(slide, block, pageWidth, pageHeight);
+    addParagraphBlockToSlide(slide, block, pageWidth, pageHeight, colorOpts);
   }
 }
 
@@ -911,7 +941,8 @@ async function addScannedPageToSlide(
   progressBase: number,
   pageNum: number,
   pageWidth: number,
-  pageHeight: number
+  pageHeight: number,
+  textColor: string
 ): Promise<void> {
   onProgress({
     progress: progressBase,
@@ -951,7 +982,7 @@ async function addScannedPageToSlide(
         h: h_in,
         fontSize: Math.max(6, fontSize),
         fontFace: DEFAULT_FONT,
-        color: DEFAULT_COLOR,
+        color: textColor,
         fit: 'none',
         wrap: true,
         margin: 0,
@@ -993,7 +1024,7 @@ export async function convertPdfToPpt(
 
   onProgress({
     progress: 10,
-    status: `Found ${totalPages} page(s). Setting up presentation...`,
+    status: `Found ${totalPages} page(s). Setting up presentations...`,
   });
 
   // Read first page dimensions to define slide layout
@@ -1011,13 +1042,29 @@ export async function convertPdfToPpt(
   const PptxGenJSMod = await import('pptxgenjs');
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const PptxGenJS = (PptxGenJSMod as any).default ?? PptxGenJSMod;
+
+  // Three separate PptxGenJS instances for the three output modes
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const pptx: any = new PptxGenJS();
+  const pptxHybrid: any = new PptxGenJS();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const pptxImageOnly: any = new PptxGenJS();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const pptxTextOnly: any = new PptxGenJS();
 
-  pptx.defineLayout({ name: 'PDF_LAYOUT', width: slideWidthIn, height: slideHeightIn });
-  pptx.layout = 'PDF_LAYOUT';
+  const LAYOUT_NAME = 'PDF_LAYOUT';
+  for (const pptx of [pptxHybrid, pptxImageOnly, pptxTextOnly]) {
+    pptx.defineLayout({ name: LAYOUT_NAME, width: slideWidthIn, height: slideHeightIn });
+    pptx.layout = LAYOUT_NAME;
+  }
 
+  const PPTX_MIME = 'application/vnd.openxmlformats-officedocument.presentationml.presentation';
   const progressPerPage = 75 / totalPages;
+
+  // Color options per output mode:
+  //   Hybrid    → white overlay on JPEG background
+  //   Text Only → original extracted color, sanitize FFFFFF → black
+  const hybridColorOpts: ColorOpts  = { force: 'FFFFFF' };
+  const textOnlyColorOpts: ColorOpts = { fallback: '000000' };
 
   for (let pageNum = 1; pageNum <= totalPages; pageNum++) {
     const progressBase = 10 + Math.round((pageNum - 1) * progressPerPage);
@@ -1035,8 +1082,10 @@ export async function convertPdfToPpt(
     ).getViewport({ scale: 1.0 });
     const pageWidth = viewport.width;
     const pageHeight = viewport.height;
+    const slideW = pageWidth * PT_TO_IN;
+    const slideH = pageHeight * PT_TO_IN;
 
-    // Parallelize operator list analysis + text extraction for speed
+    // ── Extract page data once ──────────────────────────────────────────────
     const [pageAnalysis, textContent] = await Promise.all([
       analyzePageOperators(page),
       (page as unknown as {
@@ -1044,75 +1093,100 @@ export async function convertPdfToPpt(
       }).getTextContent(),
     ]);
 
-    const slide = pptx.addSlide();
-
     const fontFamilyMap = buildFontFamilyMap(textContent.styles);
-
-    // Parse text items with color + font resolution
     const rawItems = (textContent.items as unknown[])
       .map((item) => parseRawItem(item, pageAnalysis.colorMap, fontFamilyMap))
       .filter((i): i is RawTextItem => i !== null);
 
-    const meaningfulItemCount = rawItems.length;
+    // ── Render full page once (reused by Hybrid and Image Only) ────────────
+    // We always render to satisfy Image Only output. The render is also shared
+    // as the background for Hybrid on image-containing pages.
+    onProgress({
+      progress: progressBase,
+      status: `Page ${pageNum}: Rendering page image...`,
+    });
+    const pageImageDataUrl = await renderPageToJpegDataUrl(page, 1.5);
 
-    // ── Step 1: Background image ────────────────────────────────────────────
-    // Render full page as JPEG background when embedded images are present.
-    // This preserves visual fidelity of shapes, gradients, decorative elements
-    // that cannot be reconstructed from text extraction alone.
-    if (pageAnalysis.hasImages) {
-      onProgress({
-        progress: progressBase,
-        status: `Page ${pageNum}: Rendering background image...`,
-      });
-      const bgDataUrl = await renderPageToJpegDataUrl(page, 1.5);
-      slide.addImage({
-        data: bgDataUrl,
-        x: 0, y: 0,
-        w: pageWidth * PT_TO_IN,
-        h: pageHeight * PT_TO_IN,
-      });
-    }
-
-    // ── Step 2: Text boxes ──────────────────────────────────────────────────
-    // Extract text whenever ANY text items exist (threshold = 2 to avoid
-    // false triggers on stray punctuation, but low enough to catch sparse
-    // presentation slides that have 3-8 text elements per page).
-    if (meaningfulItemCount >= 2) {
+    // ── Build filtered text lines (reused by Hybrid and Text Only) ─────────
+    let filteredLines: TextLine[] = [];
+    if (rawItems.length >= 2) {
       const lines = groupIntoLines(rawItems);
-      const filteredLines = lines.filter((l) => {
+      filteredLines = lines.filter((l) => {
         const text = l.items.map((i) => i.str).join('');
         return !isBrowserHeaderFooter(text) && !isPageNumberLine(l, pageWidth);
       });
-      addTextPageToSlide(slide, filteredLines, pageWidth, pageHeight);
-    } else if (!pageAnalysis.hasImages) {
-      // Truly unreadable page (no text, no images) → OCR fallback
-      await addScannedPageToSlide(
-        slide,
-        page,
-        onProgress,
-        progressBase,
-        pageNum,
-        pageWidth,
-        pageHeight
-      );
     }
-    // Note: if hasImages=true but meaningfulItemCount < 2, we still have the
-    // background image — the slide looks correct even without text boxes.
+
+    // ── Output 1: Hybrid (background image + white text overlay) ───────────
+    {
+      const slide = pptxHybrid.addSlide();
+
+      // Always add full-page image as background
+      slide.addImage({ data: pageImageDataUrl, x: 0, y: 0, w: slideW, h: slideH });
+
+      // Overlay text boxes in white (readable against the background image)
+      if (filteredLines.length > 0) {
+        addTextPageToSlide(slide, filteredLines, pageWidth, pageHeight, hybridColorOpts);
+      }
+      // Note: if no text was extracted, the background image covers the slide fully.
+    }
+
+    // ── Output 2: Image Only (full-page JPEG, no text) ──────────────────────
+    {
+      const slide = pptxImageOnly.addSlide();
+      slide.addImage({ data: pageImageDataUrl, x: 0, y: 0, w: slideW, h: slideH });
+    }
+
+    // ── Output 3: Text Only (editable text boxes, no background image) ──────
+    // Goal: maximum editability. No background image is added — the slide
+    // background is plain white. Only extracted text boxes are placed.
+    // For truly scanned pages (no text), falls back to OCR or image embed.
+    {
+      const slide = pptxTextOnly.addSlide();
+
+      if (filteredLines.length > 0) {
+        // Text-based page: add only text boxes, no background image
+        addTextPageToSlide(slide, filteredLines, pageWidth, pageHeight, textOnlyColorOpts);
+      } else if (rawItems.length === 0) {
+        // No text items at all → scanned page or pure image slide
+        if (!pageAnalysis.hasImages) {
+          // Truly scanned (no raster images either) → OCR fallback
+          await addScannedPageToSlide(
+            slide,
+            page,
+            onProgress,
+            progressBase,
+            pageNum,
+            pageWidth,
+            pageHeight,
+            '000000'
+          );
+        } else {
+          // Pure image slide (photo, diagram) with no extractable text →
+          // embed the page image so the slide is not blank
+          slide.addImage({ data: pageImageDataUrl, x: 0, y: 0, w: slideW, h: slideH });
+        }
+      }
+      // If rawItems < 2 but > 0 (sparse text like a single label), the slide
+      // stays blank — the visual content is accessible via Image Only output.
+    }
   }
 
-  onProgress({ progress: 88, status: 'Generating PowerPoint file...' });
+  onProgress({ progress: 87, status: 'Generating PowerPoint files...' });
 
-  const output = await pptx.write({ outputType: 'arraybuffer' }) as ArrayBuffer;
-  const blob = new Blob([output], {
-    type: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-  });
+  const [hybridBuffer, imageOnlyBuffer, textOnlyBuffer] = await Promise.all([
+    pptxHybrid.write({ outputType: 'arraybuffer' }) as Promise<ArrayBuffer>,
+    pptxImageOnly.write({ outputType: 'arraybuffer' }) as Promise<ArrayBuffer>,
+    pptxTextOnly.write({ outputType: 'arraybuffer' }) as Promise<ArrayBuffer>,
+  ]);
 
   onProgress({ progress: 100, status: 'Done!' });
 
   return {
-    blob,
+    hybridBlob: new Blob([hybridBuffer], { type: PPTX_MIME }),
+    imageOnlyBlob: new Blob([imageOnlyBuffer], { type: PPTX_MIME }),
+    textOnlyBlob: new Blob([textOnlyBuffer], { type: PPTX_MIME }),
     pageCount: totalPages,
     originalSize: file.size,
-    processedSize: blob.size,
   };
 }
