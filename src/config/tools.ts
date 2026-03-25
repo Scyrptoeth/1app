@@ -109,6 +109,19 @@ export const tools: ToolConfig[] = [
     outputFormats: [".png"],
     isAvailable: true,
   },
+  {
+    id: "pdf-to-word",
+    name: "PDF to Word",
+    description:
+      "Convert PDF documents into editable Word (.docx) files, preserving text formatting, fonts, and page layout.",
+    category: "transform",
+    icon: "FileType",
+    route: "/tools/pdf-to-word",
+    accentColor: "violet",
+    inputFormats: [".pdf"],
+    outputFormats: [".docx"],
+    isAvailable: true,
+  },
 ];
 
 export interface ToolSection {
@@ -123,7 +136,7 @@ export const SECTIONS: ToolSection[] = [
   },
   {
     label: "Convert from PDF",
-    toolIds: ["pdf-to-image", "pdf-to-excel"],
+    toolIds: ["pdf-to-image", "pdf-to-excel", "pdf-to-word"],
   },
   {
     label: "Convert to Excel",
