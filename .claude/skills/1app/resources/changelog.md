@@ -2,6 +2,40 @@
 
 > History perubahan lengkap. Entry terbaru di atas.
 
+## 25 Maret 2026 (Sesi Lanjutan — PDF-to-PPT + Consistency Audit)
+
+### PDF-to-PPT Converter (fitur ke-7) + 3-mode output + UI redesign
+- **Commit**: (belum di-push — perlu git push)
+- **File baru**: `src/lib/tools/pdf-to-ppt.ts`, `src/app/tools/pdf-to-ppt/page.tsx`
+- **Perubahan**:
+  - Fix GAP C (color extraction): tambah `inTextBlock` flag di `analyzePageOperators()` — hanya tulis ke `colorMap` saat `inTextBlock=true` (BT/ET boundary), cegah background shape fills pollute text color map
+  - Fix GAP D: hapus table detection (`TableBlock`, `detectTables`, `addTableToSlide`) yang menghasilkan invisible h=0 tables
+  - Fix GAP A: tambah `groupLinesIntoParagraphs()` — merge adjacent lines (fontSize ±2pt, x ±0.3in, y-gap < 1.5× line height) menjadi satu `ParagraphBlock`, render sebagai 1 text box dengan `breakLine:true` antar-baris
+  - Refactor `convertPdfToPpt()` → 3 pptx instances, render 1× per page (shared), 3 output branches:
+    - **Hybrid**: background JPEG + white text overlay (`force='FFFFFF'`)
+    - **Image Only**: background JPEG saja, tanpa text
+    - **Text Only**: text boxes only; image fallback hanya untuk pure-image slides (`rawItems.length===0`)
+  - `PdfToPptResult`: `{ hybridBlob, imageOnlyBlob, textOnlyBlob, pageCount, originalSize, qualityScore }`
+  - `qualityScore = Math.round(slidesWithText / totalPages * 100)` — % slide dengan extractable text
+  - `ColorOpts { force?, fallback }` + `effectiveTextColor()` helper — sanitize FFFFFF pada white bg
+  - UI `pdf-to-ppt/page.tsx`: 3 download cards (bg-slate-50), emerald success icon, Data Quality badge, Info Notice, How it works (4-step grid)
+- **Hasil**: Build ✅
+
+### Consistency Audit — qualityScore + missing sections di semua tool pages
+- **Perubahan lib files** (tambah `qualityScore: number` ke return type):
+  - `image-watermark-remover.ts` → `qualityScore: 85` (heuristic)
+  - `pdf-watermark-remover.ts` → `qualityScore: 90` (heuristic)
+  - `pdf-to-word.ts` → `Math.round(pagesWithText / totalPages * 100)` (real tracking via `pagesWithText` counter di loop)
+- **Perubahan page files** (tambah missing sections):
+  - `image-to-excel/page.tsx` → tambah **Info Notice** setelah confidence badge
+  - `image-watermark-remove/page.tsx` → wrap stage done dalam `<>`, tambah **Data Quality** + **Info Notice** setelah `<DownloadView />`
+  - `pdf-to-excel/page.tsx` → tambah **Info Notice** setelah quality badge
+  - `pdf-to-word/page.tsx` → tambah **Data Quality** + **Info Notice** sebelum amber formatting note
+  - `pdf-watermark-remove/page.tsx` → tambah **Data Quality** + **Info Notice** setelah extra info block
+- **Hasil**: Build ✅, semua 7 tool pages sekarang punya Data Quality badge + Info Notice + How it works
+
+---
+
 ## 25 Maret 2026 (Sesi Lanjutan — Quality Improvements)
 
 ### PDF-to-Word — Layout Reconstruction + System Quality Fixes

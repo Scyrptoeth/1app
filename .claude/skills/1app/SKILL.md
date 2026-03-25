@@ -78,8 +78,28 @@ Skill ini memberikan Claude seluruh konteks tentang proyek 1APP sehingga setiap 
 - **Status**: Production ready, deployed
 - Baca `resources/algorithms.md` untuk detail teknis
 
+### 7. PDF-to-PowerPoint Converter
+- **URL**: `/tools/pdf-to-ppt`
+- **Files**: `src/lib/tools/pdf-to-ppt.ts`, `src/app/tools/pdf-to-ppt/page.tsx`
+- **Library**: pdfjs-dist (text + operator extraction), PptxGenJS v4 (PPTX generation)
+- **Teknik**: 3-mode output dari 1 PDF render per halaman:
+  1. **Hybrid** — full-page JPEG background + white text overlay (`force='FFFFFF'`)
+  2. **Image Only** — full-page JPEG saja, identik dengan PDF visual
+  3. **Text Only** — editable text boxes only (original colors); image hanya untuk pure-image slides
+- **Key detail**:
+  - `analyzePageOperators()` dengan `inTextBlock` flag — hanya tulis ke `colorMap` saat di dalam BT/ET block → mencegah background fills pollute text color
+  - `groupLinesIntoParagraphs()` — merge adjacent lines menjadi ParagraphBlock → 1 text box per paragraf
+  - `ColorOpts { force?, fallback }` + `effectiveTextColor()` — sanitize FFFFFF pada white background
+  - `qualityScore = slidesWithText / totalPages * 100` — % slide dengan extractable text
+- **Status**: Production ready, deployed
+
 ### Halaman UI
 Setiap tool memiliki halaman UI di `src/app/tools/<tool-name>/page.tsx`. Pattern: user upload file, client-side processing, preview, download/export.
+
+**Standard result page sections (semua tool harus punya ketiga ini):**
+1. **Data Quality badge** — `bg-slate-50 border border-slate-100 rounded-xl`, badge warna emerald/amber/red berdasarkan score
+2. **Info Notice** — `bg-blue-50 border border-blue-100 rounded-xl`, teks kontekstual tentang kualitas output
+3. **How it works** — grid langkah-langkah, `bg-accent-50` circle, `text-accent-600` number
 
 ## File Structure
 
@@ -97,8 +117,10 @@ src/
 │   │   │   └── page.tsx          # UI halaman PDF-to-Excel converter
 │   │   ├── pdf-to-image/
 │   │   │   └── page.tsx          # UI halaman PDF-to-Image converter
-│   │   └── pdf-to-word/
-│   │       └── page.tsx          # UI halaman PDF-to-Word converter
+│   │   ├── pdf-to-word/
+│   │   │   └── page.tsx          # UI halaman PDF-to-Word converter
+│   │   └── pdf-to-ppt/
+│   │       └── page.tsx          # UI halaman PDF-to-PowerPoint converter
 │   └── page.tsx                  # Landing page
 ├── lib/
 │   └── tools/
@@ -107,7 +129,8 @@ src/
 │       ├── image-to-excel.ts          # OCR + layout analysis + Excel generation
 │       ├── pdf-to-excel.ts           # Hybrid PDF-to-Excel (pdfjs + OCR fallback)
 │       ├── pdf-to-image.ts           # PDF render to PNG + ZIP download
-│       └── pdf-to-word.ts            # Hybrid PDF-to-Word (layout reconstruction)
+│       ├── pdf-to-word.ts            # Hybrid PDF-to-Word (layout reconstruction)
+│       └── pdf-to-ppt.ts             # 3-mode PDF-to-PPTX (Hybrid/Image/Text)
 └── components/                   # Shared components
 ```
 
@@ -121,7 +144,7 @@ Saat menambah tool baru, ikuti pattern yang sama: buat file algoritma di `src/li
 - **Type safety**: TypeScript strict — semua fungsi harus memiliki type annotations
 - **Export pattern**: Named exports untuk interface (`ProcessingUpdate`, `ProcessingResult`) dan fungsi utama (`removeImageWatermark`, `removePdfWatermark`)
 - **Progress callback**: Setiap tool menerima `onProgress` callback untuk menampilkan progress di UI
-- **Output format**: Setiap tool mengembalikan `{ blob, previewUrl, originalSize, processedSize }`
+- **Output format**: Setiap tool mengembalikan result object yang selalu include `qualityScore: number` — score 0–100 yang ditampilkan di UI sebagai Data Quality badge
 
 ## Workflow Pengembangan
 
@@ -190,6 +213,10 @@ Pelajaran penting dari pengembangan sebelumnya yang harus diingat:
 - **PDF-to-Word: gap threshold 0.25× terlalu besar, 0.15× lebih tepat** — Threshold 0.25× (2.75pt untuk 11pt font) melebihi word spacing normal (2-4pt), menyebabkan kata-kata disambung ("SURATEDARAN"). Threshold 0.15× (1.65pt) menangkap semua word gaps tanpa false positives dari kerning (<0.5pt).
 - **PDF-to-Excel: OCR decimal comma typo menyebabkan digit loss** — `correctNumericValue` lama strip semua dots tanpa memeriksa last group. Pattern `X.YYY.ZZ` (last group 1-2 digits) perlu dikonversi ke `XYYY,ZZ`, bukan `XYYYZZ`.
 - **Analisa referensi kompetitor sebelum menambah fitur** — Membandingkan output 1APP vs ilovepdf pixel-by-pixel mengungkap 6 gap konkret. Ini lebih produktif daripada menebak apa yang perlu diperbaiki.
+- **PDF-to-PPT: `inTextBlock` flag wajib untuk color extraction** — `getOperatorList()` mengembalikan semua operator termasuk background shape fills (di luar BT/ET block). Tanpa `inTextBlock` flag, warna `FFFFFF` dari background shapes masuk ke `colorMap` dan semua teks menjadi putih (invisible). Hanya write ke `colorMap` saat `inTextBlock=true`.
+- **Text Only PPT: image fallback hanya untuk pure-image slides** — Jika semua slide punya `hasImages=true` (karena dokumen embed raster), Text Only akan selalu jatuh ke image fallback, menghancurkan tujuan "editable". Fix: fallback image hanya jika `rawItems.length === 0` (betul-betul tidak ada text sama sekali).
+- **Playwright strict mode: gunakan `.nth(i)` bukan text-based locator untuk multiple buttons** — `page.locator('div:has(...) button')` bisa resolve ke banyak element dan throw strict mode violation. Lebih aman: `page.locator('button:has-text("Download")').nth(0/1/2)`.
+- **3 PPTX files efisien: render 1× per page, share ke semua mode** — Panggil `renderPageToJpegDataUrl()` sekali, gunakan hasil yang sama untuk Hybrid background, Image Only background, dan skip untuk Text Only. Tidak perlu render 3×.
 
 ## Resources
 
