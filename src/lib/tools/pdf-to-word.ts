@@ -590,9 +590,10 @@ async function preprocessCanvasForOcr(
 // A logical paragraph extracted by Tesseract, with pixel bbox for spacing computation
 interface OcrParagraph {
   text: string;
-  y0Px: number;  // top of paragraph in OCR canvas pixels
-  y1Px: number;  // bottom of paragraph in OCR canvas pixels
+  y0Px: number;            // top of paragraph in OCR canvas pixels
+  y1Px: number;            // bottom of paragraph in OCR canvas pixels
   numLines: number;
+  estimatedFontSizePt: number; // derived from average line bbox height
 }
 
 interface OcrPageResult {
@@ -656,10 +657,10 @@ async function runOcrOnPage(imageBlob: Blob): Promise<OcrPageResult> {
   if (data.blocks) {
     for (const block of data.blocks) {
       for (const para of block.paragraphs) {
-        // Join all lines in this Tesseract paragraph into one logical paragraph
         const paraLines: string[] = [];
         let y0 = Infinity, y1 = -Infinity;
         let lineCount = 0;
+        const lineHeightsPx: number[] = [];
 
         for (const line of para.lines) {
           const lineText = line.words
@@ -668,26 +669,44 @@ async function runOcrOnPage(imageBlob: Blob): Promise<OcrPageResult> {
             .trim();
           if (!lineText) continue;
 
+          // Filter header/footer per individual line, NOT per whole paragraph.
+          // Filtering the joined paragraph text causes entire quiz content to be
+          // dropped when Tesseract groups the header + content into one paragraph.
+          if (isBrowserHeaderFooter(lineText)) continue;
+
           paraLines.push(lineText);
           wordCount += line.words.length;
           lineCount++;
 
-          // Track bbox extent across all lines
           if (line.bbox) {
             y0 = Math.min(y0, line.bbox.y0);
             y1 = Math.max(y1, line.bbox.y1);
+            // Collect individual line heights for accurate font-size estimation.
+            // Using para bbox / numLines is wrong when para covers a large area
+            // (e.g. an entire page grouped as one Tesseract paragraph).
+            const lh = line.bbox.y1 - line.bbox.y0;
+            if (lh > 0) lineHeightsPx.push(lh);
           }
         }
 
         const text = paraLines.join(' ');
-        if (text && !isBrowserHeaderFooter(text)) {
-          paragraphs.push({
-            text,
-            y0Px: isFinite(y0) ? y0 : 0,
-            y1Px: isFinite(y1) ? y1 : 0,
-            numLines: lineCount,
-          });
-        }
+        if (!text) continue;
+
+        // Font size: average line height → pt → divide by 1.2 (standard line-height ratio)
+        const avgLineHeightPx =
+          lineHeightsPx.length > 0
+            ? lineHeightsPx.reduce((a, b) => a + b, 0) / lineHeightsPx.length
+            : 0;
+        const rawFontSizePt =
+          avgLineHeightPx > 0 ? avgLineHeightPx / OCR_SCALE / 1.2 : 11;
+
+        paragraphs.push({
+          text,
+          y0Px: isFinite(y0) ? y0 : 0,
+          y1Px: isFinite(y1) ? y1 : 0,
+          numLines: lineCount,
+          estimatedFontSizePt: Math.max(7, Math.min(22, Math.round(rawFontSizePt))),
+        });
       }
     }
   }
@@ -783,26 +802,24 @@ async function buildScannedPageContent(
 
     const { paragraphs } = ocrResult;
     return paragraphs.map((para, i) => {
-      // Estimate font size from line bbox height
-      // lineHeightPx / OCR_SCALE = lineHeightPt; divide by 1.2 (standard line-height ratio) for fontSizePt
-      const lineHeightPx = para.numLines > 0 ? (para.y1Px - para.y0Px) / para.numLines : 0;
-      const fontSizePt = lineHeightPx > 0 ? Math.round(lineHeightPx / OCR_SCALE / 1.2) : 11;
-      const clampedFontSizePt = Math.max(8, Math.min(36, fontSizePt));
+      // Font size pre-computed from individual line bboxes in runOcrOnPage
+      const fontSizePt = para.estimatedFontSizePt;
 
-      // Compute spacing after: gap between bottom of this para and top of next (in TWIPs)
-      // 1 pt = 20 TWIPs; clamp between 60 and 480 TWIPs
+      // Spacing after: gap between bottom of this paragraph and top of next
+      // Converted from canvas pixels → points → TWIPs (1pt = 20 TWIPs)
+      // Clamp: 40 TWIPs min (2pt), 360 TWIPs max (18pt) for realistic document spacing
       const next = paragraphs[i + 1];
-      let spacingAfterTWIPs = 160; // default ~8pt
+      let spacingAfterTWIPs = 120; // default ~6pt
       if (next && para.y1Px > 0 && next.y0Px > para.y1Px) {
         const gapPt = (next.y0Px - para.y1Px) / OCR_SCALE;
-        spacingAfterTWIPs = Math.round(Math.max(60, Math.min(480, gapPt * 20)));
+        spacingAfterTWIPs = Math.round(Math.max(40, Math.min(360, gapPt * 20)));
       }
 
       return new Paragraph({
         children: [
           new TextRun({
             text: para.text,
-            size: clampedFontSizePt * 2, // half-points
+            size: fontSizePt * 2, // half-points
             font: DEFAULT_FONT,
           }),
         ],
