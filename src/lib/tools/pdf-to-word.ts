@@ -733,8 +733,10 @@ async function runOcrOnPage(imageBlob: Blob): Promise<OcrPageResult> {
 // PSM 3 sometimes over-segments:
 //   1. Standalone question numbers ("12.") detected as a separate text column
 //      from the question body — merge with the following paragraph.
-//   2. Sentence continuations starting with a lowercase word (not an answer
-//      option like "a)") split onto a new block — merge with the previous.
+//   2. Continuation fragments: a fragment that begins mid-sentence (lowercase
+//      start) AND sits spatially close to the previous paragraph is merged in.
+//      "Close" is defined as a y-gap smaller than one average line height —
+//      this is purely structural (no content assumptions).
 //   3. Normalize font sizes within a page: all body paragraphs should use the
 //      most common (mode) font size detected, preventing the 7pt/9pt/12pt
 //      scatter that PSM 3 introduces for differently-sized text regions.
@@ -760,26 +762,40 @@ function consolidateOcrParagraphs(paragraphs: OcrParagraph[]): OcrParagraph[] {
     }
   }
 
-  // Pass 2: merge continuation fragments (lowercase start, not an answer option)
-  // into the preceding paragraph
+  // Pass 2: merge continuation fragments using a spatial y-gap heuristic.
+  // A paragraph is a continuation of the previous one when:
+  //   (a) it starts with a lowercase letter (sentence continues mid-word/mid-line), AND
+  //   (b) the vertical gap between the bottom of the previous paragraph (y1Px)
+  //       and the top of this paragraph (y0Px) is less than one estimated line
+  //       height — indicating the two are visually contiguous, not separate blocks.
+  // This approach is document-agnostic: it relies solely on spatial proximity
+  // in the original rendered layout, not on any content format assumption.
   const pass2: OcrParagraph[] = [];
   for (const para of pass1) {
     const t = para.text.trim();
-    // Answer options: start with single letter + closing paren e.g. "a)" "e)"
-    const isAnswerOption = /^[a-e]\)/.test(t);
-    // Continuation: starts with two consecutive lowercase letters (not option)
-    const isContinuation = !isAnswerOption && /^[a-z][a-z]/.test(t);
+    const startsLowercase = /^[a-z]/.test(t);
 
-    if (isContinuation && pass2.length > 0) {
+    if (startsLowercase && pass2.length > 0) {
       const prev = pass2[pass2.length - 1];
-      pass2[pass2.length - 1] = {
-        ...prev,
-        text: prev.text.trimEnd() + ' ' + t,
-        y1Px: para.y1Px,
-      };
-    } else {
-      pass2.push(para);
+      // Derive a single-line height estimate from the previous paragraph's font size.
+      // estimatedFontSizePt was computed from OCR canvas pixels (at OCR_SCALE resolution),
+      // so multiplying back by OCR_SCALE gives the pixel height of one line on the canvas.
+      // 1.5× accounts for typical line leading (line height > glyph height).
+      const approxLineHeightPx = prev.estimatedFontSizePt * OCR_SCALE * 1.5;
+      const yGap = para.y0Px - prev.y1Px;
+
+      if (yGap < approxLineHeightPx) {
+        // Spatially contiguous — treat as continuation of same paragraph
+        pass2[pass2.length - 1] = {
+          ...prev,
+          text: prev.text.trimEnd() + ' ' + t,
+          y1Px: para.y1Px,
+        };
+        continue;
+      }
     }
+
+    pass2.push(para);
   }
 
   // Pass 3: normalize font size to the mode of content paragraphs
