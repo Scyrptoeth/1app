@@ -279,7 +279,10 @@ function lineToDocxParagraph(line: TextLine): Paragraph {
   const runs = consolidateLineRuns(line);
   const textRuns = runsToTextRuns(runs);
 
-  const isHeading = line.avgFontSize >= 14 && line.items.every((i) => i.isBold);
+  // Heading detection: font size alone is the signal.
+  // Requiring isBold would miss titles in PDFs with obfuscated font names
+  // (e.g. g_d0_f3) where bold cannot be inferred from the font name string.
+  const isHeading = line.avgFontSize >= 16;
   const isCentered = line.minX > 150; // heuristic for centered text
 
   return new Paragraph({
@@ -324,15 +327,21 @@ function assignToColumn(x: number, columns: number[], tolerance: number): number
   return bestDist <= tolerance * 2 ? best : -1;
 }
 
-// A line is "table-like" if its items distribute across 2+ distinct x-columns
-function isTableLikeLine(line: TextLine, columns: number[], tolerance: number): boolean {
+// A line is "table-like" if it contains at least one large inter-item gap —
+// a gap wider than 3× the average font size. This indicates distinct column
+// regions separated by whitespace (as in real tables), rather than normal
+// word-spaced flowing text. This approach is document-agnostic: it does not
+// rely on column clustering that can be polluted by centered titles or page
+// number positions creating false column anchors.
+function isTableLikeLine(line: TextLine, _columns: number[], _tolerance: number): boolean {
   if (line.items.length < 2) return false;
-  const usedColumns = new Set<number>();
-  for (const item of line.items) {
-    const col = assignToColumn(item.x, columns, tolerance);
-    if (col >= 0) usedColumns.add(col);
+  const sorted = [...line.items].sort((a, b) => a.x - b.x);
+  const columnGapThreshold = line.avgFontSize * 3;
+  for (let i = 1; i < sorted.length; i++) {
+    const gap = sorted[i].x - (sorted[i - 1].x + sorted[i - 1].width);
+    if (gap > columnGapThreshold) return true;
   }
-  return usedColumns.size >= 2;
+  return false;
 }
 
 // Main table detection: returns which line indices belong to tables,
@@ -613,6 +622,16 @@ function isBrowserHeaderFooter(text: string): boolean {
   if (/^\d+\/\d+$/.test(t)) return true;
   if (/^page\s+\d+\s+of\s+\d+$/i.test(t)) return true;
   return false;
+}
+
+// Detect a standalone page number line: single pure-digit text positioned in
+// the right half of the page. These are printed by PDF generators as footers.
+// We filter them out before layout reconstruction to prevent them from creating
+// phantom column clusters in the table detection pass.
+function isPageNumberLine(line: TextLine, pageWidth: number): boolean {
+  if (line.items.length > 2) return false;
+  const text = line.items.map((i) => i.str).join('').trim();
+  return /^\d{1,4}$/.test(text) && line.minX > pageWidth * 0.4;
 }
 
 async function runOcrOnPage(imageBlob: Blob): Promise<OcrPageResult> {
@@ -998,6 +1017,8 @@ export async function convertPdfToWord(
     });
 
     const page = await pdf.getPage(pageNum);
+    const pageViewport = (page as unknown as { getViewport: (o: { scale: number }) => { width: number } }).getViewport({ scale: 1.0 });
+    const pageWidth = pageViewport.width;
     const isText = await hasTextContent(page);
 
     let pageElements: DocElement[];
@@ -1013,7 +1034,15 @@ export async function convertPdfToWord(
         pageElements = [new Paragraph({ children: [] })];
       } else {
         const lines = groupIntoLines(rawItems);
-        pageElements = buildTextPageContent(lines);
+        // Filter standalone page numbers and browser header/footer lines before
+        // layout reconstruction. These lines contribute spurious x-positions to
+        // column clustering, which can cause flowing text to be misdetected as
+        // table rows. Filtering them here mirrors the OCR path's own filtering.
+        const filteredLines = lines.filter((l) => {
+          const text = l.items.map((i) => i.str).join('');
+          return !isBrowserHeaderFooter(text) && !isPageNumberLine(l, pageWidth);
+        });
+        pageElements = buildTextPageContent(filteredLines);
       }
     } else {
       // Scanned/image page: OCR fallback or image embed
