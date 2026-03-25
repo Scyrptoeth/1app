@@ -2,6 +2,40 @@
 
 > History perubahan lengkap. Entry terbaru di atas.
 
+## 25 Maret 2026 (Sesi Lanjutan — Quality Improvements)
+
+### PDF-to-Word — Layout Reconstruction + System Quality Fixes
+
+#### Commit `4e6ea1d`
+- **Message**: `fix(pdf-to-word): lower gap threshold to 0.15× to prevent word-merging` + `fix(pdf-to-excel): restore decimal digits lost in OCR dot-comma typo`
+- **Perubahan**:
+  - `src/lib/tools/pdf-to-word.ts` — `consolidateLineRuns` gap threshold: `0.25×` → `0.15×`
+  - `src/lib/tools/pdf-to-excel.ts` — `correctNumericValue`: deteksi OCR decimal-comma typo, restore digit alih-alih strip
+- **Detail fix pdf-to-word**: Threshold 0.25× (2.75pt untuk 11pt font) menyebabkan kata disambung ("SURATEDARAN"). Threshold 0.15× (1.65pt) lebih sensitif terhadap small inter-word gap tanpa mempengaruhi kerning (<0.5pt).
+- **Detail fix pdf-to-excel**: OCR sering baca koma desimal Indonesia sebagai titik: `"1.234,56"` → `"1.234.56"`. Logic lama strip semua titik → `"123456"` (digit loss). Logic baru deteksi pattern (last group 1-2 digits + middle groups semua 3 digits) → rekonstruksi `"1234,56"`.
+- **Hasil**: Build ✅, kedua fix di-push ke production
+
+#### Commit `a3ed3b5`
+- **Message**: `feat(pdf-to-word): add full-justify alignment and line-height normalization`
+- **Perubahan**: `src/lib/tools/pdf-to-word.ts`
+- **Teknik**:
+  - `contentRight` = max qualifying cluster (≥2 lines) dari semua `maxX` → robust terhadap halaman dengan banyak indented lines
+  - Full-justify detection: `line.maxX >= contentRight * 0.92` → `AlignmentType.BOTH` (docx `w:jc="both"`)
+  - Line height: `spacing: { line: 240, lineRule: LineRuleType.AUTO }` (1.0× standard)
+  - Centering check dipindah murni ke: `|lineCenter - pageCenter| < pageWidth * 0.02` (tanpa lineWidth check)
+- **Hasil**: Build ✅
+
+#### Commit `03512ae`
+- **Message**: `feat(pdf-to-word): add indentation and y-gap spacing for text-based pages`
+- **Perubahan**: `src/lib/tools/pdf-to-word.ts`
+- **Teknik**:
+  - `baseX` detection: cluster semua `line.minX` → ambil cluster terkiri dengan `x > 36` DAN `allMinX.some(x → |x - c| ≤ avgFontSize)` (at least 1 line)
+  - `indentTWIPs = max(0, (line.minX - baseX) * 20)` → multi-level indentation
+  - y-gap `spacingAfterTWIPs` dari selisih antar-baris: `lineSpacing - avgFontSize * 1.3`, clamped 40–360 TWIPs
+- **Hasil**: Build ✅
+
+---
+
 ## 25 Maret 2026
 
 ### PDF-to-Word Converter — Hybrid Adaptive (Fitur ke-6)

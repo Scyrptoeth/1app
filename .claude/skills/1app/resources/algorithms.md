@@ -49,56 +49,36 @@
 - Iterasi 3: Ratio-based detection → breaktrhough (menemukan disruption pattern)
 - Iterasi 4: Reverse alpha blending dengan B-channel anchor → production ready
 
-## 3. Image-to-Excel — OCR + Right-Edge Clustering (Refactored 24 Mar 2026)
+## 3. Image-to-Excel — OCR + X-Coordinate Clustering
 
-**Libraries:** Tesseract.js v5 (OCR, dynamic import), ExcelJS (xlsx generation)
+**Libraries:** Tesseract.js v5 (OCR), ExcelJS (xlsx generation)
 
-**Pipeline:**
-1. `preprocessImage()` — upscale + grayscale + Sauvola binarization
-2. `performOcr()` — dynamic import Tesseract, dual PSM (PSM 6 + PSM 4), pick higher confidence
-3. `groupWordsIntoRows()` — re-group OCR words by Y-coordinate
-4. `detectValueColumns()` — right-edge clustering dengan outlier filter
-5. `detectTableHeaderRow()` — deteksi header row untuk preamble filter + year labels
-6. `analyzeLayout()` — classify each row: label | values | description
-7. `generateExcel()` — 5-column output: Uraian | 2024 | 2023 | 2022 | Description
+**Cara kerja:**
+1. **OCR**: Tesseract.js memproses image, output: array of words dengan bounding box (x, y, width, height)
+2. **Column detection**: X-coordinate clustering — grup kata berdasarkan posisi horizontal (`x`). Kata-kata yang memiliki x-coordinate dekat satu sama lain dianggap satu kolom
+3. **Row detection**: Y-coordinate grouping — kata-kata pada baris yang sama memiliki y-coordinate serupa
+4. **Table construction**: Mapping (row, column) → cell content
+5. **Editable preview**: Tampilkan tabel di UI, user bisa edit sebelum export
+6. **Excel export**: ExcelJS generate .xlsx dengan formatting
 
-**Tesseract.js setup (CRITICAL — sama seperti pdf-to-excel):**
+**Tesseract.js setup (CRITICAL):**
 ```typescript
-let _createWorker: any = null;
-async function getCreateWorker() {
-  if (_createWorker) return _createWorker;
-  const Tesseract = await import('tesseract.js');
-  _createWorker = Tesseract.createWorker;
-  return _createWorker;
-}
-// Gunakan CDN URLs eksplisit dan set user_defined_dpi
+// WAJIB dynamic import — static import menyebabkan page freeze
+const Tesseract = await import('tesseract.js');
+
+// WAJIB explicit CDN URLs
+const worker = await Tesseract.createWorker('ind+eng', 1, {
+  workerPath: 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/worker.min.js',
+  corePath: 'https://cdn.jsdelivr.net/npm/tesseract.js-core@5/tesseract-core-simd-lstm.wasm.js',
+  langPath: 'https://tessdata.projectnaptha.com/4.0.0_best',
+});
 ```
 
-**detectValueColumns() — right-edge clustering dengan outlier filter:**
-- Kumpulkan right-edge semua kata numerik dengan x0 > 25% image width
-- **Outlier filter**: edge tanpa tetangga dalam radius 8% → exclude dari workEdges (mencegah stray numeric word mencuri split slot)
-- Cari gap terbesar antara sorted edges (max 2 splits → max 3 kolom)
-- Gap minimum: 4% image width
-
-**detectTableHeaderRow() — year inference untuk colored headers:**
-- Scan tiap row untuk kata bertipe tahun (`/^20[0-2][0-9]$/`) di area nilai
-- Anchor kuat: "Uraian" (reliably OCR'd, latar putih)
-- Jika "Uraian" ada dan ≥1 tahun terdeteksi → accept sebagai header row
-- **Year inference**: jika 2022 di kolom[2], maka kolom[1]=2023, kolom[0]=2024 (`year[ci] = refYear - (ci - refCol)`)
-- Kenapa perlu: tahun di kotak berwarna (hijau) sering gagal di-OCR Tesseract
-
-**analyzeLayout() — 3-zone word classification per row:**
-- Zone 1 (x0 < valueLeftBoundary): label parts
-- Zone 2 (valueLeftBoundary ≤ x0 < valueRightBoundary): numeric values (+ dash capture)
-- Zone 3 (x0 ≥ valueRightBoundary): description (English translation)
-- Preamble filter: skip rows dengan minY ≤ tableHeaderMinY
-
-**OCR spell correction pipeline (correctLabel):**
-1. Structural regex corrections (angka/simbol OCR noise)
-2. Vocabulary spell check via Levenshtein distance terhadap ID_FINANCIAL_VOCAB
-3. Auto-capitalize first letter
-4. Abbreviation normalization
-5. Hyphen normalization
+**X-coordinate clustering algorithm:**
+- Collect all x-coordinates dari OCR output
+- Sort x-coordinates
+- Identify gaps > threshold sebagai column boundaries
+- Threshold ditentukan adaptively dari distribusi x-coordinates
 
 ## 4. PDF-to-Excel — Hybrid pdfjs + OCR Fallback
 
@@ -107,18 +87,10 @@ async function getCreateWorker() {
 **Cara kerja (hybrid):**
 
 **Path A — Text-based PDF:**
-1. pdfjs-dist `getTextContent()` mengekstrak text items beserta posisi (x, y, width, height, fontHeight)
-2. **Row grouping (font-height adaptive):** tolerance = `max(5, fontHeight * 0.4)` — skala naik untuk header bold/besar
-3. **Column boundary detection (4 teknik):**
-   - Dual-edge boundary: untuk gap 5-60px, boundary di midpoint fisik antara `rightEdge(kiri)` dan `leftEdge(kanan)` — lebih akurat dari x-midpoint untuk kolom tahun yang rapat
-   - Wide-gap fallback: untuk gap >60px, pakai x-midpoint biasa (right-aligned content bisa mulai jauh dari header)
-   - Persistent gap detection: whitespace harus ada di ≥60% rows untuk dianggap column boundary — eliminasi false split dari label panjang yang punya spasi internal
-4. **Number conversion (laporan keuangan Indonesia):**
-   - Period-as-thousands: `"5.222.504"` → `5222504`
-   - Parenthesized negatives (accounting notation): `"(5.222.504)"` → `-5222504`
-   - Comma ambiguous: jika semua grup setelah koma persis 3 digit → thousands (`"10,114"` → `10114`); grup 1-2 digit tetap string
-5. **Merged cell splitting:** `"66.086 Remeasurement..."` → number ke kolom value, text fragment ke kolom description (prepend jika kolom description sudah ada string)
-6. Table construction → Excel export
+1. pdfjs-dist `getTextContent()` mengekstrak text items beserta posisi (x, y, width, height)
+2. Column detection via x-coordinate clustering (sama seperti Image-to-Excel)
+3. Row detection via y-coordinate grouping
+4. Table construction → Excel export
 
 **Path B — Scanned/Image PDF (OCR fallback):**
 1. pdfjs-dist render page ke Canvas (high DPI: scale 2.0-3.0)
@@ -143,3 +115,37 @@ async function getCreateWorker() {
 - Otsu: global threshold, gagal pada pencahayaan tidak rata
 - Sauvola: local adaptive, menghitung threshold per-pixel berdasarkan mean dan stdev area sekitarnya
 - Sauvola jauh lebih stabil untuk dokumen scanned real-world
+
+## 5. PDF-to-Word — Hybrid Layout Reconstruction
+
+**Library:** pdfjs-dist (text extraction), docx@9.6.1 (Word generation), Tesseract.js v5 (OCR fallback)
+
+**Cara kerja:**
+
+**Path A — Text-based PDF:**
+1. pdfjs-dist `getTextContent()` → text items dengan `transform` matrix (posisi x,y + font size)
+2. Font bold/italic detection dari `fontName` string (`/bold|heavy|black|demi/i`, `/italic|oblique|slant/i`)
+3. Group items ke lines via y-coordinate clustering (threshold: `max(prevFontSize, itemFontSize) * 0.45`)
+4. `consolidateLineRuns`: gabungkan items sejajar, insert space jika `gap > prev.fontSize * 0.15`
+5. **baseX detection**: cluster semua `line.minX` dengan tolerance `avgFontSize * 0.5` → ambil cluster terkiri dengan `c > 36` AND `allMinX.some(x → |x - c| ≤ avgFontSize)` → margin halaman
+6. **Indentation**: `indentTWIPs = max(0, (line.minX - baseX) * 20)` → multi-level indent dalam TWIP
+7. **Centering detection**: `|lineCenter - pageCenter| < pageWidth * 0.02` (2% threshold — PDF engines center precisely)
+8. **contentRight**: cluster semua `line.maxX` → ambil cluster terkanan yang memiliki ≥2 lines → right margin
+9. **Full-justify detection**: `!isCentered && line.maxX >= contentRight * 0.92` → `AlignmentType.BOTH`
+10. **y-gap spacing**: `lineSpacing - avgFontSize * 1.3` → `spacingAfterTWIPs` (clamp 40–360)
+11. Table detection via `clusterXPositions` → `isTableLikeLine` → `detectTables` → docx `Table`
+12. Layout reconstruction: elements sorted by y-position (PDF coord top=high, bottom=low)
+
+**Path B — Scanned PDF (OCR fallback):**
+1. Detect scanned page: `rawItems.length < 5`
+2. Render page ke Canvas (scale 1.5)
+3. Sauvola adaptive binarization (window 15, k=0.15)
+4. Tesseract OCR PSM 3 (auto-detect layout)
+5. Jika `confidence ≥ 60 AND wordCount ≥ 10`: text paragraphs
+6. Else: embed page sebagai `ImageRun` (preserves appearance)
+
+**Key decisions:**
+- `consolidateLineRuns` threshold `0.15×` (bukan 0.25×): mencegah word-merging. Kerning <0.5pt, word spacing 2-4pt, threshold 1.65pt memisahkan keduanya.
+- `baseX` menggunakan "at least 1 occurrence" bukan percentage: section headers (1× per halaman) tidak boleh diabaikan
+- `contentRight` = max qualifying cluster bukan mode: halaman dengan banyak indented lines tidak underestimate right margin
+- Centering check tanpa lineWidth: short text ("SURAT EDARAN") tetap terdeteksi sebagai centered
