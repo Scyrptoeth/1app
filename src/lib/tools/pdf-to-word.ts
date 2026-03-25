@@ -19,6 +19,7 @@ import {
   TextRun,
   PageBreak,
   AlignmentType,
+  LineRuleType,
   HeadingLevel,
   Table,
   TableRow,
@@ -279,7 +280,8 @@ function lineToDocxParagraph(
   line: TextLine,
   pageWidth: number = 595,
   baseX: number = 0,
-  spacingAfterTWIPs: number = 80
+  spacingAfterTWIPs: number = 80,
+  contentRight: number = 0
 ): Paragraph {
   const runs = consolidateLineRuns(line);
   const textRuns = runsToTextRuns(runs);
@@ -298,15 +300,31 @@ function lineToDocxParagraph(
   const lineCenter = (line.minX + line.maxX) / 2;
   const isCentered = Math.abs(lineCenter - pageCenter) < pageWidth * 0.02;
 
+  // Full-justify detection: a non-centered line is "full-width" when its rightmost
+  // glyph reaches at least 92% of the content area's right boundary (contentRight).
+  // Full-width lines represent body text that spans margin-to-margin in the original PDF
+  // (justified alignment). Short lines — the last line of a paragraph, list labels,
+  // or short bullet text — fall below this threshold and remain left-aligned.
+  const isJustified = !isCentered && contentRight > 0 && line.maxX >= contentRight * 0.92;
+
   // Indentation relative to baseX (the left margin of this page).
   // Only applied to non-centered lines; ignored when indentTWIPs = 0.
   const indentTWIPs = isCentered ? 0 : Math.max(0, Math.round((line.minX - baseX) * 20));
 
+  let alignment: (typeof AlignmentType)[keyof typeof AlignmentType];
+  if (isCentered) alignment = AlignmentType.CENTER;
+  else if (isJustified) alignment = AlignmentType.BOTH;
+  else alignment = AlignmentType.LEFT;
+
   return new Paragraph({
     children: textRuns,
     ...(isHeading ? { heading: HeadingLevel.HEADING_1 } : {}),
-    alignment: isCentered ? AlignmentType.CENTER : AlignmentType.LEFT,
-    spacing: { after: line.avgFontSize >= 14 ? 240 : spacingAfterTWIPs },
+    alignment,
+    spacing: {
+      after: line.avgFontSize >= 14 ? 240 : spacingAfterTWIPs,
+      line: 240,
+      lineRule: LineRuleType.AUTO,
+    },
     ...(indentTWIPs > 0 ? { indent: { left: indentTWIPs } } : {}),
   });
 }
@@ -904,8 +922,8 @@ function buildTextPageContent(lines: TextLine[], pageWidth: number = 595): DocEl
   // Compute baseX: the leftmost common left-margin position on this page.
   // Strategy: cluster all line.minX values, then pick the leftmost cluster where:
   //   (a) x > 36pt — excludes truly stray elements near the physical page edge,
-  //   (b) at least 2% of lines start there — tolerates section headers that appear
-  //       only 1-2 times per page while still filtering isolated noise.
+  //   (b) at least one line starts there — tolerates section headers that appear
+  //       only once per page while still filtering elements below the page edge.
   // On most pages the left margin cluster (e.g. x=72) wins because it's leftmost
   // among candidates that satisfy both conditions.
   const allMinX = lines.map((l) => l.minX);
@@ -917,6 +935,22 @@ function buildTextPageContent(lines: TextLine[], pageWidth: number = 595): DocEl
         c > 36 &&
         allMinX.some((x) => Math.abs(x - c) <= avgFontSize)
     ) ?? 0;
+
+  // Compute contentRight: the true right margin of this page.
+  // Strategy: cluster all line.maxX values, then take the RIGHTMOST cluster that
+  // contains at least 2 lines. Using the rightmost (not most-frequent) cluster means
+  // pages with many short indented lines don't have their right margin underestimated —
+  // the full-width lines (even if fewer) define the actual content boundary.
+  const allMaxX = lines
+    .filter((_, idx) => !tableLineIndices.has(idx))
+    .map((l) => l.maxX);
+  const maxXClusters = clusterXPositions(allMaxX, avgFontSize);
+  const qualifyingRightClusters = maxXClusters.filter(
+    (c) => allMaxX.filter((x) => Math.abs(x - c) <= avgFontSize).length >= 2
+  );
+  const contentRight = qualifyingRightClusters.length > 0
+    ? Math.max(...qualifyingRightClusters)
+    : 0;
 
   // Compute spacingAfter for each non-table line: y-gap to the next line below it,
   // minus the expected single-line height (fontSize × 1.3). Extra gap → larger spacing.
@@ -944,7 +978,7 @@ function buildTextPageContent(lines: TextLine[], pageWidth: number = 595): DocEl
     if (tableLineIndices.has(i)) continue;
     const spacingAfterTWIPs = spacingMap.get(i) ?? 80;
     positioned.push({
-      element: lineToDocxParagraph(lines[i], pageWidth, baseX, spacingAfterTWIPs),
+      element: lineToDocxParagraph(lines[i], pageWidth, baseX, spacingAfterTWIPs, contentRight),
       y: lines[i].y,
     });
   }
