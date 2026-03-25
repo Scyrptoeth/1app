@@ -424,7 +424,16 @@ async function hasTextContent(page: unknown): Promise<boolean> {
   const meaningfulItems = (textContent.items as Array<{ str?: string }>).filter(
     (item) => item.str && item.str.trim().length > 0
   );
-  return meaningfulItems.length >= 10;
+
+  // Fast reject: too few items
+  if (meaningfulItems.length < 10) return false;
+
+  // Guard against pages that have many items but only header/footer text
+  // (e.g. browser-printed PDFs where content is rasterized but header/URL is text).
+  // Group into lines; if fewer than 5 distinct lines, treat as image-based.
+  const rawItems = meaningfulItems.map(parseRawItem).filter((i): i is RawTextItem => i !== null);
+  const lines = groupIntoLines(rawItems);
+  return lines.length >= 5;
 }
 
 async function renderPageToCanvas(
