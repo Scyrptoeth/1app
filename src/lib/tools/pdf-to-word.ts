@@ -275,7 +275,12 @@ function runsToTextRuns(runs: ConsolidatedRun[]): TextRun[] {
   });
 }
 
-function lineToDocxParagraph(line: TextLine): Paragraph {
+function lineToDocxParagraph(
+  line: TextLine,
+  pageWidth: number = 595,
+  baseX: number = 0,
+  spacingAfterTWIPs: number = 80
+): Paragraph {
   const runs = consolidateLineRuns(line);
   const textRuns = runsToTextRuns(runs);
 
@@ -283,13 +288,26 @@ function lineToDocxParagraph(line: TextLine): Paragraph {
   // Requiring isBold would miss titles in PDFs with obfuscated font names
   // (e.g. g_d0_f3) where bold cannot be inferred from the font name string.
   const isHeading = line.avgFontSize >= 16;
-  const isCentered = line.minX > 150; // heuristic for centered text
+
+  // Centering detection: a line is "centered" when its visual center (midpoint between
+  // leftmost and rightmost glyph) is within 2% of the page width from the page center.
+  // PDF layout engines place centered text very precisely, so 2% (≈12pt on A4) is tight
+  // enough to reject left-aligned full-width text (whose center drifts noticeably) while
+  // accepting titles, headings, and institutional headers that are geometrically centered.
+  const pageCenter = pageWidth / 2;
+  const lineCenter = (line.minX + line.maxX) / 2;
+  const isCentered = Math.abs(lineCenter - pageCenter) < pageWidth * 0.02;
+
+  // Indentation relative to baseX (the left margin of this page).
+  // Only applied to non-centered lines; ignored when indentTWIPs = 0.
+  const indentTWIPs = isCentered ? 0 : Math.max(0, Math.round((line.minX - baseX) * 20));
 
   return new Paragraph({
     children: textRuns,
     ...(isHeading ? { heading: HeadingLevel.HEADING_1 } : {}),
     alignment: isCentered ? AlignmentType.CENTER : AlignmentType.LEFT,
-    spacing: { after: line.avgFontSize >= 14 ? 240 : 80 },
+    spacing: { after: line.avgFontSize >= 14 ? 240 : spacingAfterTWIPs },
+    ...(indentTWIPs > 0 ? { indent: { left: indentTWIPs } } : {}),
   });
 }
 
@@ -872,7 +890,7 @@ async function canvasToArrayBuffer(canvas: HTMLCanvasElement): Promise<ArrayBuff
 
 // Process a text-based page: combine table detection + paragraph extraction,
 // sorted by y-position (top to bottom reading order).
-function buildTextPageContent(lines: TextLine[]): DocElement[] {
+function buildTextPageContent(lines: TextLine[], pageWidth: number = 595): DocElement[] {
   if (lines.length === 0) return [];
 
   const tables = detectTables(lines);
@@ -883,14 +901,50 @@ function buildTextPageContent(lines: TextLine[]): DocElement[] {
     for (const idx of table.lineIndices) tableLineIndices.add(idx);
   }
 
+  // Compute baseX: the leftmost common left-margin position on this page.
+  // Strategy: cluster all line.minX values, then pick the leftmost cluster where:
+  //   (a) x > 36pt — excludes truly stray elements near the physical page edge,
+  //   (b) at least 2% of lines start there — tolerates section headers that appear
+  //       only 1-2 times per page while still filtering isolated noise.
+  // On most pages the left margin cluster (e.g. x=72) wins because it's leftmost
+  // among candidates that satisfy both conditions.
+  const allMinX = lines.map((l) => l.minX);
+  const avgFontSize = lines.reduce((s, l) => s + l.avgFontSize, 0) / lines.length;
+  const xClusters = clusterXPositions(allMinX, avgFontSize * 0.5);
+  const baseX =
+    xClusters.find(
+      (c) =>
+        c > 36 &&
+        allMinX.some((x) => Math.abs(x - c) <= avgFontSize)
+    ) ?? 0;
+
+  // Compute spacingAfter for each non-table line: y-gap to the next line below it,
+  // minus the expected single-line height (fontSize × 1.3). Extra gap → larger spacing.
+  const nonTableLineInfos = lines
+    .map((l, idx) => ({ l, idx }))
+    .filter(({ idx }) => !tableLineIndices.has(idx));
+  const spacingMap = new Map<number, number>();
+  for (let i = 0; i < nonTableLineInfos.length - 1; i++) {
+    const curr = nonTableLineInfos[i].l;
+    const next = nonTableLineInfos[i + 1].l;
+    const lineSpacing = curr.y - next.y;
+    const expectedHeight = curr.avgFontSize * 1.3;
+    const extraGap = lineSpacing - expectedHeight;
+    const spacing = extraGap > 0
+      ? Math.round(Math.max(40, Math.min(360, extraGap * 20)))
+      : 80;
+    spacingMap.set(nonTableLineInfos[i].idx, spacing);
+  }
+
   // Collect positioned elements: paragraphs from non-table lines + tables
   const positioned: PositionedElement[] = [];
 
   // Paragraphs (lines not in a table)
   for (let i = 0; i < lines.length; i++) {
     if (tableLineIndices.has(i)) continue;
+    const spacingAfterTWIPs = spacingMap.get(i) ?? 80;
     positioned.push({
-      element: lineToDocxParagraph(lines[i]),
+      element: lineToDocxParagraph(lines[i], pageWidth, baseX, spacingAfterTWIPs),
       y: lines[i].y,
     });
   }
@@ -1057,7 +1111,7 @@ export async function convertPdfToWord(
           const text = l.items.map((i) => i.str).join('');
           return !isBrowserHeaderFooter(text) && !isPageNumberLine(l, pageWidth);
         });
-        pageElements = buildTextPageContent(filteredLines);
+        pageElements = buildTextPageContent(filteredLines, pageWidth);
       }
     } else {
       // Scanned/image page: OCR fallback or image embed
