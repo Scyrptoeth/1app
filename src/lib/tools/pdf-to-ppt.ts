@@ -1,13 +1,19 @@
 // ============================================================================
-// PDF to PowerPoint Converter — Hybrid Adaptive Approach
+// PDF to PowerPoint Converter — Hybrid Adaptive Approach (v2)
 //
-// Reuses text extraction, line grouping, table detection, and OCR logic
-// from pdf-to-word.ts. Output generation uses PptxGenJS with absolute
-// coordinate positioning (x, y, w, h in inches) instead of docx flow layout.
+// Strategy: background image layer + text box overlay (matches ilovepdf approach)
+//   - Pages with embedded images → render page as JPEG background +
+//     overlay editable text boxes (text is available AND visually faithful)
+//   - Pure text pages → absolute text boxes only (clean, editable)
+//   - Truly scanned pages (0 text items) → OCR fallback or image embed
 //
-// Processing strategy per page:
-//   - Text-based PDF  → text extraction → absolute text boxes + tables
-//   - Scanned/image PDF → OCR fallback → text boxes or image embed
+// Improvements over v1:
+//   - Color extraction via getOperatorList() (tracks fill color state per line y)
+//   - Font family via TextContent.styles.fontFamily
+//   - Image detection via paintImageXObject OPS (code 85)
+//   - Background JPEG rendering for image-heavy pages (smaller file size)
+//   - hasTextContent threshold lowered to 2 items (handles sparse presentation slides)
+//   - Table detection requires ≥3 rows (reduce false positives)
 // ============================================================================
 
 // Tesseract — dynamic import to avoid Next.js Web Worker bundling issues
@@ -44,9 +50,11 @@ interface RawTextItem {
   y: number;
   fontSize: number;
   fontName: string;
+  fontFamily: string;   // resolved CSS family from TextContent.styles
   isBold: boolean;
   isItalic: boolean;
   width: number;
+  color: string;        // hex without '#', e.g. '363636'
 }
 
 interface TextLine {
@@ -62,7 +70,8 @@ interface ConsolidatedRun {
   isBold: boolean;
   isItalic: boolean;
   fontSize: number;
-  fontName: string;
+  fontFamily: string;
+  color: string;
 }
 
 interface TableBlock {
@@ -91,16 +100,181 @@ interface OcrPageResult {
   paragraphs: OcrParagraph[];
 }
 
+// Result from a single operator-list analysis pass
+interface PageAnalysis {
+  hasImages: boolean;
+  // Map: rounded y-position (PDF coords) → dominant fill color hex
+  colorMap: Map<string, string>;
+}
+
 const OCR_SCALE = 3;
 const DEFAULT_FONT = 'Arial';
+const DEFAULT_COLOR = '363636';
 // 1 PDF point = 1/72 inches
 const PT_TO_IN = 1 / 72;
+
+// pdfjs OPS codes (verified from pdfjs-dist v4)
+const OPS_SET_FILL_RGB    = 59;  // setFillRGBColor: args=[r,g,b] in [0,1]
+const OPS_SET_FILL_GRAY   = 57;  // setFillGray: args=[gray] in [0,1]
+const OPS_SET_FILL_CMYK   = 61;  // setFillCMYKColor: args=[c,m,y,k] in [0,1]
+const OPS_SET_TEXT_MATRIX = 42;  // setTextMatrix: args=[a,b,c,d,e,f]
+const OPS_MOVE_TEXT       = 40;  // moveText: args=[tx,ty] relative movement
+const OPS_MOVE_TEXT_LEAD  = 41;  // setLeadingMoveText: args=[tx,ty]
+const OPS_BEGIN_TEXT      = 31;  // beginText: resets text matrix
+const OPS_SHOW_TEXT       = 44;  // showText
+const OPS_SHOW_SPACED     = 45;  // showSpacedText
+const OPS_NEXT_LINE_SHOW  = 46;  // nextLineShowText
+const OPS_NEXT_LINE_SET   = 47;  // nextLineSetSpacingShowText
+const OPS_PAINT_IMAGE     = 85;  // paintImageXObject
+const OPS_PAINT_INLINE    = 86;  // paintInlineImageXObject
+const OPS_PAINT_IMG_RPT   = 88;  // paintImageXObjectRepeat
+
+// ---------------------------------------------------------------------------
+// ═══════════════════ COLOR & IMAGE ANALYSIS (OperatorList) ══════════════════
+// ---------------------------------------------------------------------------
+
+function toHex2(v: number): string {
+  return Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, '0');
+}
+
+function rgbToHex(r: number, g: number, b: number): string {
+  // args from pdfjs are normalized [0,1]
+  return `${toHex2(r * 255)}${toHex2(g * 255)}${toHex2(b * 255)}`;
+}
+
+function grayToHex(g: number): string {
+  const h = toHex2(g * 255);
+  return `${h}${h}${h}`;
+}
+
+function cmykToHex(c: number, m: number, y: number, k: number): string {
+  const r = (1 - c) * (1 - k);
+  const g = (1 - m) * (1 - k);
+  const b = (1 - y) * (1 - k);
+  return rgbToHex(r, g, b);
+}
+
+// Analyze page operator list to extract:
+//   1. Whether the page contains any embedded images
+//   2. A map of PDF y-positions → dominant fill color (for text color assignment)
+//
+// Color tracking: we maintain a mini text-matrix state machine to know the y
+// position when each showText operation fires. Each y position maps to the last
+// fill color set before that y position's text was painted.
+async function analyzePageOperators(page: unknown): Promise<PageAnalysis> {
+  const p = page as {
+    getOperatorList: () => Promise<{ fnArray: number[]; argsArray: unknown[][] }>;
+  };
+
+  const opList = await p.getOperatorList();
+  const { fnArray, argsArray } = opList;
+
+  let hasImages = false;
+  let currentColor = DEFAULT_COLOR;
+  const colorMap = new Map<string, string>();
+
+  // Text matrix state (tracks current text position for color mapping)
+  let tmX = 0, tmY = 0;
+  let tlmX = 0, tlmY = 0; // text line matrix
+
+  const IMAGE_OPS = new Set([OPS_PAINT_IMAGE, OPS_PAINT_INLINE, OPS_PAINT_IMG_RPT]);
+  const SHOW_OPS = new Set([OPS_SHOW_TEXT, OPS_SHOW_SPACED, OPS_NEXT_LINE_SHOW, OPS_NEXT_LINE_SET]);
+
+  for (let i = 0; i < fnArray.length; i++) {
+    const fn = fnArray[i];
+    const args = argsArray[i] as number[];
+
+    if (IMAGE_OPS.has(fn)) {
+      hasImages = true;
+      continue;
+    }
+
+    switch (fn) {
+      case OPS_SET_FILL_RGB:
+        currentColor = rgbToHex(args[0], args[1], args[2]);
+        break;
+      case OPS_SET_FILL_GRAY:
+        currentColor = grayToHex(args[0]);
+        break;
+      case OPS_SET_FILL_CMYK:
+        currentColor = cmykToHex(args[0], args[1], args[2], args[3]);
+        break;
+      case OPS_BEGIN_TEXT:
+        tmX = 0; tmY = 0; tlmX = 0; tlmY = 0;
+        break;
+      case OPS_SET_TEXT_MATRIX:
+        // [a, b, c, d, e, f] — e=x, f=y (translation components)
+        tmX = args[4]; tmY = args[5];
+        tlmX = args[4]; tlmY = args[5];
+        break;
+      case OPS_MOVE_TEXT:
+      case OPS_MOVE_TEXT_LEAD:
+        // Relative move: adds to text line matrix
+        tlmX += args[0]; tlmY += args[1];
+        tmX = tlmX; tmY = tlmY;
+        break;
+    }
+
+    if (SHOW_OPS.has(fn)) {
+      // Map this y position to the current fill color.
+      // Use rounded integer key for fuzzy matching (+/-3pt tolerance applied at lookup).
+      const yKey = Math.round(tmY).toString();
+      colorMap.set(yKey, currentColor);
+    }
+  }
+
+  return { hasImages, colorMap };
+}
+
+// Look up color for a text item's y-position with ±5pt tolerance
+function lookupColor(y: number, colorMap: Map<string, string>): string {
+  const yRound = Math.round(y);
+  for (let delta = 0; delta <= 5; delta++) {
+    const c = colorMap.get((yRound + delta).toString())
+           ?? colorMap.get((yRound - delta).toString());
+    if (c) return c;
+  }
+  return DEFAULT_COLOR;
+}
+
+// ---------------------------------------------------------------------------
+// ═══════════════════ FONT FAMILY RESOLUTION ══════════════════════════════════
+// ---------------------------------------------------------------------------
+
+// Build fontName → resolved CSS family map from TextContent.styles
+function buildFontFamilyMap(styles: Record<string, { fontFamily: string }>): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const [fontName, style] of Object.entries(styles)) {
+    map.set(fontName, style.fontFamily || '');
+  }
+  return map;
+}
+
+// Resolve the best-available font family for a text item.
+// Priority: (1) pdfjs-resolved fontFamily if it looks like a real name
+//           (2) extractFontFamily heuristic from the raw PDF fontName string
+function resolveFontFamily(fontName: string, fontFamilyMap: Map<string, string>): string {
+  const cssFontFamily = fontFamilyMap.get(fontName) ?? '';
+  // Accept if it looks like a proper font name (not generic CSS keyword)
+  if (
+    cssFontFamily &&
+    !/^(sans-serif|serif|monospace|cursive|fantasy|system-ui|Arial|Helvetica)$/i.test(cssFontFamily.trim())
+  ) {
+    // Strip anything after a comma (CSS fallback chain), take first font only
+    return cssFontFamily.split(',')[0].trim().replace(/^["']|["']$/g, '');
+  }
+  return extractFontFamily(fontName);
+}
 
 // ---------------------------------------------------------------------------
 // ═══════════════════ TASK 1: TEXT EXTRACTION ════════════════════════════════
 // ---------------------------------------------------------------------------
 
-function parseRawItem(item: unknown): RawTextItem | null {
+function parseRawItem(
+  item: unknown,
+  colorMap: Map<string, string>,
+  fontFamilyMap: Map<string, string>
+): RawTextItem | null {
   const i = item as {
     str?: string;
     transform?: number[];
@@ -130,9 +304,11 @@ function parseRawItem(item: unknown): RawTextItem | null {
     y,
     fontSize,
     fontName,
+    fontFamily: resolveFontFamily(fontName, fontFamilyMap),
     isBold: /bold|heavy|black|demi/i.test(normalizedFont),
     isItalic: /italic|oblique|slant/i.test(normalizedFont),
     width: i.width || 0,
+    color: lookupColor(y, colorMap),
   };
 }
 
@@ -174,6 +350,8 @@ function buildLine(items: RawTextItem[]): TextLine {
   };
 }
 
+// Merge adjacent items into consolidated runs.
+// A new run starts when bold/italic/fontSize/fontFamily/color changes.
 function consolidateLineRuns(line: TextLine): ConsolidatedRun[] {
   const runs: ConsolidatedRun[] = [];
 
@@ -195,7 +373,8 @@ function consolidateLineRuns(line: TextLine): ConsolidatedRun[] {
       last.isBold === item.isBold &&
       last.isItalic === item.isItalic &&
       Math.abs(last.fontSize - item.fontSize) < 0.5 &&
-      last.fontName === item.fontName
+      last.fontFamily === item.fontFamily &&
+      last.color === item.color
     ) {
       last.text += text;
     } else {
@@ -204,7 +383,8 @@ function consolidateLineRuns(line: TextLine): ConsolidatedRun[] {
         isBold: item.isBold,
         isItalic: item.isItalic,
         fontSize: item.fontSize,
-        fontName: item.fontName,
+        fontFamily: item.fontFamily,
+        color: item.color,
       });
     }
   }
@@ -222,6 +402,7 @@ function extractFontFamily(fontName: string): string {
   if (/courier\s*new|couriernew/i.test(clean)) return 'Courier New';
   if (/courier/i.test(clean)) return 'Courier New';
   if (/calibri/i.test(clean)) return 'Calibri';
+  if (/ebrima/i.test(clean)) return 'Ebrima';
   if (/georgia/i.test(clean)) return 'Georgia';
   if (/verdana/i.test(clean)) return 'Verdana';
   if (/garamond/i.test(clean)) return 'Garamond';
@@ -300,7 +481,8 @@ function detectTables(lines: TextLine[]): TableBlock[] {
     const blockEnd = i;
 
     const blockLines = lines.slice(blockStart, blockEnd);
-    if (blockLines.length < 2) continue;
+    // Require at least 3 rows to avoid false positives from aligned text pairs
+    if (blockLines.length < 3) continue;
 
     const blockX: number[] = blockLines.flatMap((l) => l.items.map((item) => item.x));
     const blockColumns = clusterXPositions(blockX, xTolerance);
@@ -364,18 +546,6 @@ function isPageNumberLine(line: TextLine, pageWidth: number): boolean {
   return /^\d{1,4}$/.test(text) && line.minX > pageWidth * 0.4;
 }
 
-async function hasTextContent(page: unknown): Promise<boolean> {
-  const p = page as { getTextContent: () => Promise<{ items: unknown[] }> };
-  const textContent = await p.getTextContent();
-  const meaningfulItems = (textContent.items as Array<{ str?: string }>).filter(
-    (item) => item.str && item.str.trim().length > 0
-  );
-  if (meaningfulItems.length < 10) return false;
-  const rawItems = meaningfulItems.map(parseRawItem).filter((i): i is RawTextItem => i !== null);
-  const lines = groupIntoLines(rawItems);
-  return lines.length >= 5;
-}
-
 async function renderPageToCanvas(page: unknown, scaleFactor: number): Promise<HTMLCanvasElement> {
   const p = page as {
     getViewport: (opts: { scale: number }) => { width: number; height: number };
@@ -390,6 +560,41 @@ async function renderPageToCanvas(page: unknown, scaleFactor: number): Promise<H
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   await p.render({ canvasContext: ctx, viewport }).promise;
   return canvas;
+}
+
+// Render page as JPEG base64 data URL (smaller file size than PNG for photos/backgrounds)
+async function renderPageToJpegDataUrl(page: unknown, scaleFactor: number): Promise<string> {
+  const canvas = await renderPageToCanvas(page, scaleFactor);
+  return new Promise<string>((resolve, reject) => {
+    canvas.toBlob(
+      (blob) => {
+        if (!blob) return reject(new Error('Canvas JPEG export failed'));
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result as string);
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      },
+      'image/jpeg',
+      0.82  // 82% quality: good fidelity with significant size savings vs PNG
+    );
+  });
+}
+
+// Render page as PNG base64 data URL (for scanned pages where lossless matters)
+async function renderPageToPngDataUrl(page: unknown, scaleFactor: number): Promise<string> {
+  const canvas = await renderPageToCanvas(page, scaleFactor);
+  return new Promise<string>((resolve, reject) => {
+    canvas.toBlob(
+      (blob) => {
+        if (!blob) return reject(new Error('Canvas PNG export failed'));
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result as string);
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      },
+      'image/png'
+    );
+  });
 }
 
 function sauvolaThreshold(
@@ -565,10 +770,7 @@ async function runOcrOnPage(imageBlob: Blob): Promise<OcrPageResult> {
         }
 
         const rawText = paraLines.join(' ');
-        const text = rawText
-          .replace(/\s*https?:\/\/\S+/g, '')
-          .replace(/\s{2,}/g, ' ')
-          .trim();
+        const text = rawText.replace(/\s*https?:\/\/\S+/g, '').replace(/\s{2,}/g, ' ').trim();
         if (!text) continue;
 
         const avgLineHeightPx =
@@ -619,7 +821,6 @@ function consolidateOcrParagraphs(paragraphs: OcrParagraph[]): OcrParagraph[] {
   for (const para of pass1) {
     const t = para.text.trim();
     const startsLowercase = /^[a-z]/.test(t);
-
     if (startsLowercase && pass2.length > 0) {
       const prev = pass2[pass2.length - 1];
       const approxLineHeightPx = prev.estimatedFontSizePt * OCR_SCALE * 1.5;
@@ -653,53 +854,31 @@ function consolidateOcrParagraphs(paragraphs: OcrParagraph[]): OcrParagraph[] {
   return pass2;
 }
 
-// Render page to base64 PNG for embedding in PPT
-async function renderPageToBase64(page: unknown, scaleFactor: number): Promise<string> {
-  const canvas = await renderPageToCanvas(page, scaleFactor);
-  return new Promise<string>((resolve, reject) => {
-    canvas.toBlob((blob) => {
-      if (!blob) return reject(new Error('Canvas export failed'));
-      const reader = new FileReader();
-      reader.onloadend = () => resolve(reader.result as string);
-      reader.onerror = reject;
-      reader.readAsDataURL(blob);
-    }, 'image/png');
-  });
-}
-
 // ---------------------------------------------------------------------------
 // ═══════════════════ TASK 4: PPT OUTPUT GENERATION ══════════════════════════
 // ---------------------------------------------------------------------------
 //
-// Coordinate system conversion:
+// Coordinate system:
 //   PDF: origin at bottom-left, y increases upward, units = points
 //   PPT: origin at top-left, y increases downward, units = inches
 //
 //   x_ppt = x_pdf * PT_TO_IN
-//   y_ppt = (pageHeight - y_baseline - fontSize * 0.85) * PT_TO_IN
-//       where 0.85 ≈ typical ascent ratio for text glyphs
+//   y_ppt = (pageHeight - baseline - ascent) * PT_TO_IN
+//         ≈ (pageHeight - y - fontSize * 0.85) * PT_TO_IN
 // ---------------------------------------------------------------------------
 
-// Convert a TextLine's PDF coordinates to absolute PPT text box bounds (inches)
 function lineToPptBounds(
   line: TextLine,
   pageWidth: number,
   pageHeight: number
 ): { x: number; y: number; w: number; h: number } {
   const fontSize = line.avgFontSize;
-
-  // Text box top: baseline from bottom → top from top, minus ascent
   const yTopPt = pageHeight - line.y - fontSize * 0.85;
   const x = Math.max(0, line.minX * PT_TO_IN);
   const y = Math.max(0, yTopPt * PT_TO_IN);
-
-  // Width: span from minX to maxX with a small right-side padding
   const wPt = Math.max(line.maxX - line.minX, fontSize * 2);
   const w = Math.min(wPt * PT_TO_IN + 0.15, pageWidth * PT_TO_IN - x);
-
-  // Height: line height ≈ 1.4× font size
   const h = Math.max(fontSize * 1.4 * PT_TO_IN, 0.08);
-
   return { x, y, w, h };
 }
 
@@ -710,7 +889,6 @@ function addLineToSlide(slide: any, line: TextLine, pageWidth: number, pageHeigh
 
   const { x, y, w, h } = lineToPptBounds(line, pageWidth, pageHeight);
 
-  // PptxGenJS text run format: array of { text, options } objects
   const textRuns = runs
     .filter((r) => r.text.length > 0)
     .map((run) => ({
@@ -718,10 +896,9 @@ function addLineToSlide(slide: any, line: TextLine, pageWidth: number, pageHeigh
       options: {
         bold: run.isBold,
         italic: run.isItalic,
-        // PptxGenJS fontSize is in points (not half-points like docx)
         fontSize: Math.max(6, Math.round(run.fontSize)),
-        fontFace: extractFontFamily(run.fontName),
-        color: '363636',
+        fontFace: run.fontFamily || DEFAULT_FONT,
+        color: run.color || DEFAULT_COLOR,
       },
     }));
 
@@ -732,6 +909,7 @@ function addLineToSlide(slide: any, line: TextLine, pageWidth: number, pageHeigh
     fit: 'none',
     wrap: false,
     margin: 0,
+    // No fill/border — transparent text box overlaid on background image
   });
 }
 
@@ -742,13 +920,11 @@ function addTableToSlide(slide: any, table: TableBlock, pageWidth: number, pageH
   const numCols = Math.max(...table.rows.map((r) => r.cells.length));
   if (numCols === 0) return;
 
-  // Table top-left position: top of first row, safe left margin
   const tableYTopPt = pageHeight - table.yMax;
   const tableX = 0.1;
   const tableY = Math.max(0, tableYTopPt * PT_TO_IN);
   const tableW = pageWidth * PT_TO_IN - tableX * 2;
 
-  // Build PptxGenJS table rows: TableRow = TableCell[]
   const pptRows = table.rows.map((gridRow) => {
     return Array.from({ length: numCols }, (_, colIdx) => {
       const cellRuns = gridRow.cells[colIdx] || [];
@@ -758,7 +934,7 @@ function addTableToSlide(slide: any, table: TableBlock, pageWidth: number, pageH
         options: {
           fontSize: 11,
           fontFace: DEFAULT_FONT,
-          color: '363636',
+          color: DEFAULT_COLOR,
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           margin: [2, 4, 2, 4] as any,
         },
@@ -773,11 +949,11 @@ function addTableToSlide(slide: any, table: TableBlock, pageWidth: number, pageH
     border: { type: 'solid' as const, pt: 0.5, color: 'AAAAAA' },
     fontSize: 11,
     fontFace: DEFAULT_FONT,
-    color: '363636',
+    color: DEFAULT_COLOR,
   });
 }
 
-// Process a text-based PDF page: add text boxes and tables to slide
+// Add all text boxes (and tables) for a text-based page
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function addTextPageToSlide(
   slide: any,
@@ -793,19 +969,17 @@ function addTextPageToSlide(
     for (const idx of table.lineIndices) tableLineIndices.add(idx);
   }
 
-  // Add non-table lines as absolute text boxes
   for (let i = 0; i < lines.length; i++) {
     if (tableLineIndices.has(i)) continue;
     addLineToSlide(slide, lines[i], pageWidth, pageHeight);
   }
 
-  // Add tables
   for (const table of tables) {
     addTableToSlide(slide, table, pageWidth, pageHeight);
   }
 }
 
-// Process a scanned page: OCR → text boxes, or full-page image embed
+// Fallback for truly scanned pages (no text items at all and no background images)
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function addScannedPageToSlide(
   slide: any,
@@ -837,8 +1011,8 @@ async function addScannedPageToSlide(
       status: `Page ${pageNum}: OCR ${ocrResult.confidence.toFixed(0)}% — converting to text...`,
     });
 
-    // OCR paragraphs have pixel bounding boxes (canvas y = 0 is top of page)
-    // Convert: 1 canvas pixel = 1/(OCR_SCALE) PDF points = PT_TO_IN/OCR_SCALE inches
+    // Convert canvas pixel bounding boxes to PPT inches
+    // 1 px = 1/OCR_SCALE PDF points = PT_TO_IN/OCR_SCALE inches
     const pxToIn = PT_TO_IN / OCR_SCALE;
 
     for (const para of ocrResult.paragraphs) {
@@ -854,7 +1028,7 @@ async function addScannedPageToSlide(
         h: h_in,
         fontSize: Math.max(6, fontSize),
         fontFace: DEFAULT_FONT,
-        color: '363636',
+        color: DEFAULT_COLOR,
         fit: 'none',
         wrap: true,
         margin: 0,
@@ -867,11 +1041,10 @@ async function addScannedPageToSlide(
       status: `Page ${pageNum}: Low OCR confidence (${ocrResult.confidence.toFixed(0)}%) — embedding as image...`,
     });
 
-    const dataUrl = await renderPageToBase64(page, 2);
+    const dataUrl = await renderPageToPngDataUrl(page, 2);
     slide.addImage({
       data: dataUrl,
-      x: 0,
-      y: 0,
+      x: 0, y: 0,
       w: pageWidth * PT_TO_IN,
       h: pageHeight * PT_TO_IN,
     });
@@ -900,7 +1073,7 @@ export async function convertPdfToPpt(
     status: `Found ${totalPages} page(s). Setting up presentation...`,
   });
 
-  // Read first page dimensions to set slide layout
+  // Read first page dimensions to define slide layout
   const firstPage = await pdf.getPage(1);
   const firstViewport = (
     firstPage as unknown as {
@@ -918,7 +1091,6 @@ export async function convertPdfToPpt(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const pptx: any = new PptxGenJS();
 
-  // Define layout matching PDF page dimensions
   pptx.defineLayout({ name: 'PDF_LAYOUT', width: slideWidthIn, height: slideHeightIn });
   pptx.layout = 'PDF_LAYOUT';
 
@@ -941,29 +1113,56 @@ export async function convertPdfToPpt(
     const pageWidth = viewport.width;
     const pageHeight = viewport.height;
 
+    // Parallelize operator list analysis + text extraction for speed
+    const [pageAnalysis, textContent] = await Promise.all([
+      analyzePageOperators(page),
+      (page as unknown as {
+        getTextContent: () => Promise<{ items: unknown[]; styles: Record<string, { fontFamily: string }> }>;
+      }).getTextContent(),
+    ]);
+
     const slide = pptx.addSlide();
-    const isText = await hasTextContent(page);
 
-    if (isText) {
-      const textContent = await (
-        page as unknown as {
-          getTextContent: () => Promise<{ items: unknown[] }>;
-        }
-      ).getTextContent();
+    const fontFamilyMap = buildFontFamilyMap(textContent.styles);
 
-      const rawItems = (textContent.items as unknown[])
-        .map(parseRawItem)
-        .filter((i): i is RawTextItem => i !== null);
+    // Parse text items with color + font resolution
+    const rawItems = (textContent.items as unknown[])
+      .map((item) => parseRawItem(item, pageAnalysis.colorMap, fontFamilyMap))
+      .filter((i): i is RawTextItem => i !== null);
 
-      if (rawItems.length > 0) {
-        const lines = groupIntoLines(rawItems);
-        const filteredLines = lines.filter((l) => {
-          const text = l.items.map((i) => i.str).join('');
-          return !isBrowserHeaderFooter(text) && !isPageNumberLine(l, pageWidth);
-        });
-        addTextPageToSlide(slide, filteredLines, pageWidth, pageHeight);
-      }
-    } else {
+    const meaningfulItemCount = rawItems.length;
+
+    // ── Step 1: Background image ────────────────────────────────────────────
+    // Render full page as JPEG background when embedded images are present.
+    // This preserves visual fidelity of shapes, gradients, decorative elements
+    // that cannot be reconstructed from text extraction alone.
+    if (pageAnalysis.hasImages) {
+      onProgress({
+        progress: progressBase,
+        status: `Page ${pageNum}: Rendering background image...`,
+      });
+      const bgDataUrl = await renderPageToJpegDataUrl(page, 1.5);
+      slide.addImage({
+        data: bgDataUrl,
+        x: 0, y: 0,
+        w: pageWidth * PT_TO_IN,
+        h: pageHeight * PT_TO_IN,
+      });
+    }
+
+    // ── Step 2: Text boxes ──────────────────────────────────────────────────
+    // Extract text whenever ANY text items exist (threshold = 2 to avoid
+    // false triggers on stray punctuation, but low enough to catch sparse
+    // presentation slides that have 3-8 text elements per page).
+    if (meaningfulItemCount >= 2) {
+      const lines = groupIntoLines(rawItems);
+      const filteredLines = lines.filter((l) => {
+        const text = l.items.map((i) => i.str).join('');
+        return !isBrowserHeaderFooter(text) && !isPageNumberLine(l, pageWidth);
+      });
+      addTextPageToSlide(slide, filteredLines, pageWidth, pageHeight);
+    } else if (!pageAnalysis.hasImages) {
+      // Truly unreadable page (no text, no images) → OCR fallback
       await addScannedPageToSlide(
         slide,
         page,
@@ -974,11 +1173,12 @@ export async function convertPdfToPpt(
         pageHeight
       );
     }
+    // Note: if hasImages=true but meaningfulItemCount < 2, we still have the
+    // background image — the slide looks correct even without text boxes.
   }
 
   onProgress({ progress: 88, status: 'Generating PowerPoint file...' });
 
-  // Generate PPTX as ArrayBuffer, then wrap in Blob
   const output = await pptx.write({ outputType: 'arraybuffer' }) as ArrayBuffer;
   const blob = new Blob([output], {
     type: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
