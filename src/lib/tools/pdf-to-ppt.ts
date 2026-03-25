@@ -43,6 +43,8 @@ export interface PdfToPptResult {
   textOnlyBlob: Blob;
   pageCount: number;
   originalSize: number;
+  // Percentage of pages where text was successfully extracted (0-100)
+  qualityScore: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -1059,6 +1061,7 @@ export async function convertPdfToPpt(
 
   const PPTX_MIME = 'application/vnd.openxmlformats-officedocument.presentationml.presentation';
   const progressPerPage = 75 / totalPages;
+  let slidesWithText = 0;
 
   // Color options per output mode:
   //   Hybrid    → white overlay on JPEG background
@@ -1116,6 +1119,7 @@ export async function convertPdfToPpt(
         return !isBrowserHeaderFooter(text) && !isPageNumberLine(l, pageWidth);
       });
     }
+    if (filteredLines.length > 0) slidesWithText++;
 
     // ── Output 1: Hybrid (background image + white text overlay) ───────────
     {
@@ -1188,5 +1192,6 @@ export async function convertPdfToPpt(
     textOnlyBlob: new Blob([textOnlyBuffer], { type: PPTX_MIME }),
     pageCount: totalPages,
     originalSize: file.size,
+    qualityScore: Math.round((slidesWithText / totalPages) * 100),
   };
 }

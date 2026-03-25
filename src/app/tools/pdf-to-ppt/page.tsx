@@ -223,6 +223,48 @@ export default function PdfToPptPage() {
             );
           })}
 
+          {/* Data Quality */}
+          {(() => {
+            const score = result.qualityScore;
+            const label =
+              score >= 80
+                ? `Data Quality: High (${score}%)`
+                : score >= 50
+                ? `Data Quality: Medium (${score}%)`
+                : `Data Quality: Low (${score}%)`;
+            const badgeClass =
+              score >= 80
+                ? "bg-emerald-50 text-emerald-700"
+                : score >= 50
+                ? "bg-amber-50 text-amber-700"
+                : "bg-red-50 text-red-700";
+            return (
+              <div className="mb-4 flex items-start gap-3 p-3 bg-slate-50 border border-slate-100 rounded-xl">
+                <span className={`inline-flex items-center gap-1.5 px-3 py-1 text-xs font-medium rounded-full shrink-0 ${badgeClass}`}>
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+                    <circle cx="12" cy="12" r="10" />
+                  </svg>
+                  {label}
+                </span>
+                <p className="text-xs text-slate-500 leading-relaxed">
+                  Percentage of slides where editable text was successfully extracted from the PDF.
+                </p>
+              </div>
+            );
+          })()}
+
+          {/* Info Notice */}
+          <div className="mb-4 flex items-start gap-3 p-3 bg-blue-50 border border-blue-100 rounded-xl">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-blue-500 shrink-0 mt-0.5">
+              <circle cx="12" cy="12" r="10" />
+              <line x1="12" y1="8" x2="12" y2="12" />
+              <line x1="12" y1="16" x2="12.01" y2="16" />
+            </svg>
+            <p className="text-xs text-blue-700 leading-relaxed">
+              Output quality depends on the source PDF structure. Text-based PDFs produce the most editable presentations. Scanned or image-heavy PDFs will be converted as images.
+            </p>
+          </div>
+
           {/* Reset */}
           <button
             onClick={handleReset}
@@ -232,6 +274,43 @@ export default function PdfToPptPage() {
           </button>
         </div>
       )}
+
+      {/* How it works */}
+      <div className="mt-16 pt-12 border-t border-slate-100">
+        <h2 className="text-lg font-semibold text-slate-900 mb-6">How it works</h2>
+        <div className="grid sm:grid-cols-4 gap-6">
+          {[
+            {
+              step: "1",
+              title: "Upload PDF",
+              desc: "Select any PDF document — presentations, reports, or scanned files.",
+            },
+            {
+              step: "2",
+              title: "Smart Extraction",
+              desc: "Text, images, and layout are analyzed. Editable text is extracted where possible, preserving fonts and positioning.",
+            },
+            {
+              step: "3",
+              title: "3 Output Modes",
+              desc: "Get three versions: Hybrid (image + text overlay), Image Only (visual fidelity), and Text Only (fully editable).",
+            },
+            {
+              step: "4",
+              title: "Download PPTX",
+              desc: "Download your preferred version as a PowerPoint file, ready to edit or present.",
+            },
+          ].map((item) => (
+            <div key={item.step} className="flex flex-col items-center text-center">
+              <div className="w-10 h-10 rounded-full bg-accent-50 flex items-center justify-center mb-3">
+                <span className="text-sm font-bold text-accent-600">{item.step}</span>
+              </div>
+              <h3 className="text-sm font-semibold text-slate-900 mb-1">{item.title}</h3>
+              <p className="text-xs text-slate-500">{item.desc}</p>
+            </div>
+          ))}
+        </div>
+      </div>
     </ToolPageLayout>
   );
 }
