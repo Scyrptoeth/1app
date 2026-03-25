@@ -361,7 +361,20 @@ function correctNumericValue(text: string): string {
     const parts = cleaned.split('.');
     const allGroupsOf3 = parts.slice(1).every(p => /^\d{3}$/.test(p));
     const firstGroupValid = /^\d{1,3}$/.test(parts[0]);
-    if (!allGroupsOf3 || !firstGroupValid) cleaned = cleaned.replace(/\./g, '');
+    if (!allGroupsOf3 || !firstGroupValid) {
+      // Check if last group looks like a decimal fraction (1-2 digits) misread by OCR
+      // e.g. "1.234.56" → OCR misread "1.234,56" → restore as "1234,56"
+      const lastGroup = parts[parts.length - 1];
+      const middleGroups = parts.slice(1, -1);
+      const lastIsDecimal = /^\d{1,2}$/.test(lastGroup) && parts.length >= 2;
+      const middleAreThousands = middleGroups.every(p => /^\d{3}$/.test(p));
+      if (lastIsDecimal && middleAreThousands && /^\d{1,3}$/.test(parts[0])) {
+        const intPart = parts.slice(0, -1).join('');
+        cleaned = intPart + ',' + lastGroup;
+      } else {
+        cleaned = cleaned.replace(/\./g, '');
+      }
+    }
   }
   return cleaned;
 }

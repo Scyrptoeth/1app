@@ -198,7 +198,7 @@ function consolidateLineRuns(line: TextLine): ConsolidatedRun[] {
     let prefix = '';
     if (prev) {
       const gap = item.x - (prev.x + prev.width);
-      if (gap > prev.fontSize * 0.25) prefix = ' ';
+      if (gap > prev.fontSize * 0.15) prefix = ' ';
     }
 
     const text = prefix + item.str;
