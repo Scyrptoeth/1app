@@ -122,6 +122,19 @@ export const tools: ToolConfig[] = [
     outputFormats: [".docx"],
     isAvailable: true,
   },
+  {
+    id: "pdf-to-ppt",
+    name: "PDF to PowerPoint",
+    description:
+      "Convert PDF documents into editable PowerPoint (.pptx) presentations, preserving text positioning, fonts, and tables.",
+    category: "transform",
+    icon: "Presentation",
+    route: "/tools/pdf-to-ppt",
+    accentColor: "violet",
+    inputFormats: [".pdf"],
+    outputFormats: [".pptx"],
+    isAvailable: true,
+  },
 ];
 
 export interface ToolSection {
@@ -136,7 +149,7 @@ export const SECTIONS: ToolSection[] = [
   },
   {
     label: "Convert from PDF",
-    toolIds: ["pdf-to-image", "pdf-to-excel", "pdf-to-word"],
+    toolIds: ["pdf-to-image", "pdf-to-excel", "pdf-to-word", "pdf-to-ppt"],
   },
   {
     label: "Convert to Excel",
