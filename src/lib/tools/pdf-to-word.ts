@@ -225,18 +225,38 @@ function consolidateLineRuns(line: TextLine): ConsolidatedRun[] {
   return runs;
 }
 
-function extractFontFamily(fontName: string): string | undefined {
+// Default font for OCR content and unrecognized PDF fonts.
+// Arial is the closest universally-available equivalent to common web fonts
+// (Inter, Roboto, Helvetica, system-ui) that appear in web-printed PDFs.
+const DEFAULT_FONT = 'Arial';
+
+function extractFontFamily(fontName: string): string {
+  // Strip ABCDEF+ subset prefix common in embedded/subsetted PDF fonts
   const clean = fontName.replace(/^[A-Z]{6}\+/, '');
+
+  // Named font matches (case-insensitive)
+  if (/times\s*new\s*roman|timesnewroman/i.test(clean)) return 'Times New Roman';
   if (/times/i.test(clean)) return 'Times New Roman';
   if (/arial/i.test(clean)) return 'Arial';
-  if (/helvetica/i.test(clean)) return 'Arial';
+  if (/helvetica/i.test(clean)) return 'Arial';   // Helvetica → Arial (equivalent)
+  if (/courier\s*new|couriernew/i.test(clean)) return 'Courier New';
   if (/courier/i.test(clean)) return 'Courier New';
   if (/calibri/i.test(clean)) return 'Calibri';
   if (/georgia/i.test(clean)) return 'Georgia';
   if (/verdana/i.test(clean)) return 'Verdana';
   if (/garamond/i.test(clean)) return 'Garamond';
   if (/palatino/i.test(clean)) return 'Palatino Linotype';
-  return undefined;
+  if (/trebuchet/i.test(clean)) return 'Trebuchet MS';
+  if (/tahoma/i.test(clean)) return 'Tahoma';
+  if (/cambria/i.test(clean)) return 'Cambria';
+  if (/franklin\s*gothic|franklingothic/i.test(clean)) return 'Franklin Gothic Medium';
+  // Common web fonts → closest Word-available equivalent
+  if (/inter|roboto|opensans|open\s*sans|lato|source\s*sans|sourcesans/i.test(clean)) return 'Arial';
+  if (/merriweather|playfair|lora|source\s*serif|sourceserif/i.test(clean)) return 'Georgia';
+  if (/montserrat|raleway|nunito|poppins|ubuntu/i.test(clean)) return 'Arial';
+
+  // Obfuscated/subset font names (e.g. g_d0_f1, AAAAAB+font000000...) → default
+  return DEFAULT_FONT;
 }
 
 // ---------------------------------------------------------------------------
@@ -245,13 +265,12 @@ function extractFontFamily(fontName: string): string | undefined {
 
 function runsToTextRuns(runs: ConsolidatedRun[]): TextRun[] {
   return runs.map((run) => {
-    const fontFamily = extractFontFamily(run.fontName);
     return new TextRun({
       text: run.text,
       bold: run.isBold,
       italics: run.isItalic,
-      size: Math.max(16, Math.round(run.fontSize * 2)), // half-points
-      ...(fontFamily ? { font: fontFamily } : {}),
+      size: Math.max(16, Math.round(run.fontSize * 2)), // half-points (1pt = 2 half-pts)
+      font: extractFontFamily(run.fontName),
     });
   });
 }
@@ -568,10 +587,31 @@ async function preprocessCanvasForOcr(
   });
 }
 
+// A logical paragraph extracted by Tesseract, with pixel bbox for spacing computation
+interface OcrParagraph {
+  text: string;
+  y0Px: number;  // top of paragraph in OCR canvas pixels
+  y1Px: number;  // bottom of paragraph in OCR canvas pixels
+  numLines: number;
+}
+
 interface OcrPageResult {
   confidence: number;
   wordCount: number;
-  lines: string[];  // OCR text grouped by line
+  paragraphs: OcrParagraph[];
+}
+
+// Filter browser-generated header/footer lines that appear in web-printed PDFs
+function isBrowserHeaderFooter(text: string): boolean {
+  const t = text.trim();
+  // Date/time + site title: "3/9/26, 8:45 AM ... | SiteName"
+  if (/^\d{1,2}\/\d{1,2}\/\d{2,4}[,\s]/.test(t)) return true;
+  // URL line
+  if (/^https?:\/\//.test(t)) return true;
+  // Standalone page counter "1/7" or "Page 1 of 7"
+  if (/^\d+\/\d+$/.test(t)) return true;
+  if (/^page\s+\d+\s+of\s+\d+$/i.test(t)) return true;
+  return false;
 }
 
 async function runOcrOnPage(imageBlob: Blob): Promise<OcrPageResult> {
@@ -610,18 +650,43 @@ async function runOcrOnPage(imageBlob: Blob): Promise<OcrPageResult> {
   await worker.terminate();
 
   const data = result.data;
-  const lines: string[] = [];
+  const paragraphs: OcrParagraph[] = [];
   let wordCount = 0;
 
   if (data.blocks) {
     for (const block of data.blocks) {
       for (const para of block.paragraphs) {
+        // Join all lines in this Tesseract paragraph into one logical paragraph
+        const paraLines: string[] = [];
+        let y0 = Infinity, y1 = -Infinity;
+        let lineCount = 0;
+
         for (const line of para.lines) {
-          const lineText = line.words.map((w: { text: string }) => w.text).join(' ').trim();
-          if (lineText) {
-            lines.push(lineText);
-            wordCount += line.words.length;
+          const lineText = line.words
+            .map((w: { text: string }) => w.text)
+            .join(' ')
+            .trim();
+          if (!lineText) continue;
+
+          paraLines.push(lineText);
+          wordCount += line.words.length;
+          lineCount++;
+
+          // Track bbox extent across all lines
+          if (line.bbox) {
+            y0 = Math.min(y0, line.bbox.y0);
+            y1 = Math.max(y1, line.bbox.y1);
           }
+        }
+
+        const text = paraLines.join(' ');
+        if (text && !isBrowserHeaderFooter(text)) {
+          paragraphs.push({
+            text,
+            y0Px: isFinite(y0) ? y0 : 0,
+            y1Px: isFinite(y1) ? y1 : 0,
+            numLines: lineCount,
+          });
         }
       }
     }
@@ -630,7 +695,7 @@ async function runOcrOnPage(imageBlob: Blob): Promise<OcrPageResult> {
   return {
     confidence: data.confidence || 0,
     wordCount,
-    lines,
+    paragraphs,
   };
 }
 
@@ -716,13 +781,34 @@ async function buildScannedPageContent(
       status: `Page ${pageNum}: OCR confidence ${ocrResult.confidence.toFixed(0)}% — converting to text...`,
     });
 
-    return ocrResult.lines.map(
-      (lineText) =>
-        new Paragraph({
-          children: [new TextRun({ text: lineText, size: 24 })],
-          spacing: { after: 80 },
-        })
-    );
+    const { paragraphs } = ocrResult;
+    return paragraphs.map((para, i) => {
+      // Estimate font size from line bbox height
+      // lineHeightPx / OCR_SCALE = lineHeightPt; divide by 1.2 (standard line-height ratio) for fontSizePt
+      const lineHeightPx = para.numLines > 0 ? (para.y1Px - para.y0Px) / para.numLines : 0;
+      const fontSizePt = lineHeightPx > 0 ? Math.round(lineHeightPx / OCR_SCALE / 1.2) : 11;
+      const clampedFontSizePt = Math.max(8, Math.min(36, fontSizePt));
+
+      // Compute spacing after: gap between bottom of this para and top of next (in TWIPs)
+      // 1 pt = 20 TWIPs; clamp between 60 and 480 TWIPs
+      const next = paragraphs[i + 1];
+      let spacingAfterTWIPs = 160; // default ~8pt
+      if (next && para.y1Px > 0 && next.y0Px > para.y1Px) {
+        const gapPt = (next.y0Px - para.y1Px) / OCR_SCALE;
+        spacingAfterTWIPs = Math.round(Math.max(60, Math.min(480, gapPt * 20)));
+      }
+
+      return new Paragraph({
+        children: [
+          new TextRun({
+            text: para.text,
+            size: clampedFontSizePt * 2, // half-points
+            font: DEFAULT_FONT,
+          }),
+        ],
+        spacing: { after: spacingAfterTWIPs },
+      });
+    });
   }
 
   // Low OCR confidence → embed the page as an image in the Word document
