@@ -149,3 +149,49 @@ const worker = await Tesseract.createWorker('ind+eng', 1, {
 - `baseX` menggunakan "at least 1 occurrence" bukan percentage: section headers (1× per halaman) tidak boleh diabaikan
 - `contentRight` = max qualifying cluster bukan mode: halaman dengan banyak indented lines tidak underestimate right margin
 - Centering check tanpa lineWidth: short text ("SURAT EDARAN") tetap terdeteksi sebagai centered
+
+
+## 8. Word-to-PDF — Direct DOCX-to-PDF Rendering
+
+**Library:** JSZip (DOCX unpack), jsPDF (PDF generation), Canvas API (image crop)
+
+**Pipeline:**
+1. **JSZip** — unpack `.docx` (ZIP) → extract `word/document.xml`, `word/_rels/document.xml.rels`, `word/media/*`, `word/styles.xml`
+2. **DOMParser** — parse OOXML XML ke DOM; traverse `w:document → w:body → w:p` paragraphs
+3. **Canvas** — crop each image per `a:srcRect` (per-mille crop), scale ke 2× display size, encode JPEG @0.85
+4. **jsPDF** — render vector Helvetica text + embedded JPEG images langsung ke PDF
+
+**Document Model:**
+```
+DocxParagraph {
+  items: (DocxRun | DocxImage | DocxPageBreak)[]
+  alignment, spacingBefore/After, lineSpacingMult
+  indentLeftPt, indentHangingPt
+}
+DocxRun { text, bold, italic, fontSizePt, colorHex, fontName }
+DocxImage { rId, widthEmu, heightEmu, srcRectT/B/L/R }
+```
+
+**Font metrics lookups:**
+- `FONT_LINE_SPACING` — OS/2-based line height multiplier (Segoe UI = 1.44, default = 1.15)
+  - Nilai 1.44 diukur dari benchmark PDF: 15.8pt / 11pt = 1.436
+  - Source: paragraph-mark font (`pPr/rPr/rFonts/@w:ascii`)
+- `FONT_WIDTH_FACTORS` — width correction vs Helvetica (Segoe UI = 1.15, Verdana = 1.10, default = 1.0)
+  - Digunakan di `layoutWidth()` untuk line-breaking saja (bukan untuk render cursor position)
+
+**Page break handling:**
+- `w:br type="column/page"` → insert `DocxPageBreak` item
+- `w:lastRenderedPageBreak` (lrpb) → insert `DocxPageBreak` HANYA jika `!hasExplicitBreak`
+- `hasExplicitBreak` = scan semua sibling runs dalam `w:p` dulu — cegah double page-break
+- Segment-based rendering: split `para.items` di `pageBreak` markers → render tiap segmen di halaman berbeda
+
+**Image processing:**
+- `wp:extent cx/cy` → display size (EMU). 1 pt = 12700 EMU.
+- `a:srcRect t/b/l/r` → crop per-mille (0–100000). `cropTop = (t/100000) * naturalHeight`
+- Output canvas: scale ke `min(maxWPx/cropW, maxHPx/cropH)` where max = 2× display pts
+- Encode: `canvas.toDataURL("image/jpeg", 0.85)` dengan white background fill
+
+**Justify rendering fix:**
+- `layoutLines` menggunakan `layoutWidth` (×fontFactor) untuk line-break decisions
+- `renderLine` untuk justify: compute `avgFactor = sumLayoutW / (totalWordW + totalSpaceW)`
+  → distribute ke `lineWidthPt / avgFactor` (bukan `lineWidthPt`) → natural space width

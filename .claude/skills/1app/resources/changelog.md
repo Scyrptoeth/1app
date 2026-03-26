@@ -2,6 +2,46 @@
 
 > History perubahan lengkap. Entry terbaru di atas.
 
+## 26 Maret 2026 — Word-to-PDF: Per-Font Width Correction + Justify Fix
+
+### Refactor — font-specific width correction
+- **Commit**: `ee44ed7`
+- **Message**: `refactor(word-to-pdf): per-font width correction instead of global constant`
+- **Perubahan**:
+  - Hapus global `FONT_WIDTH_CORRECTION = 1.15` → ganti dengan `FONT_WIDTH_FACTORS` lookup table
+  - Segoe UI/Verdana tetap dapat koreksi (`1.15`/`1.10`); Calibri, Arial, unknown → `1.0` (no correction)
+  - Tambah `fontName: string` ke `DocxRun` dan `TextToken`, di-parse dari `w:rPr/w:rFonts`
+  - `layoutWidth()` sekarang menerima `fontName` dan lookup per-token → koreksi per-karakter
+  - Fix justify rendering: distribute extra space ke `lineWidthPt / avgFactor` (bukan `lineWidthPt` penuh) — mencegah over-wide spaces di paragraf justified Segoe UI
+- **Hasil**: Dokumen Segoe UI tetap 7 halaman 287KB; Calibri/Arial tidak lagi over-wrap
+
+---
+
+## 26 Maret 2026 — Word-to-PDF: Phase 2 Complete Rewrite
+
+### Fitur ke-8 — Word-to-PDF Converter (Phase 2: direct DOCX-to-PDF)
+- **Commits**: `90dfe42`, `b5a8311`
+- **File utama**: `src/lib/tools/word-to-pdf.ts`, `src/app/tools/word-to-pdf/page.tsx`
+- **Perubahan arsitektur** — dari html2canvas ke direct DOCX parsing:
+  - **Pipeline baru**: JSZip → DOMParser (OOXML) → Canvas image crop → jsPDF vector text
+  - Text output sebagai PDF vector text (searchable, selectable, copyable) — bukan raster
+  - Image crop via Canvas menggunakan `w:srcRect` (per-mille crop values dari OOXML)
+- **Bug fixes dalam sesi**:
+  - **`documentElement` bug**: `firstChild(docXml, W_NS, "body")` mencari di Document object (bukan root element) → PDF 3KB kosong. Fix: `firstChild(docXml.documentElement, W_NS, "body")`
+  - **File size 14MB**: `canvas.toDataURL("image/png")` full-res RGBA. Fix: scale ke 2× display size + `toDataURL("image/jpeg", 0.85)` + white background → 287KB
+  - **Double page-break (10 pages)**: P15/P30/P57/P73 punya `w:br type="column"` di run[0] DAN `w:lastRenderedPageBreak` di run[1] → 2 pageBreak items. Fix: `hasExplicitBreak` flag — scan semua runs di paragraf dulu; jika ada explicit break, semua lrpb diabaikan
+  - **6 pages (harus 7)**: Default line height 1.15× terlalu kecil untuk Segoe UI (OS/2 metrics → 1.44×). Fix: `FONT_LINE_SPACING["Segoe UI"] = 1.44` dari paragraph-mark font (`pPr/rPr/rFonts`)
+- **Hasil**: 7 halaman, 287 KB, teks searchable; match dengan benchmark Word
+
+### Teknis utama word-to-pdf.ts:
+- `FONT_LINE_SPACING`: lookup OS/2-based line height multiplier per font (Segoe UI = 1.44, default = 1.15)
+- `FONT_WIDTH_FACTORS`: lookup width correction per font (Segoe UI = 1.15, default = 1.0)
+- `hasExplicitBreak`: scan paragraph runs dulu sebelum process lrpb
+- `cropAllImages`: scale 2×, JPEG @0.85, white background
+- Segment-based page breaks: split items di `pageBreak` markers → render segmen terpisah
+
+---
+
 ## 25 Maret 2026 (Sesi Lanjutan — PDF-to-PPT + Consistency Audit)
 
 ### PDF-to-PPT Converter (fitur ke-7) + 3-mode output + UI redesign

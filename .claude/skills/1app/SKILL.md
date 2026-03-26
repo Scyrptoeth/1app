@@ -93,6 +93,23 @@ Skill ini memberikan Claude seluruh konteks tentang proyek 1APP sehingga setiap 
   - `qualityScore = slidesWithText / totalPages * 100` — % slide dengan extractable text
 - **Status**: Production ready, deployed
 
+### 8. Word-to-PDF Converter
+- **URL**: `/tools/word-to-pdf`
+- **Files**: `src/lib/tools/word-to-pdf.ts`, `src/app/tools/word-to-pdf/page.tsx`
+- **Library**: JSZip (unpack DOCX), jsPDF (PDF generation), Canvas API (image crop)
+- **Teknik**: Direct DOCX-to-PDF — tidak menggunakan html2canvas. Pipeline:
+  1. JSZip → unpack DOCX (document.xml, _rels, media/)
+  2. DOMParser → parse OOXML → document model (paragraphs, runs, images, page breaks)
+  3. Canvas → crop images per `w:srcRect` (per-mille crop values), scale 2×, JPEG @0.85
+  4. jsPDF → render vector text + embedded JPEG images langsung ke PDF
+- **Key detail**:
+  - `FONT_LINE_SPACING` lookup — Segoe UI = 1.44×, default = 1.15× (dari OS/2 metrics)
+  - `FONT_WIDTH_FACTORS` lookup — per-font width correction; Segoe UI = 1.15, Calibri/Arial = 1.0
+  - `hasExplicitBreak` guard — scan semua runs dulu; jika ada `w:br type="column/page"`, semua `w:lastRenderedPageBreak` diabaikan (cegah double page-break)
+  - Segment-based rendering — paragraf di-split di `pageBreak` markers → segmen berbeda per halaman
+  - Justify rendering — distribute ke `lineWidthPt / avgFactor` (Helvetica-equivalent width), bukan `lineWidthPt` penuh
+- **Status**: Production ready, deployed (7 halaman, 287 KB untuk test document Segoe UI)
+
 ### Halaman UI
 Setiap tool memiliki halaman UI di `src/app/tools/<tool-name>/page.tsx`. Pattern: user upload file, client-side processing, preview, download/export.
 
@@ -119,8 +136,10 @@ src/
 │   │   │   └── page.tsx          # UI halaman PDF-to-Image converter
 │   │   ├── pdf-to-word/
 │   │   │   └── page.tsx          # UI halaman PDF-to-Word converter
-│   │   └── pdf-to-ppt/
-│   │       └── page.tsx          # UI halaman PDF-to-PowerPoint converter
+│   │   ├── pdf-to-ppt/
+│   │   │   └── page.tsx          # UI halaman PDF-to-PowerPoint converter
+│   │   └── word-to-pdf/
+│   │       └── page.tsx          # UI halaman Word-to-PDF converter
 │   └── page.tsx                  # Landing page
 ├── lib/
 │   └── tools/
@@ -130,7 +149,8 @@ src/
 │       ├── pdf-to-excel.ts           # Hybrid PDF-to-Excel (pdfjs + OCR fallback)
 │       ├── pdf-to-image.ts           # PDF render to PNG + ZIP download
 │       ├── pdf-to-word.ts            # Hybrid PDF-to-Word (layout reconstruction)
-│       └── pdf-to-ppt.ts             # 3-mode PDF-to-PPTX (Hybrid/Image/Text)
+│       ├── pdf-to-ppt.ts             # 3-mode PDF-to-PPTX (Hybrid/Image/Text)
+│       └── word-to-pdf.ts            # Direct DOCX-to-PDF (JSZip + jsPDF, vector text)
 └── components/                   # Shared components
 ```
 
@@ -217,6 +237,11 @@ Pelajaran penting dari pengembangan sebelumnya yang harus diingat:
 - **Text Only PPT: image fallback hanya untuk pure-image slides** — Jika semua slide punya `hasImages=true` (karena dokumen embed raster), Text Only akan selalu jatuh ke image fallback, menghancurkan tujuan "editable". Fix: fallback image hanya jika `rawItems.length === 0` (betul-betul tidak ada text sama sekali).
 - **Playwright strict mode: gunakan `.nth(i)` bukan text-based locator untuk multiple buttons** — `page.locator('div:has(...) button')` bisa resolve ke banyak element dan throw strict mode violation. Lebih aman: `page.locator('button:has-text("Download")').nth(0/1/2)`.
 - **3 PPTX files efisien: render 1× per page, share ke semua mode** — Panggil `renderPageToJpegDataUrl()` sekali, gunakan hasil yang sama untuk Hybrid background, Image Only background, dan skip untuk Text Only. Tidak perlu render 3×.
+- **Word-to-PDF: `firstChild(docXml, ...)` harus `firstChild(docXml.documentElement, ...)`** — `docXml` adalah Document object. Direct children-nya adalah XML declaration + `w:document` root element — BUKAN `w:body`. Selalu traverse via `documentElement` untuk akses elemen di dalam root.
+- **Word-to-PDF: `w:lastRenderedPageBreak` harus di-ignore jika paragraf sudah punya `w:br type="column/page"`** — Paragraf P15/P30/P57/P73 punya keduanya di run yang berbeda. Tanpa `hasExplicitBreak` guard, lrpb di run[1] menambah pageBreak kedua → 10 halaman (harus 7).
+- **Segoe UI OS/2 line height = 1.44×, bukan 1.15×** — Diukur dari benchmark PDF dengan PyMuPDF: line positions menunjukkan 15.8pt per line untuk 11pt font = 1.436×. Default 1.15× (Helvetica) terlalu kecil → konten tidak overflow ke halaman berikutnya sesuai aslinya.
+- **FONT_WIDTH_CORRECTION harus per-font, bukan global** — Global 1.15 membuat dokumen Arial/Calibri over-wrap (15% lebih banyak baris → lebih banyak halaman). Hanya font yang memang lebih lebar dari Helvetica (Segoe UI, Verdana) yang butuh koreksi > 1.0.
+- **Word-to-PDF canvas image: PNG → JPEG WAJIB untuk dokumen dengan banyak gambar** — `toDataURL("image/png")` pada gambar 1458×886px menghasilkan ~1.4MB per gambar. 10 gambar = 14MB PDF. Switch ke `toDataURL("image/jpeg", 0.85)` + scale 2×display + white bg → 287KB total.
 
 ## Resources
 
