@@ -63,6 +63,7 @@ interface DocxRun {
   italic: boolean;
   fontSizePt: number;
   colorHex: string; // "000000" default
+  fontName: string; // e.g. "Segoe UI", "Arial", "" = document default
 }
 
 interface DocxImage {
@@ -364,8 +365,13 @@ function parseParagraph(pEl: Element, defaultFontSizePt: number): DocxParagraph 
     let bold = false, italic = false;
     let fontSizePt = defaultFontSizePt;
     let colorHex = "000000";
+    let fontName = "";
 
     if (rPr) {
+      const rFonts = firstChild(rPr, W_NS, "rFonts");
+      if (rFonts) {
+        fontName = rFonts.getAttributeNS(W_NS, "ascii") ?? rFonts.getAttribute("w:ascii") ?? "";
+      }
       const bEl = firstChild(rPr, W_NS, "b");
       if (bEl) {
         const v = wAttr(bEl, "val");
@@ -393,7 +399,7 @@ function parseParagraph(pEl: Element, defaultFontSizePt: number): DocxParagraph 
       if (tEl.localName !== "t" || tEl.namespaceURI !== W_NS) continue;
       const text = tEl.textContent ?? "";
       if (text) {
-        para.items.push({ kind: "run", text, bold, italic, fontSizePt, colorHex });
+        para.items.push({ kind: "run", text, bold, italic, fontSizePt, colorHex, fontName });
       }
     }
   }
@@ -529,11 +535,27 @@ async function cropImageToDataUrl(
 // Text layout engine
 // ---------------------------------------------------------------------------
 
-// Segoe UI (document font) is ~10% wider than Helvetica (PDF font).
-// Apply this correction when measuring text for line-breaking so that
-// lines wrap at the same positions as the original document, preserving
-// page-overflow behaviour (e.g. soal 3 spanning 2 pages).
-const FONT_WIDTH_CORRECTION = 1.15;
+// Per-font width correction factors for line-breaking.
+// We render in Helvetica (the standard PDF font), but the DOCX may use a font
+// that is wider than Helvetica. Applying a correction only for those fonts
+// ensures line-break positions match the original document without over-wrapping
+// documents that already use Helvetica-width fonts (Arial, Calibri, etc.).
+//
+// Segoe UI OS/2 metrics → ~15% wider than Helvetica at typical sizes.
+// Calibri, Arial, Times New Roman → nearly identical width to Helvetica/Times PDF fonts.
+// Default (unknown font, "") → 1.0 (no correction — safe for the general case).
+const FONT_WIDTH_FACTORS: Record<string, number> = {
+  "Segoe UI":          1.15,
+  "Segoe UI Light":    1.15,
+  "Segoe UI Semibold": 1.15,
+  "Segoe UI Bold":     1.15,
+  "Verdana":           1.10, // Verdana is also slightly wider than Helvetica
+};
+const DEFAULT_WIDTH_FACTOR = 1.0;
+
+function getFontWidthFactor(fontName: string): number {
+  return FONT_WIDTH_FACTORS[fontName] ?? DEFAULT_WIDTH_FACTOR;
+}
 
 interface TextToken {
   text: string;
@@ -541,6 +563,7 @@ interface TextToken {
   italic: boolean;
   fontSizePt: number;
   colorHex: string;
+  fontName: string;
   isSpace: boolean;
 }
 
@@ -564,11 +587,12 @@ function measureWidth(pdf: any, text: string, bold: boolean, italic: boolean, fo
 }
 
 /** Layout width — used for line-breaking decisions only.
- *  Applies FONT_WIDTH_CORRECTION to simulate the wider Segoe UI characters
- *  that the document uses, so line-break positions approximate the original. */
+ *  Applies a per-font correction so lines wrap at the same positions as the
+ *  original document. Only fonts wider than Helvetica (e.g. Segoe UI) get a
+ *  factor > 1.0; Calibri/Arial documents are not affected. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function layoutWidth(pdf: any, text: string, bold: boolean, italic: boolean, fontSizePt: number): number {
-  return measureWidth(pdf, text, bold, italic, fontSizePt) * FONT_WIDTH_CORRECTION;
+function layoutWidth(pdf: any, text: string, bold: boolean, italic: boolean, fontSizePt: number, fontName: string): number {
+  return measureWidth(pdf, text, bold, italic, fontSizePt) * getFontWidthFactor(fontName);
 }
 
 /** Build a flat token stream (words + spaces) from a list of runs. */
@@ -580,11 +604,11 @@ function buildTokens(runs: DocxRun[]): TextToken[] {
     while (i < s.length) {
       if (s[i] === " " || s[i] === "\t") {
         while (i < s.length && (s[i] === " " || s[i] === "\t")) i++;
-        tokens.push({ text: " ", bold: run.bold, italic: run.italic, fontSizePt: run.fontSizePt, colorHex: run.colorHex, isSpace: true });
+        tokens.push({ text: " ", bold: run.bold, italic: run.italic, fontSizePt: run.fontSizePt, colorHex: run.colorHex, fontName: run.fontName, isSpace: true });
       } else {
         const start = i;
         while (i < s.length && s[i] !== " " && s[i] !== "\t") i++;
-        tokens.push({ text: s.slice(start, i), bold: run.bold, italic: run.italic, fontSizePt: run.fontSizePt, colorHex: run.colorHex, isSpace: false });
+        tokens.push({ text: s.slice(start, i), bold: run.bold, italic: run.italic, fontSizePt: run.fontSizePt, colorHex: run.colorHex, fontName: run.fontName, isSpace: false });
       }
     }
   }
@@ -592,8 +616,8 @@ function buildTokens(runs: DocxRun[]): TextToken[] {
 }
 
 /** Break tokens into lines that fit within lineWidthPt.
- *  Uses layoutWidth (with FONT_WIDTH_CORRECTION) for break decisions
- *  to approximate Segoe UI wrapping even though we render in Helvetica. */
+ *  Uses layoutWidth (per-font correction) for break decisions to approximate
+ *  the original document's line wrapping. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function layoutLines(pdf: any, tokens: TextToken[], lineWidthPt: number): LayoutLine[] {
   const lines: LayoutLine[] = [];
@@ -601,7 +625,7 @@ function layoutLines(pdf: any, tokens: TextToken[], lineWidthPt: number): Layout
   let currentW = 0;
 
   for (const token of tokens) {
-    const tokenW = layoutWidth(pdf, token.text, token.bold, token.italic, token.fontSizePt);
+    const tokenW = layoutWidth(pdf, token.text, token.bold, token.italic, token.fontSizePt, token.fontName);
 
     if (token.isSpace) {
       if (current.length === 0) continue; // skip leading space on a new line
@@ -616,7 +640,7 @@ function layoutLines(pdf: any, tokens: TextToken[], lineWidthPt: number): Layout
         // Doesn't fit — flush, removing trailing spaces
         while (current.length > 0 && current[current.length - 1].isSpace) {
           const p = current.pop()!;
-          currentW -= layoutWidth(pdf, p.text, p.bold, p.italic, p.fontSizePt);
+          currentW -= layoutWidth(pdf, p.text, p.bold, p.italic, p.fontSizePt, p.fontName);
         }
         if (current.length > 0) lines.push({ tokens: current, isLast: false });
         current = [token];
@@ -666,7 +690,18 @@ function renderLine(
   } else if (alignment === "right") {
     startX = x + lineWidthPt - totalW;
   } else if (alignment === "justify" && !isLast && spaceCount > 0) {
-    const extra = lineWidthPt - totalWordW;
+    // The line was broken using layout widths (measureWidth × fontFactor), so
+    // sum(layoutWidth) ≈ lineWidthPt. The actual Helvetica render widths are
+    // narrower by that same factor. Distributing justify to the Helvetica-
+    // equivalent line width (lineWidthPt ÷ avgFactor) keeps spaces natural.
+    let sumLayoutW = 0;
+    for (const t of tokens) {
+      sumLayoutW += layoutWidth(pdf, t.text, t.bold, t.italic, t.fontSizePt, t.fontName);
+    }
+    const renderedTotalW = totalWordW + totalSpaceW;
+    const avgFactor = sumLayoutW > 0 && renderedTotalW > 0 ? sumLayoutW / renderedTotalW : 1.0;
+    const effectiveLineW = lineWidthPt / avgFactor;
+    const extra = effectiveLineW - totalWordW;
     spaceW = extra / spaceCount;
   }
 
