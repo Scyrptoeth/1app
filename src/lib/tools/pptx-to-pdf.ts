@@ -639,7 +639,7 @@ async function renderPic(doc: any, el: Element, images: Map<string, ImageEntry>,
   if (cx <= 0 || cy <= 0) return;
 
   try {
-    doc.addImage(img.data, img.format, x, y, cx, cy, undefined, "FAST");
+    doc.addImage(img.data, img.format, x, y, cx, cy);
   } catch {
     // Skip image if rendering fails
   }
