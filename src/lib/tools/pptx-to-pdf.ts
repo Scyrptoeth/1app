@@ -86,8 +86,6 @@ type PlaceholderMap = Map<string, PlaceholderDef>;
 // ---------------------------------------------------------------------------
 
 const EMU_PER_PT = 12700;
-const SLIDE_W_PT = 960; // 12192000 EMU / 12700
-const SLIDE_H_PT = 540; // 6858000  EMU / 12700
 
 // OOXML namespaces
 const A_NS = "http://schemas.openxmlformats.org/drawingml/2006/main";
