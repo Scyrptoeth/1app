@@ -155,6 +155,18 @@ export default function ImageToExcelPage() {
             </p>
           </div>
 
+          {/* Info Notice */}
+          <div className="mb-4 flex items-start gap-3 p-3 bg-blue-50 border border-blue-100 rounded-xl">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-blue-500 shrink-0 mt-0.5">
+              <circle cx="12" cy="12" r="10" />
+              <line x1="12" y1="8" x2="12" y2="12" />
+              <line x1="12" y1="16" x2="12.01" y2="16" />
+            </svg>
+            <p className="text-xs text-blue-700 leading-relaxed">
+              Output quality depends on image resolution and text clarity. High-contrast images with clear text produce the most accurate Excel data.
+            </p>
+          </div>
+
           {/* Table Preview */}
           <div className="border border-slate-200 rounded-xl overflow-hidden">
             <div className="overflow-x-auto max-h-[600px] overflow-y-auto">

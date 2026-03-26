@@ -53,6 +53,7 @@ export interface PdfToWordResult {
   pageCount: number;
   originalSize: number;
   processedSize: number;
+  qualityScore: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -1110,6 +1111,7 @@ export async function convertPdfToWord(
 
   const allDocChildren: DocElement[] = [];
   const progressPerPage = 75 / totalPages;
+  let pagesWithText = 0;
 
   for (let pageNum = 1; pageNum <= totalPages; pageNum++) {
     const progressBase = 10 + Math.round((pageNum - 1) * progressPerPage);
@@ -1127,6 +1129,7 @@ export async function convertPdfToWord(
     let pageElements: DocElement[];
 
     if (isText) {
+      pagesWithText++;
       // Text-based page: extract text, detect tables, reconstruct layout
       const textContent = await (page as unknown as { getTextContent: () => Promise<{ items: unknown[] }> }).getTextContent();
       const rawItems = (textContent.items as unknown[])
@@ -1185,5 +1188,6 @@ export async function convertPdfToWord(
     pageCount: totalPages,
     originalSize: file.size,
     processedSize: blob.size,
+    qualityScore: Math.round(pagesWithText / totalPages * 100),
   };
 }

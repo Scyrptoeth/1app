@@ -191,6 +191,48 @@ export default function PdfToWordPage() {
             </div>
           </div>
 
+          {/* Data Quality */}
+          {(() => {
+            const score = result.qualityScore;
+            const label =
+              score >= 80
+                ? `Data Quality: High (${score}%)`
+                : score >= 50
+                ? `Data Quality: Medium (${score}%)`
+                : `Data Quality: Low (${score}%)`;
+            const badgeClass =
+              score >= 80
+                ? "bg-emerald-50 text-emerald-700"
+                : score >= 50
+                ? "bg-amber-50 text-amber-700"
+                : "bg-red-50 text-red-700";
+            return (
+              <div className="mt-4 mb-4 flex items-start gap-3 p-3 bg-slate-50 border border-slate-100 rounded-xl">
+                <span className={`inline-flex items-center gap-1.5 px-3 py-1 text-xs font-medium rounded-full shrink-0 ${badgeClass}`}>
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+                    <circle cx="12" cy="12" r="10" />
+                  </svg>
+                  {label}
+                </span>
+                <p className="text-xs text-slate-500 leading-relaxed">
+                  Percentage of pages where editable text was successfully extracted from the PDF.
+                </p>
+              </div>
+            );
+          })()}
+
+          {/* Info Notice */}
+          <div className="mb-4 flex items-start gap-3 p-3 bg-blue-50 border border-blue-100 rounded-xl">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-blue-500 shrink-0 mt-0.5">
+              <circle cx="12" cy="12" r="10" />
+              <line x1="12" y1="8" x2="12" y2="12" />
+              <line x1="12" y1="16" x2="12.01" y2="16" />
+            </svg>
+            <p className="text-xs text-blue-700 leading-relaxed">
+              Output quality depends on PDF structure. Text-based PDFs produce the most editable Word documents. Scanned PDFs rely on OCR.
+            </p>
+          </div>
+
           {/* Formatting note */}
           <div className="mt-4 flex items-start gap-3 p-4 bg-amber-50 border border-amber-100 rounded-xl">
             <svg

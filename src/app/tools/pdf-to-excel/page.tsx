@@ -181,6 +181,18 @@ export default function PdfToExcelPage() {
             );
           })()}
 
+          {/* Info Notice */}
+          <div className="mb-4 flex items-start gap-3 p-3 bg-blue-50 border border-blue-100 rounded-xl">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-blue-500 shrink-0 mt-0.5">
+              <circle cx="12" cy="12" r="10" />
+              <line x1="12" y1="8" x2="12" y2="12" />
+              <line x1="12" y1="16" x2="12.01" y2="16" />
+            </svg>
+            <p className="text-xs text-blue-700 leading-relaxed">
+              Output quality depends on PDF structure. Text-based PDFs with clear table layouts produce the most accurate Excel data.
+            </p>
+          </div>
+
           {/* Tab Navigation */}
           {result.pages.length > 1 && (
             <div className="flex gap-1 mb-4 border-b border-slate-200">

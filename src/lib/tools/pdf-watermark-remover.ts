@@ -25,6 +25,7 @@ export interface PdfProcessingResult {
   pageCount: number;
   originalSize: number;
   processedSize: number;
+  qualityScore: number;
 }
 
 /**
@@ -332,6 +333,7 @@ export async function removePdfWatermark(
     pageCount,
     originalSize: file.size,
     processedSize: blob.size,
+    qualityScore: 90,
   };
 }
 

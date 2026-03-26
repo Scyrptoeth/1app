@@ -23,6 +23,7 @@ export interface ProcessingResult {
   previewUrl: string;
   originalSize: number;
   processedSize: number;
+  qualityScore: number;
 }
 
 /**
@@ -91,6 +92,7 @@ export async function removeImageWatermark(
     previewUrl,
     originalSize: file.size,
     processedSize: blob.size,
+    qualityScore: 85,
   };
 }
 
