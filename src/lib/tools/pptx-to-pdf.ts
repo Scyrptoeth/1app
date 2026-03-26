@@ -172,13 +172,12 @@ function parseXfrm(xfrm: Element | null): { x: number; y: number; cx: number; cy
  */
 function parsePlaceholderPositions(xmlDoc: Document): PlaceholderMap {
   const map: PlaceholderMap = new Map();
-  const spElements = xmlDoc.querySelectorAll
-    ? xmlDoc.querySelectorAll("sp")
-    : Array.from(xmlDoc.getElementsByTagNameNS(P_NS, "sp"));
-
-  const spArr = spElements instanceof NodeList
-    ? Array.from(spElements as NodeListOf<Element>)
-    : (spElements as Element[]);
+  // Use getElementsByTagName fallback since NS-aware methods are more reliable in XML docs
+  const spArr = Array.from(
+    xmlDoc.getElementsByTagNameNS(P_NS, "sp").length > 0
+      ? xmlDoc.getElementsByTagNameNS(P_NS, "sp")
+      : xmlDoc.getElementsByTagName("p:sp")
+  ) as Element[];
 
   for (const sp of spArr) {
     const nvPr = child(sp, "nvPr");
