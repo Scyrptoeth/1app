@@ -416,7 +416,7 @@ function renderCustomPath(doc: any, cmds: PathCmd[], shapeX: number, shapeY: num
       );
     } else if (cmd.type === "Z") {
       hasClose = true;
-      doc.closePath();
+      doc.close(); // PDF 'h' operator — doc.closePath() is Canvas context only
       if (hasFill && hasStroke) doc.fillStroke();
       else if (hasFill) doc.fill();
       else doc.stroke();
