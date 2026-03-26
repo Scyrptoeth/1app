@@ -180,7 +180,8 @@ function parsePlaceholderPositions(xmlDoc: Document): PlaceholderMap {
   ) as Element[];
 
   for (const sp of spArr) {
-    const nvPr = child(sp, "nvPr");
+    const nvSpPr = child(sp, "nvSpPr");
+    const nvPr = child(nvSpPr, "nvPr");
     if (!nvPr) continue;
     const ph = child(nvPr, "ph");
     if (!ph) continue;
