@@ -7,7 +7,7 @@
 //   3. jsPDF      → render shapes, images, and text directly as PDF vectors
 //
 // No html2canvas — text is PDF vector text; images are embedded JPEG/PNG.
-// Output: 960 × 540 pt pages (PPTX widescreen 16:9 at 96 DPI equiv.)
+// Slide dimensions are read dynamically from presentation.xml sldSz.
 // ============================================================================
 
 // ---------------------------------------------------------------------------
@@ -80,6 +80,21 @@ interface PlaceholderDef {
 
 // Map from placeholder type or index string → default position
 type PlaceholderMap = Map<string, PlaceholderDef>;
+
+// Font defaults inherited from txBody lstStyle / layout / master
+interface FontDefaults {
+  sizePt: number;
+  bold: boolean;
+  colorHex: string;
+  fontName: string;
+}
+
+// A single token (word or whitespace) for word-wrap purposes
+interface WrapToken {
+  text: string;
+  run: TextRun;
+  width: number; // pre-measured width in pts
+}
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -170,7 +185,6 @@ function parseXfrm(xfrm: Element | null): { x: number; y: number; cx: number; cy
  */
 function parsePlaceholderPositions(xmlDoc: Document): PlaceholderMap {
   const map: PlaceholderMap = new Map();
-  // Use getElementsByTagName fallback since NS-aware methods are more reliable in XML docs
   const spArr = Array.from(
     xmlDoc.getElementsByTagNameNS(P_NS, "sp").length > 0
       ? xmlDoc.getElementsByTagNameNS(P_NS, "sp")
@@ -193,7 +207,6 @@ function parsePlaceholderPositions(xmlDoc: Document): PlaceholderMap {
     const pos = parseXfrm(xfrm);
     if (pos.cx <= 0 && pos.cy <= 0) continue;
 
-    // Store by type and by idx
     map.set(phType, pos);
     map.set(`idx:${phIdx}`, pos);
   }
@@ -277,13 +290,11 @@ async function loadImage(bytes: Uint8Array, ext: string): Promise<ImageEntry> {
   const mime = ext === "jpg" || ext === "jpeg" ? "image/jpeg" : "image/png";
   const format: "JPEG" | "PNG" = mime === "image/jpeg" ? "JPEG" : "PNG";
 
-  // Build base64
   let binary = "";
   for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
   const b64 = btoa(binary);
   const data = `data:${mime};base64,${b64}`;
 
-  // Detect dimensions via HTMLImageElement
   const dims = await new Promise<{ width: number; height: number }>((resolve) => {
     const img = new Image();
     img.onload = () => resolve({ width: img.naturalWidth, height: img.naturalHeight });
@@ -295,7 +306,7 @@ async function loadImage(bytes: Uint8Array, ext: string): Promise<ImageEntry> {
 }
 
 // ---------------------------------------------------------------------------
-// Solid fill color extraction
+// Color extraction
 // ---------------------------------------------------------------------------
 
 function getSolidFillColor(el: Element | null): string | null {
@@ -308,12 +319,12 @@ function getSolidFillColor(el: Element | null): string | null {
   if (sysClr) return sysClr.getAttribute("lastClr") ?? sysClr.getAttribute("val") ?? null;
   const schemeClr = child(sf, "schemeClr");
   if (schemeClr) {
-    // Fallback scheme colors
     const scheme = schemeClr.getAttribute("val") ?? "";
     const schemeMap: Record<string, string> = {
       dk1: "000000", lt1: "FFFFFF", dk2: "1F497D", lt2: "EEECE1",
       accent1: "4F81BD", accent2: "C0504D", accent3: "9BBB59",
       accent4: "8064A2", accent5: "4BACC6", accent6: "F79646",
+      bg1: "FFFFFF", bg2: "EEECE1", tx1: "000000", tx2: "1F497D",
     };
     return schemeMap[scheme] ?? "000000";
   }
@@ -391,19 +402,20 @@ function renderCustomPath(doc: any, cmds: PathCmd[], shapeX: number, shapeY: num
     doc.setLineWidth(lineWidthPt);
   }
 
+  let hasClose = false;
   for (const cmd of cmds) {
     if (cmd.type === "M") {
       doc.moveTo(shapeX + cmd.pts[0] * sx, shapeY + cmd.pts[1] * sy);
     } else if (cmd.type === "L") {
       doc.lineTo(shapeX + cmd.pts[0] * sx, shapeY + cmd.pts[1] * sy);
     } else if (cmd.type === "C") {
-      // cubic bezier: cp1x, cp1y, cp2x, cp2y, ex, ey
       doc.curveTo(
         shapeX + cmd.pts[0] * sx, shapeY + cmd.pts[1] * sy,
         shapeX + cmd.pts[2] * sx, shapeY + cmd.pts[3] * sy,
         shapeX + cmd.pts[4] * sx, shapeY + cmd.pts[5] * sy
       );
     } else if (cmd.type === "Z") {
+      hasClose = true;
       doc.closePath();
       if (hasFill && hasStroke) doc.fillStroke();
       else if (hasFill) doc.fill();
@@ -411,11 +423,9 @@ function renderCustomPath(doc: any, cmds: PathCmd[], shapeX: number, shapeY: num
     }
   }
 
-  // If no close command ended the path, try to close/stroke it
-  // (for open paths like lines)
-  const lastCmd = cmds[cmds.length - 1];
-  if (lastCmd?.type !== "Z") {
-    if (hasStroke) doc.stroke();
+  // Open paths (no close) — only stroke
+  if (!hasClose && hasStroke) {
+    doc.stroke();
   }
 }
 
@@ -483,12 +493,52 @@ interface TextParagraph {
   align: "left" | "center" | "right" | "justify";
 }
 
-function parseTextBody(txBody: Element | null): TextParagraph[] {
+/**
+ * Extract default font properties from txBody's lstStyle/lvl1pPr/defRPr.
+ * This is the fallback when individual runs have no explicit sz/bold/color.
+ */
+function getFontDefaults(txBody: Element | null): FontDefaults {
+  const defaults: FontDefaults = { sizePt: 12, bold: false, colorHex: "000000", fontName: "helvetica" };
+  if (!txBody) return defaults;
+
+  const lstStyle = child(txBody, "lstStyle");
+  const lvl1pPr = child(lstStyle, "lvl1pPr");
+  const defRPr = child(lvl1pPr, "defRPr");
+
+  if (defRPr) {
+    const sz = defRPr.getAttribute("sz");
+    if (sz) defaults.sizePt = parseInt(sz, 10) / 100;
+    const b = defRPr.getAttribute("b");
+    if (b === "1" || b === "true") defaults.bold = true;
+    const color = getSolidFillColor(defRPr);
+    if (color) defaults.colorHex = color;
+    const latin = child(defRPr, "latin");
+    const typeface = latin?.getAttribute("typeface");
+    if (typeface) defaults.fontName = mapFont(typeface);
+  }
+
+  return defaults;
+}
+
+function parseTextBody(txBody: Element | null, fontDefaults?: FontDefaults): TextParagraph[] {
   if (!txBody) return [];
+  const fd = fontDefaults ?? getFontDefaults(txBody);
   const paragraphs: TextParagraph[] = [];
 
   for (const para of children(txBody, "p")) {
     const pPr = child(para, "pPr");
+
+    // Paragraph-level default run properties (override body defaults)
+    const pDefRPr = child(pPr, "defRPr");
+    const pSz = pDefRPr?.getAttribute("sz");
+    const pBold = pDefRPr?.getAttribute("b");
+    const pColor = getSolidFillColor(pDefRPr);
+    const paraFd: FontDefaults = {
+      sizePt: pSz ? parseInt(pSz, 10) / 100 : fd.sizePt,
+      bold: pBold === "1" || pBold === "true" ? true : pBold === "0" ? false : fd.bold,
+      colorHex: pColor ?? fd.colorHex,
+      fontName: fd.fontName,
+    };
 
     // Spacing before
     const spcBef = child(child(pPr, "spcBef"), "spcPts");
@@ -517,60 +567,113 @@ function parseTextBody(txBody: Element | null): TextParagraph[] {
       const rPr = child(run, "rPr");
       const textEl = child(run, "t");
       if (!textEl) continue;
-      const text = textEl.textContent ?? "";
+
+      // Preserve whitespace in text nodes
+      let text = textEl.textContent ?? "";
+      if (!text && textEl.getAttribute("xml:space") !== "preserve") continue;
+
+      // Replace tabs with two spaces
+      text = text.replace(/\t/g, "  ");
       if (!text) continue;
 
-      // Font size (sz in hundredths of point)
+      // Font size (sz in hundredths of point) — fall back to paragraph/body default
       const szStr = rPr?.getAttribute("sz") ?? "";
-      const fontSizePt = szStr ? parseInt(szStr, 10) / 100 : 12;
+      const fontSizePt = szStr ? parseInt(szStr, 10) / 100 : paraFd.sizePt;
 
-      // Bold / italic
+      // Bold / italic — explicit on run, else inherit
       const bStr = rPr?.getAttribute("b") ?? "";
       const iStr = rPr?.getAttribute("i") ?? "";
-      const bold = bStr === "1" || bStr === "true";
+      const bold = bStr === "1" || bStr === "true" ? true : bStr === "0" ? false : paraFd.bold;
       const italic = iStr === "1" || iStr === "true";
 
-      // Color
+      // Color — explicit on run, else inherit
       const colorFromFill = getSolidFillColor(rPr);
-      const colorHex = colorFromFill ?? "000000";
+      const colorHex = colorFromFill ?? paraFd.colorHex;
 
       // Font
       const latinEl = child(rPr, "latin");
       const typeface = latinEl?.getAttribute("typeface") ?? "+mj-lt";
-      const fontName = mapFont(typeface);
-
-      // Skip Wingdings symbols (map to bullet)
+      // Wingdings → substitute with bullet
       const isWingdings = typeface.toLowerCase().includes("wingding");
       const displayText = isWingdings ? "•" : text;
+      const fontName = isWingdings ? "helvetica" : mapFont(typeface);
 
       runs.push({ text: displayText, fontSizePt, bold, italic, colorHex, fontName });
     }
 
-    // Include empty paragraphs as spacers
-    if (runs.length > 0 || paragraphs.length >= 0) {
-      paragraphs.push({ runs, spaceBefore, lineSpacingMult, marginLeft, marginRight, align });
-    }
+    paragraphs.push({ runs, spaceBefore, lineSpacingMult, marginLeft, marginRight, align });
   }
 
   return paragraphs;
 }
 
+/** Measure text width for any string using a run's font settings. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function measureRunWidth(doc: any, run: TextRun): number {
+function measureText(doc: any, run: TextRun, text: string): number {
   const fontStyle = run.bold && run.italic ? "bolditalic" : run.bold ? "bold" : run.italic ? "italic" : "normal";
   doc.setFont(run.fontName, fontStyle);
   doc.setFontSize(run.fontSizePt);
-  return doc.getTextWidth(run.text);
+  return doc.getTextWidth(text);
 }
 
+/**
+ * Tokenize all runs in a paragraph into word-level tokens,
+ * then wrap them into lines that fit within availW.
+ * Returns array of lines, each line being an array of WrapTokens.
+ */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function renderRun(doc: any, run: TextRun, x: number, y: number) {
-  const fontStyle = run.bold && run.italic ? "bolditalic" : run.bold ? "bold" : run.italic ? "italic" : "normal";
-  doc.setFont(run.fontName, fontStyle);
-  doc.setFontSize(run.fontSizePt);
-  const [r, g, b] = parseHex(run.colorHex);
-  doc.setTextColor(r, g, b);
-  doc.text(run.text, x, y, { baseline: "top" });
+function buildWrappedLines(doc: any, para: TextParagraph, availW: number): WrapToken[][] {
+  // Flatten all runs into tokens (words and whitespace)
+  const allTokens: WrapToken[] = [];
+  for (const run of para.runs) {
+    // Split on whitespace boundaries but keep separators
+    const parts = run.text.split(/(\s+)/);
+    for (const part of parts) {
+      if (!part) continue;
+      const width = measureText(doc, run, part);
+      allTokens.push({ text: part, run, width });
+    }
+  }
+
+  if (allTokens.length === 0) return [[]];
+
+  const lines: WrapToken[][] = [];
+  let currentLine: WrapToken[] = [];
+  let currentLineW = 0;
+
+  for (const token of allTokens) {
+    const isWhitespace = /^\s+$/.test(token.text);
+
+    if (isWhitespace) {
+      // Add whitespace only if line is non-empty (avoid leading whitespace on new line)
+      if (currentLine.length > 0) {
+        currentLine.push(token);
+        currentLineW += token.width;
+      }
+    } else {
+      // Non-whitespace word: check if it fits
+      if (currentLine.length > 0 && currentLineW + token.width > availW + 0.5) {
+        // Trim trailing whitespace from current line
+        while (currentLine.length > 0 && /^\s+$/.test(currentLine[currentLine.length - 1].text)) {
+          currentLine.pop();
+        }
+        lines.push(currentLine);
+        currentLine = [token];
+        currentLineW = token.width;
+      } else {
+        currentLine.push(token);
+        currentLineW += token.width;
+      }
+    }
+  }
+
+  // Push the last line
+  while (currentLine.length > 0 && /^\s+$/.test(currentLine[currentLine.length - 1].text)) {
+    currentLine.pop();
+  }
+  if (currentLine.length > 0) lines.push(currentLine);
+
+  return lines.length > 0 ? lines : [[]];
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -580,7 +683,8 @@ function renderTextBody(
   boxX: number,
   boxY: number,
   boxW: number,
-  boxH: number
+  boxH: number,
+  fontDefaults?: FontDefaults
 ) {
   if (!txBody) return;
 
@@ -589,81 +693,100 @@ function renderTextBody(
   const lIns = emu(bodyPr?.getAttribute("lIns") ?? "91440");
   const tIns = emu(bodyPr?.getAttribute("tIns") ?? "45720");
   const rIns = emu(bodyPr?.getAttribute("rIns") ?? "91440");
+  const bIns = emu(bodyPr?.getAttribute("bIns") ?? "45720");
 
-  const paragraphs = parseTextBody(txBody);
+  const paragraphs = parseTextBody(txBody, fontDefaults);
   if (paragraphs.length === 0) return;
 
   const contentX = boxX + lIns;
   const contentW = Math.max(boxW - lIns - rIns, 10);
 
-  // Calculate total rendered text height for vertical centering
+  // Pre-build all wrapped lines for each paragraph (needed for vertical align)
+  type BuiltPara = {
+    spaceBefore: number;
+    lineSpacingMult: number;
+    marginLeft: number;
+    marginRight: number;
+    align: string;
+    lines: WrapToken[][];
+    lineH: number;
+  };
+
+  const builtParas: BuiltPara[] = [];
   let totalTextH = 0;
+
   for (const para of paragraphs) {
+    const availW = contentW - para.marginLeft - para.marginRight;
+    const wrappedLines = para.runs.length > 0 ? buildWrappedLines(doc, para, availW) : [[]];
     const maxFontSize = para.runs.length > 0
       ? para.runs.reduce((m, r) => Math.max(m, r.fontSizePt), 8)
-      : 12;
-    totalTextH += para.spaceBefore + maxFontSize * Math.max(para.lineSpacingMult, 1.0);
+      : (fontDefaults?.sizePt ?? 12);
+    const lineH = maxFontSize * Math.max(para.lineSpacingMult, 1.0);
+
+    totalTextH += para.spaceBefore + lineH * wrappedLines.length;
+    builtParas.push({
+      spaceBefore: para.spaceBefore,
+      lineSpacingMult: para.lineSpacingMult,
+      marginLeft: para.marginLeft,
+      marginRight: para.marginRight,
+      align: para.align,
+      lines: wrappedLines,
+      lineH,
+    });
   }
 
+  // Vertical anchor
   const anchor = bodyPr?.getAttribute("anchor") ?? "t";
   let curY = boxY + tIns;
   if (anchor === "ctr" && boxH > 0) {
-    curY = boxY + Math.max((boxH - totalTextH) / 2, 0);
+    curY = boxY + Math.max((boxH - totalTextH) / 2, tIns);
   } else if (anchor === "b" && boxH > 0) {
-    curY = boxY + Math.max(boxH - totalTextH - tIns, boxY + tIns);
+    curY = boxY + Math.max(boxH - totalTextH - bIns, boxY + tIns);
   }
 
-  for (const para of paragraphs) {
-    curY += para.spaceBefore;
+  for (const bp of builtParas) {
+    curY += bp.spaceBefore;
 
-    if (para.runs.length === 0) {
-      curY += 14; // empty paragraph spacer
-      continue;
-    }
+    for (const lineTokens of bp.lines) {
+      // Stop rendering if line start is below box bottom
+      if (boxH > 0 && curY > boxY + boxH) break;
 
-    const maxFontSize = para.runs.reduce((m, r) => Math.max(m, r.fontSizePt), 8);
-    const lineH = maxFontSize * Math.max(para.lineSpacingMult, 1.0);
-
-    // Stop rendering if we've gone past the box bottom
-    if (boxH > 0 && curY > boxY + boxH) break;
-
-    const paraMarginLeft = para.marginLeft;
-
-    if (para.align === "left" || para.align === "justify") {
-      let curX = contentX + paraMarginLeft;
-      for (const run of para.runs) {
-        const runW = measureRunWidth(doc, run);
-        renderRun(doc, run, curX, curY);
-        curX += runW;
+      if (lineTokens.length === 0) {
+        curY += bp.lineH;
+        continue;
       }
-    } else if (para.align === "center") {
-      // Measure total run width, then center
-      let totalW = 0;
-      for (const run of para.runs) totalW += measureRunWidth(doc, run);
-      const startX = contentX + paraMarginLeft + Math.max((contentW - paraMarginLeft - para.marginRight - totalW) / 2, 0);
+
+      const lineW = lineTokens.reduce((s, t) => s + t.width, 0);
+      const availW = contentW - bp.marginLeft - bp.marginRight;
+      let startX: number;
+
+      if (bp.align === "center") {
+        startX = contentX + bp.marginLeft + Math.max((availW - lineW) / 2, 0);
+      } else if (bp.align === "right") {
+        startX = contentX + contentW - bp.marginRight - lineW;
+        startX = Math.max(startX, contentX);
+      } else {
+        startX = contentX + bp.marginLeft;
+      }
+
       let curX = startX;
-      for (const run of para.runs) {
-        const runW = measureRunWidth(doc, run);
-        renderRun(doc, run, curX, curY);
-        curX += runW;
+      for (const token of lineTokens) {
+        const fontStyle = token.run.bold && token.run.italic ? "bolditalic"
+          : token.run.bold ? "bold"
+          : token.run.italic ? "italic"
+          : "normal";
+        doc.setFont(token.run.fontName, fontStyle);
+        doc.setFontSize(token.run.fontSizePt);
+        const [r, g, b] = parseHex(token.run.colorHex);
+        doc.setTextColor(r, g, b);
+        doc.text(token.text, curX, curY, { baseline: "top" });
+        curX += token.width;
       }
-    } else if (para.align === "right") {
-      // Measure total run width, then right-align
-      let totalW = 0;
-      for (const run of para.runs) totalW += measureRunWidth(doc, run);
-      const startX = contentX + contentW - para.marginRight - totalW;
-      let curX = Math.max(startX, contentX);
-      for (const run of para.runs) {
-        const runW = measureRunWidth(doc, run);
-        renderRun(doc, run, curX, curY);
-        curX += runW;
-      }
-    }
 
-    curY += lineH;
+      curY += bp.lineH;
+    }
   }
 
-  // Reset text color
   doc.setTextColor(0, 0, 0);
 }
 
@@ -678,7 +801,6 @@ async function renderPic(doc: any, el: Element, images: Map<string, ImageEntry>,
   const xfrm = child(spPr, "xfrm");
   const pos = parseXfrm(xfrm);
 
-  // Get relationship ID for the image
   const blip = child(blipFill, "blip");
   const rId = blip?.getAttributeNS(R_NS, "embed") ?? blip?.getAttribute("r:embed") ?? "";
   const mediaTarget = rels.get(rId);
@@ -687,7 +809,6 @@ async function renderPic(doc: any, el: Element, images: Map<string, ImageEntry>,
   const img = images.get(mediaTarget);
   if (!img) return;
 
-  // Apply group transforms
   const { x, y } = applyGroupStack(pos.x, pos.y, groupStack);
   const { cx, cy } = applyGroupStackSize(pos.cx, pos.cy, groupStack);
 
@@ -701,7 +822,7 @@ async function renderPic(doc: any, el: Element, images: Map<string, ImageEntry>,
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function renderShape(doc: any, el: Element, groupStack: GroupTransform[], placeholders?: PlaceholderMap) {
+function renderShape(doc: any, el: Element, groupStack: GroupTransform[], placeholders?: PlaceholderMap, isLayoutShape = false) {
   const spPr = child(el, "spPr");
   const txBody = child(el, "txBody");
   const xfrm = child(spPr, "xfrm");
@@ -720,16 +841,37 @@ function renderShape(doc: any, el: Element, groupStack: GroupTransform[], placeh
     }
   }
 
+  // Layout shapes that are placeholders (idx attribute present) are templates —
+  // they will be filled by slide content, so skip rendering their text.
+  if (isLayoutShape) {
+    const nvSpPr = child(el, "nvSpPr");
+    const nvPr = child(nvSpPr, "nvPr");
+    const ph = child(nvPr, "ph");
+    if (ph) return; // Skip placeholder template shapes in layout
+  }
+
   const { x, y } = applyGroupStack(pos.x, pos.y, groupStack);
   const { cx, cy } = applyGroupStackSize(pos.cx, pos.cy, groupStack);
 
   // Fill color
   const fillColor = getSolidFillColor(spPr);
 
-  // Stroke / line
+  // Stroke / line — default to black (0.5pt) when ln element exists but no explicit color
   const lnEl = child(spPr, "ln");
-  const strokeColor = lnEl ? getSolidFillColor(lnEl) : null;
-  const strokeW = lnEl ? emu(lnEl.getAttribute("w") ?? "0") : 0;
+  let strokeColor = lnEl ? getSolidFillColor(lnEl) : null;
+  let strokeW = lnEl ? emu(lnEl.getAttribute("w") ?? "0") : 0;
+  if (lnEl) {
+    // Check noFill on the line
+    const lnNoFill = child(lnEl, "noFill");
+    if (lnNoFill) {
+      strokeColor = null;
+      strokeW = 0;
+    } else if (!strokeColor) {
+      // ln exists but no explicit color → default to dark (use dk1/black)
+      strokeColor = "000000";
+    }
+    if (strokeW <= 0 && strokeColor) strokeW = 0.75; // minimum visible stroke
+  }
 
   // Geometry
   const prstGeom = child(spPr, "prstGeom");
@@ -740,7 +882,6 @@ function renderShape(doc: any, el: Element, groupStack: GroupTransform[], placeh
     if (prst === "ellipse") {
       renderEllipse(doc, x, y, cx, cy, fillColor, strokeColor, strokeW);
     } else if (prst === "roundRect") {
-      // Use jsPDF roundedRect if available
       const hasRoundedRect = typeof doc.roundedRect === "function";
       if (hasRoundedRect) {
         const hasFill = !!fillColor;
@@ -755,7 +896,6 @@ function renderShape(doc: any, el: Element, groupStack: GroupTransform[], placeh
         renderRect(doc, x, y, cx, cy, fillColor, strokeColor, strokeW);
       }
     } else {
-      // Default: rect
       renderRect(doc, x, y, cx, cy, fillColor, strokeColor, strokeW);
     }
   } else if (custGeom) {
@@ -765,9 +905,10 @@ function renderShape(doc: any, el: Element, groupStack: GroupTransform[], placeh
     }
   }
 
-  // Render text body
+  // Render text body — extract font defaults from lstStyle for proper inheritance
   if (txBody) {
-    renderTextBody(doc, txBody, x, y, cx, cy);
+    const fontDefaults = getFontDefaults(txBody);
+    renderTextBody(doc, txBody, x, y, cx, cy, fontDefaults);
   }
 }
 
@@ -776,7 +917,7 @@ function renderShape(doc: any, el: Element, groupStack: GroupTransform[], placeh
 // ---------------------------------------------------------------------------
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function renderSpTree(doc: any, spTree: Element, images: Map<string, ImageEntry>, rels: Map<string, string>, groupStack: GroupTransform[], placeholders?: PlaceholderMap) {
+async function renderSpTree(doc: any, spTree: Element, images: Map<string, ImageEntry>, rels: Map<string, string>, groupStack: GroupTransform[], placeholders?: PlaceholderMap, isLayout = false) {
   for (let i = 0; i < spTree.children.length; i++) {
     const el = spTree.children[i];
     const localName = el.localName;
@@ -784,15 +925,15 @@ async function renderSpTree(doc: any, spTree: Element, images: Map<string, Image
     if (localName === "pic") {
       await renderPic(doc, el, images, rels, groupStack);
     } else if (localName === "sp") {
-      try { renderShape(doc, el, groupStack, placeholders); } catch { /* skip broken shape */ }
+      try { renderShape(doc, el, groupStack, placeholders, isLayout); } catch { /* skip broken shape */ }
     } else if (localName === "grpSp") {
-      await renderNestedGroup(doc, el, images, rels, groupStack, placeholders);
+      await renderNestedGroup(doc, el, images, rels, groupStack, placeholders, isLayout);
     }
   }
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function renderNestedGroup(doc: any, grpEl: Element, images: Map<string, ImageEntry>, rels: Map<string, string>, parentStack: GroupTransform[], placeholders?: PlaceholderMap) {
+async function renderNestedGroup(doc: any, grpEl: Element, images: Map<string, ImageEntry>, rels: Map<string, string>, parentStack: GroupTransform[], placeholders?: PlaceholderMap, isLayout = false) {
   const grpSpPr = child(grpEl, "grpSpPr");
   const grpTransform = parseGroupTransform(grpSpPr);
   const newStack = [...parentStack, grpTransform];
@@ -803,9 +944,9 @@ async function renderNestedGroup(doc: any, grpEl: Element, images: Map<string, I
     if (localName === "pic") {
       await renderPic(doc, el, images, rels, newStack);
     } else if (localName === "sp") {
-      try { renderShape(doc, el, newStack, placeholders); } catch { /* skip broken shape */ }
+      try { renderShape(doc, el, newStack, placeholders, isLayout); } catch { /* skip broken shape */ }
     } else if (localName === "grpSp") {
-      await renderNestedGroup(doc, el, images, rels, newStack, placeholders);
+      await renderNestedGroup(doc, el, images, rels, newStack, placeholders, isLayout);
     }
   }
 }
@@ -818,7 +959,7 @@ export async function convertPptxToPdf(
   file: File,
   onProgress: (update: ProcessingUpdate) => void
 ): Promise<PptxToPdfResult> {
-  onProgress({ progress: 2, status: "Membaca file..." });
+  onProgress({ progress: 2, status: "Reading file..." });
 
   const JSZip = await getJSZip();
   const JsPDF = await getJsPDF();
@@ -827,7 +968,7 @@ export async function convertPptxToPdf(
   const arrayBuffer = await file.arrayBuffer();
   const zip = await JSZip.loadAsync(arrayBuffer);
 
-  onProgress({ progress: 8, status: "Memuat media..." });
+  onProgress({ progress: 8, status: "Loading media..." });
 
   // --- Load presentation.xml to get slide list + dimensions ---
   const presentationXmlStr = await zip.file("ppt/presentation.xml")?.async("string");
@@ -876,7 +1017,7 @@ export async function convertPptxToPdf(
   const images: Map<string, ImageEntry> = new Map();
   const mediaFiles = Object.keys(zip.files).filter((f) => f.startsWith("ppt/media/"));
 
-  onProgress({ progress: 12, status: `Memuat ${mediaFiles.length} file media...` });
+  onProgress({ progress: 12, status: `Loading ${mediaFiles.length} media files...` });
 
   await Promise.all(
     mediaFiles.map(async (mediaPath) => {
@@ -894,12 +1035,12 @@ export async function convertPptxToPdf(
     })
   );
 
-  onProgress({ progress: 18, status: "Memuat layout slide..." });
+  onProgress({ progress: 18, status: "Loading slide layout..." });
 
   // --- Load slide master placeholder positions ---
   let masterPlaceholders: PlaceholderMap = new Map();
   const presRelsForMasterStr = await zip.file("ppt/_rels/presentation.xml.rels")?.async("string");
-  let masterPath = "ppt/slideMasters/slideMaster1.xml"; // fallback
+  let masterPath = "ppt/slideMasters/slideMaster1.xml";
   if (presRelsForMasterStr) {
     const presRelsXml = xmlParser.parseFromString(presRelsForMasterStr, "text/xml");
     for (const rel of Array.from(presRelsXml.getElementsByTagName("Relationship"))) {
@@ -917,12 +1058,16 @@ export async function convertPptxToPdf(
     masterPlaceholders = parsePlaceholderPositions(masterXml);
   }
 
-  // --- Cache for layout placeholders (path → PlaceholderMap) ---
-  const layoutCache: Map<string, PlaceholderMap> = new Map();
+  // --- Cache for layout data (path → {placeholders, spTree, rels}) ---
+  interface LayoutData {
+    placeholders: PlaceholderMap;
+    spTree: Element | null;
+    rels: Map<string, string>;
+  }
+  const layoutCache: Map<string, LayoutData> = new Map();
 
-  onProgress({ progress: 20, status: "Memulai render slide..." });
+  onProgress({ progress: 20, status: "Starting slide render..." });
 
-  // --- Initialize jsPDF ---
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let doc: any = null;
 
@@ -932,7 +1077,7 @@ export async function convertPptxToPdf(
     const progress = 20 + Math.round((slideIdx / totalSlides) * 70);
     onProgress({
       progress,
-      status: `Merender slide ${slideIdx + 1} dari ${totalSlides}...`,
+      status: `Rendering slide ${slideIdx + 1} of ${totalSlides}...`,
       currentSlide: slideIdx + 1,
       totalSlides,
     });
@@ -957,27 +1102,58 @@ export async function convertPptxToPdf(
           const normalized = target.replace(/^\.\.\//, "");
           slideImageRels.set(rId, normalized);
         } else if (type.includes("slideLayout") && target) {
-          // target like "../slideLayouts/slideLayout2.xml" → normalize
           layoutPath = "ppt/slides/" + target;
           layoutPath = layoutPath.replace(/\/slides\/\.\.\//, "/");
         }
       }
     }
 
-    // Get layout placeholders (cached)
+    // Load layout data (cached)
     let slidePlaceholders: PlaceholderMap = masterPlaceholders;
+    let layoutSpTree: Element | null = null;
+    let layoutImageRels: Map<string, string> = new Map();
+
     if (layoutPath) {
       if (!layoutCache.has(layoutPath)) {
         const layoutXmlStr = await zip.file(layoutPath)?.async("string");
+        let layoutData: LayoutData = { placeholders: masterPlaceholders, spTree: null, rels: new Map() };
+
         if (layoutXmlStr) {
           const layoutXml = xmlParser.parseFromString(layoutXmlStr, "text/xml");
           const layoutPh = parsePlaceholderPositions(layoutXml);
-          layoutCache.set(layoutPath, mergePlaceholderMaps(masterPlaceholders, layoutPh));
-        } else {
-          layoutCache.set(layoutPath, masterPlaceholders);
+          const mergedPh = mergePlaceholderMaps(masterPlaceholders, layoutPh);
+
+          // Get layout's spTree
+          const layoutCSld = layoutXml.getElementsByTagNameNS(P_NS, "cSld")[0]
+            ?? layoutXml.getElementsByTagName("p:cSld")[0];
+          const layoutSpTreeEl = layoutCSld?.getElementsByTagNameNS(P_NS, "spTree")[0]
+            ?? layoutCSld?.getElementsByTagName("p:spTree")[0];
+
+          // Load layout's rels (for layout-level images)
+          const layoutRelPath = layoutPath.replace(/\/([^/]+)$/, "/_rels/$1.rels");
+          const layoutRelsStr = await zip.file(layoutRelPath)?.async("string");
+          const lRels: Map<string, string> = new Map();
+          if (layoutRelsStr) {
+            const lRelsXml = xmlParser.parseFromString(layoutRelsStr, "text/xml");
+            for (const rel of Array.from(lRelsXml.getElementsByTagName("Relationship"))) {
+              const type = rel.getAttribute("Type") ?? "";
+              const rId = rel.getAttribute("Id") ?? "";
+              const target = rel.getAttribute("Target") ?? "";
+              if (type.includes("image") && rId && target) {
+                lRels.set(rId, target.replace(/^\.\.\//, ""));
+              }
+            }
+          }
+
+          layoutData = { placeholders: mergedPh, spTree: layoutSpTreeEl ?? null, rels: lRels };
         }
+        layoutCache.set(layoutPath, layoutData);
       }
-      slidePlaceholders = layoutCache.get(layoutPath)!;
+
+      const cached = layoutCache.get(layoutPath)!;
+      slidePlaceholders = cached.placeholders;
+      layoutSpTree = cached.spTree;
+      layoutImageRels = cached.rels;
     }
 
     // Initialize or add page
@@ -996,7 +1172,12 @@ export async function convertPptxToPdf(
     doc.setFillColor(255, 255, 255);
     doc.rect(0, 0, slideWPt, slideHPt, "F");
 
-    // Get shape tree
+    // --- Render layout background shapes first (behind slide content) ---
+    if (layoutSpTree) {
+      await renderSpTree(doc, layoutSpTree, images, layoutImageRels, [], slidePlaceholders, true);
+    }
+
+    // --- Render slide shapes ---
     const cSld = slideXml.getElementsByTagNameNS(P_NS, "cSld")[0]
       ?? slideXml.getElementsByTagName("p:cSld")[0];
     const spTree = cSld?.getElementsByTagNameNS(P_NS, "spTree")[0]
@@ -1004,16 +1185,15 @@ export async function convertPptxToPdf(
 
     if (!spTree) continue;
 
-    // Render all elements with placeholder fallback positions
     await renderSpTree(doc, spTree, images, slideImageRels, [], slidePlaceholders);
   }
 
-  onProgress({ progress: 92, status: "Menyimpan PDF..." });
+  onProgress({ progress: 92, status: "Saving PDF..." });
 
   const pdfBlob: Blob = doc.output("blob");
   const previewUrl = URL.createObjectURL(pdfBlob);
 
-  onProgress({ progress: 100, status: "Selesai!" });
+  onProgress({ progress: 100, status: "Done!" });
 
   return {
     blob: pdfBlob,

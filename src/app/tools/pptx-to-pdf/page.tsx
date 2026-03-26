@@ -38,8 +38,8 @@ export default function PptxToPdfPage() {
       const message = err instanceof Error ? err.message : String(err);
       setErrorMessage(
         message.startsWith("File bukan PPTX")
-          ? message
-          : "Gagal mengonversi file. File mungkin rusak, terenkripsi, atau format tidak didukung."
+          ? "Invalid file: not a valid PPTX file."
+          : "Failed to convert file. The file may be corrupted, encrypted, or in an unsupported format."
       );
       setStage("upload");
     }
@@ -102,8 +102,8 @@ export default function PptxToPdfPage() {
             maxSizeMB={100}
             multiple={false}
             onFilesSelected={handleFilesSelected}
-            title="Pilih file PowerPoint untuk dikonversi ke PDF"
-            subtitle="Mendukung .pptx (disarankan) dan .ppt hingga 100 MB"
+            title="Select a PowerPoint file to convert to PDF"
+            subtitle="Supports .pptx (recommended) and .ppt up to 100 MB"
           />
 
           {/* .ppt format notice */}
@@ -122,9 +122,9 @@ export default function PptxToPdfPage() {
               <line x1="12" y1="17" x2="12.01" y2="17" />
             </svg>
             <p className="text-xs text-amber-700 leading-relaxed">
-              <strong>Format .ppt (legacy)</strong> memiliki dukungan konversi terbatas di browser.
-              Untuk hasil terbaik, gunakan file <strong>.pptx</strong>. Jika hanya memiliki .ppt,
-              buka di Microsoft PowerPoint atau LibreOffice dan simpan ulang sebagai .pptx terlebih dahulu.
+              <strong>.ppt (legacy format)</strong> has limited browser conversion support.
+              For best results, use a <strong>.pptx</strong> file. If you only have .ppt,
+              open it in Microsoft PowerPoint or LibreOffice and re-save as .pptx first.
             </p>
           </div>
         </>
@@ -145,9 +145,9 @@ export default function PptxToPdfPage() {
           {/* Header */}
           <div className="flex items-center justify-between mb-6">
             <div>
-              <h3 className="text-lg font-semibold text-slate-900">Konversi Selesai</h3>
+              <h3 className="text-lg font-semibold text-slate-900">Conversion Complete</h3>
               <p className="text-sm text-slate-500">
-                {result.slideCount} halaman &middot; teks bisa dipilih &amp; dicari
+                {result.slideCount} {result.slideCount === 1 ? "page" : "pages"} &middot; text is selectable &amp; searchable
               </p>
             </div>
             <div className="flex items-center gap-3">
@@ -169,13 +169,13 @@ export default function PptxToPdfPage() {
                   <polyline points="7 10 12 15 17 10" />
                   <line x1="12" y1="15" x2="12" y2="3" />
                 </svg>
-                Unduh .pdf
+                Download .pdf
               </button>
               <button
                 onClick={handleReset}
                 className="px-5 py-2.5 text-slate-600 font-medium rounded-xl border border-slate-200 hover:bg-slate-50 transition-colors"
               >
-                Konversi File Lain
+                Convert Another File
               </button>
             </div>
           </div>
@@ -196,25 +196,25 @@ export default function PptxToPdfPage() {
               <line x1="12" y1="16" x2="12.01" y2="16" />
             </svg>
             <p className="text-xs text-blue-700 leading-relaxed">
-              Dikonversi 100% di browser Anda — tidak ada file yang dikirim ke server manapun.
-              Teks dalam PDF bisa dicari (Ctrl+F), dipilih, disalin, dan dicetak. Font yang tidak
-              tersedia di browser akan diganti dengan font serupa.
+              Converted 100% in your browser — no files are sent to any server.
+              Text in the PDF is searchable (Ctrl+F), selectable, copyable, and printable.
+              Fonts not available in the browser will be replaced with similar fonts.
             </p>
           </div>
 
           {/* PDF Preview */}
           <div className="border border-slate-200 rounded-xl overflow-hidden">
             <div className="bg-slate-50 px-4 py-2.5 border-b border-slate-200 flex items-center justify-between">
-              <span className="text-sm font-medium text-slate-700">Pratinjau PDF</span>
+              <span className="text-sm font-medium text-slate-700">PDF Preview</span>
               <span className="text-xs text-slate-400">
-                {result.slideCount} halaman
+                {result.slideCount} {result.slideCount === 1 ? "page" : "pages"}
               </span>
             </div>
             <iframe
               src={result.previewUrl}
               className="w-full"
               style={{ height: "600px" }}
-              title="Pratinjau PDF"
+              title="PDF Preview"
             />
           </div>
 
@@ -234,7 +234,7 @@ export default function PptxToPdfPage() {
                 <polyline points="14 2 14 8 20 8" />
               </svg>
               <span>
-                {result.slideCount} halaman
+                {result.slideCount} {result.slideCount === 1 ? "page" : "pages"}
               </span>
             </div>
             <div className="text-slate-300">|</div>
@@ -248,28 +248,28 @@ export default function PptxToPdfPage() {
 
       {/* How it works */}
       <div className="mt-16 pt-12 border-t border-slate-100">
-        <h2 className="text-lg font-semibold text-slate-900 mb-6">Cara kerja</h2>
+        <h2 className="text-lg font-semibold text-slate-900 mb-6">How it works</h2>
         <div className="grid sm:grid-cols-4 gap-6">
           {[
             {
               step: "1",
               title: "Upload PowerPoint",
-              desc: "Pilih file .pptx atau .ppt dari perangkat Anda.",
+              desc: "Select a .pptx or .ppt file from your device.",
             },
             {
               step: "2",
-              title: "Parse Slide",
-              desc: "Setiap elemen slide — gambar, shape, dan teks — dibaca langsung dari file PPTX.",
+              title: "Parse Slides",
+              desc: "Every slide element — images, shapes, and text — is read directly from the PPTX file.",
             },
             {
               step: "3",
-              title: "Render ke PDF",
-              desc: "Setiap slide dirender sebagai halaman PDF dengan teks vektor dan gambar tersemat.",
+              title: "Render to PDF",
+              desc: "Each slide is rendered as a PDF page with vector text and embedded images.",
             },
             {
               step: "4",
-              title: "Unduh PDF",
-              desc: "Unduh hasilnya langsung — tidak ada data yang dikirim ke server.",
+              title: "Download PDF",
+              desc: "Download the result directly — no data is sent to any server.",
             },
           ].map((item) => (
             <div key={item.step} className="flex flex-col items-center text-center">
