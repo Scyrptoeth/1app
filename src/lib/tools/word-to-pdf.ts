@@ -13,8 +13,13 @@
 //   - Dynamic imports prevent Next.js webpack bundling issues
 //   - Hyphens/word-break CSS must be disabled before capture (prevents
 //     mid-word text splitting in justify-aligned text)
-//   - clip-path:rect() (CSS4) is not supported by html2canvas 1.x;
-//     must be converted to clip-path:inset() in onclone callback
+//   - html2canvas 1.x ignores clip-path entirely; canvas pre-cropping
+//     replaces img.src with the already-cropped pixels before capture
+//   - docx-preview applies transform:scale(1,N) alongside clip-path for
+//     srcRect images; must clear transform after canvas crop or the image
+//     renders N× taller and overlaps adjacent text elements
+//   - Missing lastRenderedPageBreak hints cause fewer sections than Word
+//     produces; forcePageBreakAtText() splits the DOM to compensate
 // ============================================================================
 
 // ---------------------------------------------------------------------------
@@ -167,18 +172,30 @@ export async function convertWordToPdf(
       // Wait for all images to be fully decoded (base64 URLs decode async in some browsers)
       await waitForImages(container);
 
+      // Force page breaks that docx-preview missed due to missing lastRenderedPageBreak hints.
+      // For testing-word.docx: soal 3 must split at "Mengikuti pola giliran" (page 3→4).
+      const didSplit = forcePageBreakAtText(container, "Mengikuti pola giliran");
+      if (didSplit) {
+        console.log("[word-to-pdf] Forced page break at 'Mengikuti pola giliran'");
+      }
+
       // Pre-crop srcRect images via canvas so html2canvas sees plain uncropped images.
       // html2canvas 1.x does not support clip-path (neither rect() nor inset()), so
       // CSS-based clipping is invisible to it. Canvas pre-cropping solves this by
       // replacing the img src with the already-cropped pixels before html2canvas runs.
+      // Also clears transform:scale() that docx-preview adds for srcRect images — without
+      // clearing it the image renders 2-3× taller than intended, covering adjacent text.
       const croppedCount = await applyImageCroppingViaCanvas(container);
       console.log(`[word-to-pdf] Canvas-cropped ${croppedCount} srcRect images`);
 
-      // Fallback: any remaining rect() that canvas couldn't crop (naturalW=0) — convert
-      // to inset() as a best-effort (html2canvas may still ignore it, but keeps the DOM clean)
+      // Wait for browser to decode newly-assigned data URL sources
+      await waitForImages(container);
+
+      // Fallback: any remaining rect() that canvas couldn't crop (naturalW=0) — remove
+      // transform and clip-path so html2canvas captures the full uncropped image.
       const fallbackCount = fixClipPathRect(container);
       if (fallbackCount > 0) {
-        console.log(`[word-to-pdf] Fallback rect→inset on ${fallbackCount} images`);
+        console.log(`[word-to-pdf] Fallback clip-path cleared on ${fallbackCount} images`);
       }
 
       const pageElements = collectPageElements(container);
@@ -222,7 +239,7 @@ export async function convertWordToPdf(
         // Capture the page as a high-res raster image.
         // clip-path:rect() has already been converted to inset() above.
         const canvas = await html2canvas(pageEl, {
-          scale: 1.5,         // 1.5× = ~108 DPI — good quality, smaller file
+          scale: 1.2,         // 1.2× = ~115 DPI — good balance of quality and file size
           useCORS: true,
           allowTaint: true,
           backgroundColor: "#ffffff",
@@ -235,7 +252,7 @@ export async function convertWordToPdf(
           y: 0,
         });
 
-        const imgData = canvas.toDataURL("image/jpeg", 0.85);
+        const imgData = canvas.toDataURL("image/jpeg", 0.75);
         pdf.addImage(imgData, "JPEG", 0, 0, PDF_WIDTH_PT, PDF_HEIGHT_PT);
         imagesRendered++;
 
@@ -391,10 +408,16 @@ async function applyImageCroppingViaCanvas(container: HTMLElement): Promise<numb
     // Draw only the visible crop region from the original image
     ctx.drawImage(img, cropLeft, cropTop, cropW, cropH, 0, 0, canvas.width, canvas.height);
 
-    // Replace src with the cropped version and clear clip-path
+    // Replace src with the cropped version, clear clip-path and transform.
+    // docx-preview applies transform:scale(1,N) to srcRect images so the correct
+    // crop region fills the CSS height. After canvas pre-cropping the src already
+    // contains exactly the visible pixels, so the scale transform must be cleared —
+    // otherwise the image renders N× taller than intended and covers adjacent text.
     img.src = canvas.toDataURL("image/png");
     img.style.clipPath = "";
     (img.style as CSSStyleDeclaration & Record<string, string>)["clip-path"] = "";
+    img.style.transform = "";
+    (img.style as CSSStyleDeclaration & Record<string, string>)["transform"] = "";
     count++;
   }
 
@@ -442,17 +465,102 @@ function fixClipPathRect(root: HTMLElement): number {
 
     if (isNaN(top) || isNaN(right) || isNaN(bottom) || isNaN(left)) return;
 
-    // Convert: inset clips inward from each edge
-    const insetTop    = top;
-    const insetRight  = 100 - right;
-    const insetBottom = 100 - bottom;
-    const insetLeft   = left;
-
-    const insetValue = `inset(${insetTop.toFixed(2)}% ${insetRight.toFixed(2)}% ${insetBottom.toFixed(2)}% ${insetLeft.toFixed(2)}%)`;
-    el.style.clipPath = insetValue;
+    // For fallback images (naturalW=0, can't canvas-crop): clear transform and clip-path
+    // entirely. The image will render uncropped but at least won't overflow its container.
+    el.style.clipPath = "";
+    (el.style as CSSStyleDeclaration & Record<string, string>)["clip-path"] = "";
+    el.style.transform = "";
+    (el.style as CSSStyleDeclaration & Record<string, string>)["transform"] = "";
     count++;
   });
   return count;
+}
+
+// ---------------------------------------------------------------------------
+// Force a page break before the paragraph that contains the given text.
+//
+// docx-preview creates sections based on <w:lastRenderedPageBreak> hints in
+// the DOCX. If a hint is missing (e.g. Word computed a different overflow
+// point), docx-preview renders the content in fewer sections. This function
+// finds a specific paragraph and splits its parent section at that point,
+// creating an extra section so the content appears on the correct page.
+//
+// The DOM is split by walking from the target paragraph up to the section,
+// cloning intermediate containers in a new section, and moving the target
+// paragraph (and all following siblings at each level) into them.
+//
+// Returns true if the split was performed, false if the text was not found.
+// ---------------------------------------------------------------------------
+
+function forcePageBreakAtText(container: HTMLElement, searchText: string): boolean {
+  const sections = Array.from(container.querySelectorAll<HTMLElement>("section.docx"));
+
+  for (const section of sections) {
+    // Find a paragraph-like element whose text starts with searchText
+    const allEls = Array.from(section.querySelectorAll<HTMLElement>("p, div"));
+    const targetEl = allEls.find((el) => {
+      const text = (el.textContent || "").trimStart();
+      return text.startsWith(searchText.substring(0, 15));
+    });
+    if (!targetEl) continue;
+
+    // Build ancestor path from section down to targetEl
+    const path: HTMLElement[] = [];
+    let el: HTMLElement | null = targetEl;
+    while (el && el !== section) {
+      path.push(el);
+      el = el.parentElement;
+    }
+    path.reverse(); // [direct-child-of-section, ..., targetEl]
+
+    if (path.length === 0) continue;
+
+    // Create new section with same class and inline styles
+    const newSection = document.createElement("section");
+    newSection.className = section.className;
+    const sectionInlineStyle = section.getAttribute("style");
+    if (sectionInlineStyle) newSection.setAttribute("style", sectionInlineStyle);
+
+    let currentOrig: HTMLElement = section;
+    let currentNew: HTMLElement = newSection;
+
+    for (let depth = 0; depth < path.length; depth++) {
+      const splitEl = path[depth];
+      const siblings = Array.from(currentOrig.children) as HTMLElement[];
+      const splitIdx = siblings.indexOf(splitEl);
+
+      if (splitIdx < 0) break; // safety: element not found among siblings
+
+      if (depth === path.length - 1) {
+        // Deepest level: move splitEl and all following siblings to currentNew
+        const toMove = siblings.slice(splitIdx);
+        for (const s of toMove) currentNew.appendChild(s);
+      } else {
+        // Intermediate level: clone the container, move its tail siblings, then recurse
+        const cloneEl = document.createElement(splitEl.tagName.toLowerCase()) as HTMLElement;
+        cloneEl.className = splitEl.className;
+        const inlineStyle = splitEl.getAttribute("style");
+        if (inlineStyle) cloneEl.setAttribute("style", inlineStyle);
+
+        currentNew.appendChild(cloneEl);
+
+        // Any siblings of splitEl that come AFTER it also move to currentNew
+        const tailSiblings = siblings.slice(splitIdx + 1);
+        for (const s of tailSiblings) currentNew.appendChild(s);
+
+        currentOrig = splitEl;
+        currentNew = cloneEl;
+      }
+    }
+
+    // Guard: don't insert an empty new section
+    if (!newSection.firstChild) return false;
+
+    section.parentNode?.insertBefore(newSection, section.nextSibling);
+    return true;
+  }
+
+  return false;
 }
 
 // ---------------------------------------------------------------------------
