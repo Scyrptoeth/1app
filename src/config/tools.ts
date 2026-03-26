@@ -148,6 +148,19 @@ export const tools: ToolConfig[] = [
     outputFormats: [".pdf"],
     isAvailable: true,
   },
+  {
+    id: "pptx-to-pdf",
+    name: "PowerPoint to PDF",
+    description:
+      "Convert PowerPoint presentations (.pptx, .ppt) into PDF files, preserving slide layout, images, shapes, and text formatting.",
+    category: "transform",
+    icon: "FileOutput",
+    route: "/tools/pptx-to-pdf",
+    accentColor: "violet",
+    inputFormats: [".pptx", ".ppt"],
+    outputFormats: [".pdf"],
+    isAvailable: true,
+  },
 ];
 
 export interface ToolSection {
@@ -179,6 +192,10 @@ export const SECTIONS: ToolSection[] = [
   {
     label: "Convert from Word",
     toolIds: ["word-to-pdf"],
+  },
+  {
+    label: "Convert from PowerPoint",
+    toolIds: ["pptx-to-pdf"],
   },
 ];
 
