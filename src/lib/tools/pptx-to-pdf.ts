@@ -784,7 +784,7 @@ async function renderSpTree(doc: any, spTree: Element, images: Map<string, Image
     if (localName === "pic") {
       await renderPic(doc, el, images, rels, groupStack);
     } else if (localName === "sp") {
-      renderShape(doc, el, groupStack, placeholders);
+      try { renderShape(doc, el, groupStack, placeholders); } catch { /* skip broken shape */ }
     } else if (localName === "grpSp") {
       await renderNestedGroup(doc, el, images, rels, groupStack, placeholders);
     }
@@ -803,7 +803,7 @@ async function renderNestedGroup(doc: any, grpEl: Element, images: Map<string, I
     if (localName === "pic") {
       await renderPic(doc, el, images, rels, newStack);
     } else if (localName === "sp") {
-      renderShape(doc, el, newStack, placeholders);
+      try { renderShape(doc, el, newStack, placeholders); } catch { /* skip broken shape */ }
     } else if (localName === "grpSp") {
       await renderNestedGroup(doc, el, images, rels, newStack, placeholders);
     }
