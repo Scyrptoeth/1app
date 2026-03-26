@@ -71,6 +71,16 @@ interface GroupTransform {
   chOffY: number;
 }
 
+interface PlaceholderDef {
+  x: number; // pts
+  y: number;
+  cx: number;
+  cy: number;
+}
+
+// Map from placeholder type or index string → default position
+type PlaceholderMap = Map<string, PlaceholderDef>;
+
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
@@ -154,6 +164,53 @@ function parseXfrm(xfrm: Element | null): { x: number; y: number; cx: number; cy
     cx: emu(attr(ext, "cx")),
     cy: emu(attr(ext, "cy")),
   };
+}
+
+/**
+ * Parse placeholder positions from a slide master or layout XML document.
+ * Returns a map from placeholder key ("title", "body", "idx:N") → position.
+ */
+function parsePlaceholderPositions(xmlDoc: Document): PlaceholderMap {
+  const map: PlaceholderMap = new Map();
+  const spElements = xmlDoc.querySelectorAll
+    ? xmlDoc.querySelectorAll("sp")
+    : Array.from(xmlDoc.getElementsByTagNameNS(P_NS, "sp"));
+
+  const spArr = spElements instanceof NodeList
+    ? Array.from(spElements as NodeListOf<Element>)
+    : (spElements as Element[]);
+
+  for (const sp of spArr) {
+    const nvPr = child(sp, "nvPr");
+    if (!nvPr) continue;
+    const ph = child(nvPr, "ph");
+    if (!ph) continue;
+
+    const phType = ph.getAttribute("type") ?? "body";
+    const phIdx = ph.getAttribute("idx") ?? "0";
+    const spPr = child(sp, "spPr");
+    const xfrm = child(spPr, "xfrm");
+    if (!xfrm) continue;
+
+    const pos = parseXfrm(xfrm);
+    if (pos.cx <= 0 && pos.cy <= 0) continue;
+
+    // Store by type and by idx
+    map.set(phType, pos);
+    map.set(`idx:${phIdx}`, pos);
+  }
+
+  return map;
+}
+
+/**
+ * Merge master and layout placeholder maps.
+ * Layout values override master values.
+ */
+function mergePlaceholderMaps(master: PlaceholderMap, layout: PlaceholderMap): PlaceholderMap {
+  const merged = new Map(master);
+  for (const [k, v] of layout) merged.set(k, v);
+  return merged;
 }
 
 /** Parse group transform — returns the GroupTransform for children coordinate mapping. */
@@ -646,11 +703,24 @@ async function renderPic(doc: any, el: Element, images: Map<string, ImageEntry>,
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function renderShape(doc: any, el: Element, groupStack: GroupTransform[]) {
+function renderShape(doc: any, el: Element, groupStack: GroupTransform[], placeholders?: PlaceholderMap) {
   const spPr = child(el, "spPr");
   const txBody = child(el, "txBody");
   const xfrm = child(spPr, "xfrm");
-  const pos = parseXfrm(xfrm);
+  let pos = parseXfrm(xfrm);
+
+  // If no xfrm and this is a placeholder, look up position from master/layout
+  if (!xfrm && placeholders) {
+    const nvSpPr = child(el, "nvSpPr");
+    const nvPr = child(nvSpPr, "nvPr");
+    const ph = child(nvPr, "ph");
+    if (ph) {
+      const phType = ph.getAttribute("type") ?? "body";
+      const phIdx = ph.getAttribute("idx") ?? "0";
+      const fallback = placeholders.get(phType) ?? placeholders.get(`idx:${phIdx}`);
+      if (fallback) pos = { ...fallback };
+    }
+  }
 
   const { x, y } = applyGroupStack(pos.x, pos.y, groupStack);
   const { cx, cy } = applyGroupStackSize(pos.cx, pos.cy, groupStack);
@@ -708,7 +778,7 @@ function renderShape(doc: any, el: Element, groupStack: GroupTransform[]) {
 // ---------------------------------------------------------------------------
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function renderSpTree(doc: any, spTree: Element, images: Map<string, ImageEntry>, rels: Map<string, string>, groupStack: GroupTransform[]) {
+async function renderSpTree(doc: any, spTree: Element, images: Map<string, ImageEntry>, rels: Map<string, string>, groupStack: GroupTransform[], placeholders?: PlaceholderMap) {
   for (let i = 0; i < spTree.children.length; i++) {
     const el = spTree.children[i];
     const localName = el.localName;
@@ -716,31 +786,15 @@ async function renderSpTree(doc: any, spTree: Element, images: Map<string, Image
     if (localName === "pic") {
       await renderPic(doc, el, images, rels, groupStack);
     } else if (localName === "sp") {
-      renderShape(doc, el, groupStack);
+      renderShape(doc, el, groupStack, placeholders);
     } else if (localName === "grpSp") {
-      const grpSpPr = child(el, "grpSpPr");
-      const grpTransform = parseGroupTransform(grpSpPr);
-      const newStack = [...groupStack, grpTransform];
-
-      // Recursively render all children of the group
-      for (let j = 0; j < el.children.length; j++) {
-        const child2 = el.children[j];
-        const cn = child2.localName;
-        if (cn === "pic") {
-          await renderPic(doc, child2, images, rels, newStack);
-        } else if (cn === "sp") {
-          renderShape(doc, child2, newStack);
-        } else if (cn === "grpSp") {
-          // Nested group
-          await renderNestedGroup(doc, child2, images, rels, newStack);
-        }
-      }
+      await renderNestedGroup(doc, el, images, rels, groupStack, placeholders);
     }
   }
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function renderNestedGroup(doc: any, grpEl: Element, images: Map<string, ImageEntry>, rels: Map<string, string>, parentStack: GroupTransform[]) {
+async function renderNestedGroup(doc: any, grpEl: Element, images: Map<string, ImageEntry>, rels: Map<string, string>, parentStack: GroupTransform[], placeholders?: PlaceholderMap) {
   const grpSpPr = child(grpEl, "grpSpPr");
   const grpTransform = parseGroupTransform(grpSpPr);
   const newStack = [...parentStack, grpTransform];
@@ -751,9 +805,9 @@ async function renderNestedGroup(doc: any, grpEl: Element, images: Map<string, I
     if (localName === "pic") {
       await renderPic(doc, el, images, rels, newStack);
     } else if (localName === "sp") {
-      renderShape(doc, el, newStack);
+      renderShape(doc, el, newStack, placeholders);
     } else if (localName === "grpSp") {
-      await renderNestedGroup(doc, el, images, rels, newStack);
+      await renderNestedGroup(doc, el, images, rels, newStack, placeholders);
     }
   }
 }
@@ -842,6 +896,32 @@ export async function convertPptxToPdf(
     })
   );
 
+  onProgress({ progress: 18, status: "Memuat layout slide..." });
+
+  // --- Load slide master placeholder positions ---
+  let masterPlaceholders: PlaceholderMap = new Map();
+  const presRelsForMasterStr = await zip.file("ppt/_rels/presentation.xml.rels")?.async("string");
+  let masterPath = "ppt/slideMasters/slideMaster1.xml"; // fallback
+  if (presRelsForMasterStr) {
+    const presRelsXml = xmlParser.parseFromString(presRelsForMasterStr, "text/xml");
+    for (const rel of Array.from(presRelsXml.getElementsByTagName("Relationship"))) {
+      const type = rel.getAttribute("Type") ?? "";
+      if (type.includes("slideMaster")) {
+        const target = rel.getAttribute("Target") ?? "";
+        masterPath = target.startsWith("/ppt/") ? target.slice(1) : "ppt/" + target.replace(/^\.\//, "");
+        break;
+      }
+    }
+  }
+  const masterXmlStr = await zip.file(masterPath)?.async("string");
+  if (masterXmlStr) {
+    const masterXml = xmlParser.parseFromString(masterXmlStr, "text/xml");
+    masterPlaceholders = parsePlaceholderPositions(masterXml);
+  }
+
+  // --- Cache for layout placeholders (path → PlaceholderMap) ---
+  const layoutCache: Map<string, PlaceholderMap> = new Map();
+
   onProgress({ progress: 20, status: "Memulai render slide..." });
 
   // --- Initialize jsPDF ---
@@ -868,6 +948,7 @@ export async function convertPptxToPdf(
     const slideRelPath = slideFile.replace(/\/([^/]+)$/, "/_rels/$1.rels");
     const slideRelsStr = await zip.file(slideRelPath)?.async("string");
     const slideImageRels: Map<string, string> = new Map();
+    let layoutPath = "";
     if (slideRelsStr) {
       const relsXml = xmlParser.parseFromString(slideRelsStr, "text/xml");
       for (const rel of Array.from(relsXml.getElementsByTagName("Relationship"))) {
@@ -875,11 +956,30 @@ export async function convertPptxToPdf(
         const rId = rel.getAttribute("Id") ?? "";
         const target = rel.getAttribute("Target") ?? "";
         if (type.includes("image") && rId && target) {
-          // target is like "../media/image1.jpg" → normalize to "media/image1.jpg"
           const normalized = target.replace(/^\.\.\//, "");
           slideImageRels.set(rId, normalized);
+        } else if (type.includes("slideLayout") && target) {
+          // target like "../slideLayouts/slideLayout2.xml" → normalize
+          layoutPath = "ppt/slides/" + target;
+          layoutPath = layoutPath.replace(/\/slides\/\.\.\//, "/");
         }
       }
+    }
+
+    // Get layout placeholders (cached)
+    let slidePlaceholders: PlaceholderMap = masterPlaceholders;
+    if (layoutPath) {
+      if (!layoutCache.has(layoutPath)) {
+        const layoutXmlStr = await zip.file(layoutPath)?.async("string");
+        if (layoutXmlStr) {
+          const layoutXml = xmlParser.parseFromString(layoutXmlStr, "text/xml");
+          const layoutPh = parsePlaceholderPositions(layoutXml);
+          layoutCache.set(layoutPath, mergePlaceholderMaps(masterPlaceholders, layoutPh));
+        } else {
+          layoutCache.set(layoutPath, masterPlaceholders);
+        }
+      }
+      slidePlaceholders = layoutCache.get(layoutPath)!;
     }
 
     // Initialize or add page
@@ -906,8 +1006,8 @@ export async function convertPptxToPdf(
 
     if (!spTree) continue;
 
-    // Render all elements
-    await renderSpTree(doc, spTree, images, slideImageRels, []);
+    // Render all elements with placeholder fallback positions
+    await renderSpTree(doc, spTree, images, slideImageRels, [], slidePlaceholders);
   }
 
   onProgress({ progress: 92, status: "Menyimpan PDF..." });
