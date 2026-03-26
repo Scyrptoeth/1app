@@ -1,61 +1,39 @@
 // ============================================================================
-// Word to PDF Converter — Hybrid Approach
+// Word to PDF Converter — Direct DOCX-to-PDF Rendering
 //
 // Pipeline:
-//   1. docx-preview  → render DOCX into paginated hidden DOM
-//      Handles: fonts, bold/italic/underline/strike, images (with srcRect
-//      crop via CSS clip-path), tables, charts, headers/footers, lists.
-//   2. html2canvas   → capture each page as high-res image (visual layer)
-//      onclone fixes: clip-path:rect() → inset() for correct image cropping
-//   3. jsPDF         → embed image + invisible text overlay for search/copy
+//   1. JSZip     → unpack DOCX (document.xml, _rels/, media/)
+//   2. DOMParser → parse OOXML into a paragraph / run / image model
+//   3. Canvas    → crop images per srcRect before embedding
+//   4. jsPDF     → render vector text + embedded PNG images directly
 //
-// Key lessons:
-//   - Dynamic imports prevent Next.js webpack bundling issues
-//   - Hyphens/word-break CSS must be disabled before capture (prevents
-//     mid-word text splitting in justify-aligned text)
-//   - html2canvas 1.x ignores clip-path entirely; canvas pre-cropping
-//     replaces img.src with the already-cropped pixels before capture
-//   - docx-preview applies transform:scale(1,N) alongside clip-path for
-//     srcRect images; must clear transform after canvas crop or the image
-//     renders N× taller and overlaps adjacent text elements
-//   - Missing lastRenderedPageBreak hints cause fewer sections than Word
-//     produces; forcePageBreakAtText() splits the DOM to compensate
+// No html2canvas — all text is PDF vector text; all images are PNG (FlateDecode).
 // ============================================================================
 
 // ---------------------------------------------------------------------------
-// Lazy loaders — each library loaded at most once per session
+// Lazy loaders
 // ---------------------------------------------------------------------------
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-let _renderAsync: any = null;
-async function getDocxPreview() {
-  if (_renderAsync) return _renderAsync;
-  const mod = await import("docx-preview");
-  _renderAsync = mod.renderAsync;
-  return _renderAsync;
-}
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-let _html2canvas: any = null;
-async function getHtml2Canvas() {
-  if (_html2canvas) return _html2canvas;
-  const mod = await import("html2canvas");
-  _html2canvas = mod.default;
-  return _html2canvas;
-}
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let _JsPDF: any = null;
 async function getJsPDF() {
   if (_JsPDF) return _JsPDF;
   const mod = await import("jspdf");
-  // jsPDF v4 uses default export
   _JsPDF = mod.default;
   return _JsPDF;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let _JSZip: any = null;
+async function getJSZip() {
+  if (_JSZip) return _JSZip;
+  const mod = await import("jszip");
+  _JSZip = mod.default;
+  return _JSZip;
+}
+
 // ---------------------------------------------------------------------------
-// Public Types
+// Public types
 // ---------------------------------------------------------------------------
 
 export interface ProcessingUpdate {
@@ -74,12 +52,799 @@ export interface WordToPdfResult {
   pageCount: number;
 }
 
-// Internal: text node extracted from the rendered DOM for invisible text layer
-interface ExtractedTextNode {
+// ---------------------------------------------------------------------------
+// Internal document model
+// ---------------------------------------------------------------------------
+
+interface DocxRun {
+  kind: "run";
   text: string;
-  x: number;       // px from page element left
-  y: number;       // px from page element top
-  fontSize: number; // px
+  bold: boolean;
+  italic: boolean;
+  fontSizePt: number;
+  colorHex: string; // "000000" default
+}
+
+interface DocxImage {
+  kind: "image";
+  rId: string;
+  widthEmu: number;  // displayed size (from wp:extent)
+  heightEmu: number;
+  srcRectT: number;  // per-mille crop values (0–100000)
+  srcRectB: number;
+  srcRectL: number;
+  srcRectR: number;
+}
+
+interface DocxPageBreak {
+  kind: "pageBreak";
+}
+
+type DocxItem = DocxRun | DocxImage | DocxPageBreak;
+
+interface DocxParagraph {
+  items: DocxItem[];
+  alignment: "left" | "center" | "right" | "justify";
+  spacingBeforePt: number;
+  spacingAfterPt: number;
+  lineSpacingMult: number; // multiplier on font size, e.g. 1.15
+  indentLeftPt: number;
+  indentHangingPt: number; // positive = first-line pulls LEFT; negative = first-line indent right
+}
+
+interface DocxData {
+  paragraphs: DocxParagraph[];
+  imageRels: Record<string, string>;   // rId → "media/image1.png"
+  imageBlobs: Record<string, Blob>;    // "media/image1.png" → Blob
+  pageWidthPt: number;
+  pageHeightPt: number;
+  marginTopPt: number;
+  marginBottomPt: number;
+  marginLeftPt: number;
+  marginRightPt: number;
+  defaultFontSizePt: number;
+}
+
+// ---------------------------------------------------------------------------
+// Conversion constants
+// ---------------------------------------------------------------------------
+
+const EMU_PER_PT  = 12700; // 914400 EMU/inch ÷ 72 pt/inch
+const TWIPS_PER_PT = 20;   // 1440 twips/inch ÷ 72 pt/inch
+
+// OOXML namespaces
+const W_NS  = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+const R_NS  = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+const A_NS  = "http://schemas.openxmlformats.org/drawingml/2006/main";
+const WP_NS = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing";
+
+// ---------------------------------------------------------------------------
+// XML helpers
+// ---------------------------------------------------------------------------
+
+/** Returns the first direct child element with matching namespace + localName. */
+function firstChild(parent: Element | Document, ns: string, localName: string): Element | null {
+  const kids = parent.childNodes;
+  for (let i = 0; i < kids.length; i++) {
+    const n = kids[i] as Element;
+    if (n.nodeType === 1 && n.localName === localName && n.namespaceURI === ns) return n;
+  }
+  return null;
+}
+
+/** Read a w:-namespaced attribute, trying both NS-qualified and prefix-qualified forms. */
+function wAttr(el: Element, attr: string): string {
+  return el.getAttributeNS(W_NS, attr) ?? el.getAttribute("w:" + attr) ?? "";
+}
+
+// ---------------------------------------------------------------------------
+// DOCX parser
+// ---------------------------------------------------------------------------
+
+async function parseDocx(file: File): Promise<DocxData> {
+  const JSZip = await getJSZip();
+  const zip = await JSZip.loadAsync(await file.arrayBuffer());
+  const xmlParser = new DOMParser();
+
+  // --- document.xml ---
+  const docXmlStr = await zip.file("word/document.xml")?.async("string");
+  if (!docXmlStr) throw new Error("Invalid DOCX: missing word/document.xml");
+  const docXml = xmlParser.parseFromString(docXmlStr, "text/xml");
+
+  // --- image relationships ---
+  const relsXmlStr = await zip.file("word/_rels/document.xml.rels")?.async("string");
+  const imageRels: Record<string, string> = {};
+  if (relsXmlStr) {
+    const relsXml = xmlParser.parseFromString(relsXmlStr, "text/xml");
+    for (const rel of Array.from(relsXml.getElementsByTagName("Relationship"))) {
+      const id     = rel.getAttribute("Id") ?? "";
+      const target = rel.getAttribute("Target") ?? "";
+      const type   = rel.getAttribute("Type") ?? "";
+      if (id && target && type.includes("image")) {
+        imageRels[id] = target; // e.g. "media/image1.png"
+      }
+    }
+  }
+
+  // --- load image blobs ---
+  const imageBlobs: Record<string, Blob> = {};
+  for (const target of Object.values(imageRels)) {
+    const entry = zip.file("word/" + target);
+    if (entry) {
+      const bytes = await entry.async("uint8array");
+      const ext  = target.split(".").pop()?.toLowerCase() ?? "png";
+      const mime = ext === "jpg" || ext === "jpeg" ? "image/jpeg" : "image/png";
+      imageBlobs[target] = new Blob([bytes], { type: mime });
+    }
+  }
+
+  // --- page layout from sectPr ---
+  let pageWidthPt  = 595.28; // A4 defaults
+  let pageHeightPt = 841.89;
+  let marginTopPt = 72, marginBottomPt = 72, marginLeftPt = 72, marginRightPt = 72;
+  let defaultFontSizePt = 11;
+
+  const docEl = docXml.documentElement; // <w:document>
+  const body = firstChild(docEl, W_NS, "body");
+  if (body) {
+    const sectPr = firstChild(body, W_NS, "sectPr");
+    if (sectPr) {
+      const pgSz  = firstChild(sectPr, W_NS, "pgSz");
+      const pgMar = firstChild(sectPr, W_NS, "pgMar");
+      if (pgSz) {
+        const w = parseInt(wAttr(pgSz, "w") || "0");
+        const h = parseInt(wAttr(pgSz, "h") || "0");
+        if (w > 0) pageWidthPt  = w / TWIPS_PER_PT;
+        if (h > 0) pageHeightPt = h / TWIPS_PER_PT;
+      }
+      if (pgMar) {
+        const top    = parseInt(wAttr(pgMar, "top")    || "1440");
+        const bottom = parseInt(wAttr(pgMar, "bottom") || "1440");
+        const left   = parseInt(wAttr(pgMar, "left")   || "1440");
+        const right  = parseInt(wAttr(pgMar, "right")  || "1440");
+        marginTopPt    = top    / TWIPS_PER_PT;
+        marginBottomPt = bottom / TWIPS_PER_PT;
+        marginLeftPt   = left   / TWIPS_PER_PT;
+        marginRightPt  = right  / TWIPS_PER_PT;
+      }
+    }
+  }
+
+  // --- default font size from styles.xml ---
+  const stylesXmlStr = await zip.file("word/styles.xml")?.async("string");
+  if (stylesXmlStr) {
+    const stylesXml = xmlParser.parseFromString(stylesXmlStr, "text/xml");
+    const szEls = stylesXml.getElementsByTagNameNS(W_NS, "sz");
+    if (szEls.length > 0) {
+      const val = parseInt(wAttr(szEls[0] as Element, "val") || "22");
+      if (val > 0) defaultFontSizePt = val / 2;
+    }
+  }
+
+  // --- parse body paragraphs ---
+  const paragraphs: DocxParagraph[] = [];
+  if (body) {
+    for (const child of Array.from(body.children as HTMLCollectionOf<Element>)) {
+      if (child.localName === "p" && child.namespaceURI === W_NS) {
+        paragraphs.push(parseParagraph(child as Element, defaultFontSizePt));
+      }
+      // Tables and other elements skipped
+    }
+  }
+
+  return {
+    paragraphs, imageRels, imageBlobs,
+    pageWidthPt, pageHeightPt,
+    marginTopPt, marginBottomPt, marginLeftPt, marginRightPt,
+    defaultFontSizePt,
+  };
+}
+
+// Font-specific "single" line spacing multipliers.
+// Word calculates "Single" line height from the font's OS/2 metrics
+// (usWinAscent + usWinDescent) / unitsPerEm × pointSize.
+// Segoe UI has unusually large OS/2 values → ~1.44× at 11pt (empirically measured
+// from benchmark PDF: 15.8pt line height / 11pt font = 1.436×).
+const FONT_LINE_SPACING: Record<string, number> = {
+  "Segoe UI": 1.44,
+  "Segoe UI Light": 1.44,
+  "Segoe UI Semibold": 1.44,
+};
+const DEFAULT_LINE_SPACING = 1.15;
+
+/** Look up the appropriate "Single" line spacing for a given font name. */
+function getFontLineSpacing(fontName: string): number {
+  return FONT_LINE_SPACING[fontName] ?? DEFAULT_LINE_SPACING;
+}
+
+function parseParagraph(pEl: Element, defaultFontSizePt: number): DocxParagraph {
+  const para: DocxParagraph = {
+    items: [],
+    alignment: "justify",
+    spacingBeforePt: 0,
+    spacingAfterPt: 0,
+    lineSpacingMult: DEFAULT_LINE_SPACING,
+    indentLeftPt: 0,
+    indentHangingPt: 0,
+  };
+
+  // Paragraph properties
+  const pPr = firstChild(pEl, W_NS, "pPr");
+  if (pPr) {
+    const jc = firstChild(pPr, W_NS, "jc");
+    if (jc) {
+      const v = wAttr(jc, "val");
+      if      (v === "center")                  para.alignment = "center";
+      else if (v === "right" || v === "end")    para.alignment = "right";
+      else if (v === "left"  || v === "start")  para.alignment = "left";
+      else                                       para.alignment = "justify";
+    }
+
+    // Read paragraph-mark font name to determine "Single" line spacing
+    // (used when no explicit w:spacing w:line is present)
+    const pPrRPr = firstChild(pPr, W_NS, "rPr");
+    let paraMarkFont = "";
+    if (pPrRPr) {
+      const rFonts = firstChild(pPrRPr, W_NS, "rFonts");
+      if (rFonts) {
+        paraMarkFont = rFonts.getAttributeNS(W_NS, "ascii") ?? rFonts.getAttribute("w:ascii") ?? "";
+      }
+    }
+    para.lineSpacingMult = getFontLineSpacing(paraMarkFont);
+
+    const spacing = firstChild(pPr, W_NS, "spacing");
+    if (spacing) {
+      const before   = parseInt(wAttr(spacing, "before") || "0");
+      const after    = parseInt(wAttr(spacing, "after")  || "0");
+      const line     = parseInt(wAttr(spacing, "line")   || "0");
+      const lineRule = wAttr(spacing, "lineRule");
+      if (before >= 0) para.spacingBeforePt = before / TWIPS_PER_PT;
+      if (after  >= 0) para.spacingAfterPt  = after  / TWIPS_PER_PT;
+      if (line > 0) {
+        // Explicit w:line overrides font-derived default
+        para.lineSpacingMult = (lineRule === "exact" || lineRule === "atLeast")
+          ? (line / TWIPS_PER_PT) / defaultFontSizePt
+          : line / 240; // "auto": 240 = 1.0×, 276 = 1.15×
+      }
+    }
+    const ind = firstChild(pPr, W_NS, "ind");
+    if (ind) {
+      const left      = parseInt(wAttr(ind, "left")      || "0");
+      const hanging   = parseInt(wAttr(ind, "hanging")   || "0");
+      const firstLine = parseInt(wAttr(ind, "firstLine") || "0");
+      if (left > 0)      para.indentLeftPt    = left    / TWIPS_PER_PT;
+      if (hanging > 0)   para.indentHangingPt = hanging / TWIPS_PER_PT;
+      else if (firstLine > 0) para.indentHangingPt = -(firstLine / TWIPS_PER_PT);
+    }
+  }
+
+  // Determine once whether this paragraph has ANY explicit column/page break.
+  // If yes, lrpb elements are Word rendering hints and must be ignored to avoid
+  // double page-breaks (P15/P30/P57/P73 have col_br and lrpb in separate runs).
+  const hasExplicitBreak = Array.from(pEl.children).some(child => {
+    if (child.localName !== "r" || child.namespaceURI !== W_NS) return false;
+    const br = firstChild(child as Element, W_NS, "br");
+    if (!br) return false;
+    const t = wAttr(br as Element, "type");
+    return t === "page" || t === "column";
+  });
+
+  // Runs
+  for (const child of Array.from(pEl.children)) {
+    if (child.localName !== "r" || child.namespaceURI !== W_NS) continue;
+    const rEl = child as Element;
+
+    // Explicit column / page break → insert PageBreakItem
+    const brEl = firstChild(rEl, W_NS, "br");
+    if (brEl) {
+      const brType = wAttr(brEl, "type");
+      if (brType === "page" || brType === "column") {
+        para.items.push({ kind: "pageBreak" });
+      }
+    }
+
+    // lastRenderedPageBreak — only when paragraph has NO explicit break anywhere.
+    // This handles P96 (lrpb-only) while ignoring lrpb in P15/P30/P57/P73
+    // which also carry an explicit col_br in a different run.
+    const lrpb = firstChild(rEl, W_NS, "lastRenderedPageBreak");
+    if (lrpb && !hasExplicitBreak) {
+      para.items.push({ kind: "pageBreak" });
+    }
+
+    // Drawing (inline image)
+    const drawingEl = firstChild(rEl, W_NS, "drawing");
+    if (drawingEl) {
+      const img = parseDrawing(drawingEl);
+      if (img) para.items.push(img);
+      continue; // a drawing run has no text
+    }
+
+    // Text runs
+    const rPr = firstChild(rEl, W_NS, "rPr");
+    let bold = false, italic = false;
+    let fontSizePt = defaultFontSizePt;
+    let colorHex = "000000";
+
+    if (rPr) {
+      const bEl = firstChild(rPr, W_NS, "b");
+      if (bEl) {
+        const v = wAttr(bEl, "val");
+        bold = v !== "0" && v !== "false";
+      }
+      const iEl = firstChild(rPr, W_NS, "i");
+      if (iEl) {
+        const v = wAttr(iEl, "val");
+        italic = v !== "0" && v !== "false";
+      }
+      const szEl = firstChild(rPr, W_NS, "sz");
+      if (szEl) {
+        const v = parseInt(wAttr(szEl, "val") || "22");
+        if (v > 0) fontSizePt = v / 2;
+      }
+      const colorEl = firstChild(rPr, W_NS, "color");
+      if (colorEl) {
+        const v = wAttr(colorEl, "val");
+        if (v && v !== "auto") colorHex = v;
+      }
+    }
+
+    // All w:t children in this run (usually one)
+    for (const tEl of Array.from(rEl.children)) {
+      if (tEl.localName !== "t" || tEl.namespaceURI !== W_NS) continue;
+      const text = tEl.textContent ?? "";
+      if (text) {
+        para.items.push({ kind: "run", text, bold, italic, fontSizePt, colorHex });
+      }
+    }
+  }
+
+  return para;
+}
+
+function parseDrawing(drawingEl: Element): DocxImage | null {
+  const container =
+    firstChild(drawingEl, WP_NS, "inline") ??
+    firstChild(drawingEl, WP_NS, "anchor");
+  if (!container) return null;
+
+  const extentEl = firstChild(container, WP_NS, "extent");
+  if (!extentEl) return null;
+
+  const cx = parseInt(extentEl.getAttribute("cx") ?? "0");
+  const cy = parseInt(extentEl.getAttribute("cy") ?? "0");
+  if (cx <= 0 || cy <= 0) return null;
+
+  // a:blip r:embed gives the relationship ID
+  const blips = drawingEl.getElementsByTagNameNS(A_NS, "blip");
+  if (!blips.length) return null;
+  const blipEl = blips[0] as Element;
+  const rId = blipEl.getAttributeNS(R_NS, "embed") ?? blipEl.getAttribute("r:embed") ?? "";
+  if (!rId) return null;
+
+  // a:srcRect — crop fractions in per-mille (0–100000)
+  const srcRects = drawingEl.getElementsByTagNameNS(A_NS, "srcRect");
+  let srcRectT = 0, srcRectB = 0, srcRectL = 0, srcRectR = 0;
+  if (srcRects.length > 0) {
+    const sr = srcRects[0] as Element;
+    srcRectT = parseInt(sr.getAttribute("t") ?? "0");
+    srcRectB = parseInt(sr.getAttribute("b") ?? "0");
+    srcRectL = parseInt(sr.getAttribute("l") ?? "0");
+    srcRectR = parseInt(sr.getAttribute("r") ?? "0");
+  }
+
+  return { kind: "image", rId, widthEmu: cx, heightEmu: cy, srcRectT, srcRectB, srcRectL, srcRectR };
+}
+
+// ---------------------------------------------------------------------------
+// Image cropper
+// ---------------------------------------------------------------------------
+
+/** Crop key — uniquely identifies a (rId, srcRect) combination. */
+function cropKey(img: DocxImage): string {
+  return `${img.rId}_${img.srcRectT}_${img.srcRectB}_${img.srcRectL}_${img.srcRectR}`;
+}
+
+/** Crop all unique image+srcRect combinations and return data URLs. */
+async function cropAllImages(data: DocxData, contentWidthPt: number): Promise<Record<string, string>> {
+  const result: Record<string, string> = {};
+  const seen = new Set<string>();
+
+  for (const para of data.paragraphs) {
+    for (const item of para.items) {
+      if (item.kind !== "image") continue;
+      const img = item as DocxImage;
+      const key = cropKey(img);
+      if (seen.has(key)) continue;
+      seen.add(key);
+
+      const target = data.imageRels[img.rId];
+      if (!target) continue;
+      const blob = data.imageBlobs[target];
+      if (!blob) continue;
+
+      // Compute display size — scale down if wider than content area
+      let wPt = img.widthEmu / EMU_PER_PT;
+      let hPt = img.heightEmu / EMU_PER_PT;
+      if (wPt > contentWidthPt) {
+        hPt = hPt * (contentWidthPt / wPt);
+        wPt = contentWidthPt;
+      }
+      // Output canvas at 2× display size (≈144 DPI) — JPEG encoding handles compression
+      const maxWPx = Math.round(wPt * 2);
+      const maxHPx = Math.round(hPt * 2);
+
+      result[key] = await cropImageToDataUrl(blob, img.srcRectT, img.srcRectB, img.srcRectL, img.srcRectR, maxWPx, maxHPx);
+    }
+  }
+
+  return result;
+}
+
+async function cropImageToDataUrl(
+  blob: Blob,
+  t: number, b: number, l: number, r: number,
+  maxWPx: number, maxHPx: number
+): Promise<string> {
+  const objectUrl = URL.createObjectURL(blob);
+  const img = new Image();
+
+  await new Promise<void>((resolve, reject) => {
+    img.onload  = () => resolve();
+    img.onerror = () => reject(new Error("Image load failed"));
+    img.src = objectUrl;
+  });
+  URL.revokeObjectURL(objectUrl);
+
+  const nw = img.naturalWidth;
+  const nh = img.naturalHeight;
+
+  // srcRect: t=% from top, b=% from bottom, l=% from left, r=% from right (per-mille)
+  const cropTop    = (t / 100000) * nh;
+  const cropBottom = nh - (b / 100000) * nh;
+  const cropLeft   = (l / 100000) * nw;
+  const cropRight  = nw - (r / 100000) * nw;
+
+  const cropW = Math.max(1, Math.round(cropRight - cropLeft));
+  const cropH = Math.max(1, Math.round(cropBottom - cropTop));
+
+  // Scale down proportionally to maxWPx × maxHPx if source exceeds it
+  const scaleW = cropW > maxWPx ? maxWPx / cropW : 1;
+  const scaleH = cropH > maxHPx ? maxHPx / cropH : 1;
+  const scale  = Math.min(scaleW, scaleH);
+  const outW   = Math.max(1, Math.round(cropW * scale));
+  const outH   = Math.max(1, Math.round(cropH * scale));
+
+  const canvas = document.createElement("canvas");
+  canvas.width = outW; canvas.height = outH;
+  const ctx = canvas.getContext("2d")!;
+  // White background (needed for JPEG which has no alpha channel)
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, outW, outH);
+  ctx.drawImage(img, cropLeft, cropTop, cropW, cropH, 0, 0, outW, outH);
+  // JPEG at quality 0.85 — much smaller than PNG for diagrams/charts
+  return canvas.toDataURL("image/jpeg", 0.85);
+}
+
+// ---------------------------------------------------------------------------
+// Text layout engine
+// ---------------------------------------------------------------------------
+
+// Segoe UI (document font) is ~10% wider than Helvetica (PDF font).
+// Apply this correction when measuring text for line-breaking so that
+// lines wrap at the same positions as the original document, preserving
+// page-overflow behaviour (e.g. soal 3 spanning 2 pages).
+const FONT_WIDTH_CORRECTION = 1.15;
+
+interface TextToken {
+  text: string;
+  bold: boolean;
+  italic: boolean;
+  fontSizePt: number;
+  colorHex: string;
+  isSpace: boolean;
+}
+
+interface LayoutLine {
+  tokens: TextToken[];
+  isLast: boolean;
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function setFont(pdf: any, bold: boolean, italic: boolean, fontSizePt: number): void {
+  const style = bold && italic ? "bolditalic" : bold ? "bold" : italic ? "italic" : "normal";
+  pdf.setFont("helvetica", style);
+  pdf.setFontSize(fontSizePt);
+}
+
+/** Actual rendered width — used for cursor positioning in renderLine. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function measureWidth(pdf: any, text: string, bold: boolean, italic: boolean, fontSizePt: number): number {
+  setFont(pdf, bold, italic, fontSizePt);
+  return pdf.getTextWidth(text);
+}
+
+/** Layout width — used for line-breaking decisions only.
+ *  Applies FONT_WIDTH_CORRECTION to simulate the wider Segoe UI characters
+ *  that the document uses, so line-break positions approximate the original. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function layoutWidth(pdf: any, text: string, bold: boolean, italic: boolean, fontSizePt: number): number {
+  return measureWidth(pdf, text, bold, italic, fontSizePt) * FONT_WIDTH_CORRECTION;
+}
+
+/** Build a flat token stream (words + spaces) from a list of runs. */
+function buildTokens(runs: DocxRun[]): TextToken[] {
+  const tokens: TextToken[] = [];
+  for (const run of runs) {
+    let i = 0;
+    const s = run.text;
+    while (i < s.length) {
+      if (s[i] === " " || s[i] === "\t") {
+        while (i < s.length && (s[i] === " " || s[i] === "\t")) i++;
+        tokens.push({ text: " ", bold: run.bold, italic: run.italic, fontSizePt: run.fontSizePt, colorHex: run.colorHex, isSpace: true });
+      } else {
+        const start = i;
+        while (i < s.length && s[i] !== " " && s[i] !== "\t") i++;
+        tokens.push({ text: s.slice(start, i), bold: run.bold, italic: run.italic, fontSizePt: run.fontSizePt, colorHex: run.colorHex, isSpace: false });
+      }
+    }
+  }
+  return tokens;
+}
+
+/** Break tokens into lines that fit within lineWidthPt.
+ *  Uses layoutWidth (with FONT_WIDTH_CORRECTION) for break decisions
+ *  to approximate Segoe UI wrapping even though we render in Helvetica. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function layoutLines(pdf: any, tokens: TextToken[], lineWidthPt: number): LayoutLine[] {
+  const lines: LayoutLine[] = [];
+  let current: TextToken[] = [];
+  let currentW = 0;
+
+  for (const token of tokens) {
+    const tokenW = layoutWidth(pdf, token.text, token.bold, token.italic, token.fontSizePt);
+
+    if (token.isSpace) {
+      if (current.length === 0) continue; // skip leading space on a new line
+      current.push(token);
+      currentW += tokenW;
+    } else {
+      if (current.length === 0) {
+        // First word on line — place it even if wider than lineWidth
+        current.push(token);
+        currentW = tokenW;
+      } else if (currentW + tokenW > lineWidthPt + 0.001) {
+        // Doesn't fit — flush, removing trailing spaces
+        while (current.length > 0 && current[current.length - 1].isSpace) {
+          const p = current.pop()!;
+          currentW -= layoutWidth(pdf, p.text, p.bold, p.italic, p.fontSizePt);
+        }
+        if (current.length > 0) lines.push({ tokens: current, isLast: false });
+        current = [token];
+        currentW = tokenW;
+      } else {
+        current.push(token);
+        currentW += tokenW;
+      }
+    }
+  }
+
+  // Flush last line
+  while (current.length > 0 && current[current.length - 1].isSpace) current.pop();
+  if (current.length > 0) lines.push({ tokens: current, isLast: true });
+
+  return lines;
+}
+
+/** Render one line of tokens at (x, y). Justifies if alignment="justify" and not the last line. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function renderLine(
+  pdf: any,
+  tokens: TextToken[],
+  x: number,
+  y: number,
+  lineWidthPt: number,
+  isLast: boolean,
+  alignment: DocxParagraph["alignment"]
+): void {
+  if (tokens.length === 0) return;
+
+  let totalWordW = 0;
+  let totalSpaceW = 0;
+  let spaceCount = 0;
+  for (const t of tokens) {
+    const w = measureWidth(pdf, t.text, t.bold, t.italic, t.fontSizePt);
+    if (t.isSpace) { totalSpaceW += w; spaceCount++; }
+    else            { totalWordW  += w; }
+  }
+  const totalW = totalWordW + totalSpaceW;
+
+  let startX = x;
+  let spaceW = spaceCount > 0 ? totalSpaceW / spaceCount : 0;
+
+  if (alignment === "center") {
+    startX = x + (lineWidthPt - totalW) / 2;
+  } else if (alignment === "right") {
+    startX = x + lineWidthPt - totalW;
+  } else if (alignment === "justify" && !isLast && spaceCount > 0) {
+    const extra = lineWidthPt - totalWordW;
+    spaceW = extra / spaceCount;
+  }
+
+  let cx = startX;
+  for (const token of tokens) {
+    if (token.isSpace) {
+      cx += spaceW;
+    } else {
+      setFont(pdf, token.bold, token.italic, token.fontSizePt);
+      const rr = parseInt(token.colorHex.slice(0, 2), 16) || 0;
+      const gg = parseInt(token.colorHex.slice(2, 4), 16) || 0;
+      const bb = parseInt(token.colorHex.slice(4, 6), 16) || 0;
+      pdf.setTextColor(rr, gg, bb);
+      pdf.text(token.text, cx, y, { baseline: "top" });
+      cx += measureWidth(pdf, token.text, token.bold, token.italic, token.fontSizePt);
+    }
+  }
+  pdf.setTextColor(0, 0, 0);
+}
+
+// ---------------------------------------------------------------------------
+// PDF render state
+// ---------------------------------------------------------------------------
+
+interface RenderState {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  pdf: any;
+  y: number;           // current Y (pt from page top)
+  pageCount: number;
+  pageHeightPt: number;
+  marginTopPt: number;
+  marginBottomPt: number;
+  marginLeftPt: number;
+  contentWidthPt: number;
+}
+
+function newPage(s: RenderState): void {
+  s.pdf.addPage("a4", "portrait");
+  s.y = s.marginTopPt;
+  s.pageCount++;
+}
+
+/** If `neededPt` doesn't fit on the current page, advance to a new page. */
+function ensureFits(s: RenderState, neededPt: number): void {
+  if (s.y + neededPt > s.pageHeightPt - s.marginBottomPt) {
+    newPage(s);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Paragraph renderer
+// ---------------------------------------------------------------------------
+
+function renderParagraph(
+  para: DocxParagraph,
+  s: RenderState,
+  croppedImages: Record<string, string>,
+  defaultFontSizePt: number
+): void {
+  // Split items at page-break markers into segments
+  const segments: DocxItem[][] = [];
+  let seg: DocxItem[] = [];
+  for (const item of para.items) {
+    if (item.kind === "pageBreak") {
+      segments.push(seg);
+      seg = [];
+    } else {
+      seg.push(item);
+    }
+  }
+  segments.push(seg);
+
+  for (let si = 0; si < segments.length; si++) {
+    const segment = segments[si];
+    const isFirst = si === 0;
+    const isLast  = si === segments.length - 1;
+
+    // Page break before this segment (except the very first)
+    if (!isFirst) newPage(s);
+
+    // Spacing before (only on first segment, not after a page break)
+    if (isFirst) s.y += para.spacingBeforePt;
+
+    let renderedContent = false;
+
+    // --- Render items sequentially ---
+    // Collect consecutive runs into batches for joint layout
+    let i = 0;
+    while (i < segment.length) {
+      const item = segment[i];
+
+      if (item.kind === "image") {
+        const img = item as DocxImage;
+        let wPt = img.widthEmu / EMU_PER_PT;
+        let hPt = img.heightEmu / EMU_PER_PT;
+
+        // Scale down proportionally if wider than content area
+        if (wPt > s.contentWidthPt) {
+          hPt = hPt * (s.contentWidthPt / wPt);
+          wPt = s.contentWidthPt;
+        }
+
+        ensureFits(s, hPt);
+
+        const dataUrl = croppedImages[cropKey(img)];
+        if (dataUrl) {
+          try {
+            const fmt = dataUrl.startsWith("data:image/jpeg") ? "JPEG" : "PNG";
+            s.pdf.addImage(dataUrl, fmt, s.marginLeftPt, s.y, wPt, hPt);
+          } catch {
+            // Malformed image — skip
+          }
+          s.y += hPt;
+          renderedContent = true;
+        }
+        i++;
+      } else if (item.kind === "run") {
+        // Collect all consecutive runs for joint word-wrap layout
+        const runs: DocxRun[] = [];
+        while (i < segment.length && segment[i].kind === "run") {
+          runs.push(segment[i] as DocxRun);
+          i++;
+        }
+
+        const tokens = buildTokens(runs);
+        // Skip if only whitespace
+        if (tokens.every(t => t.isSpace)) continue;
+
+        // Max font size in this run batch → line height
+        let maxFontPt = defaultFontSizePt;
+        for (const r of runs) maxFontPt = Math.max(maxFontPt, r.fontSizePt);
+        const lineH = maxFontPt * para.lineSpacingMult;
+
+        // Left edge and width, adjusted for indent
+        const lineX = s.marginLeftPt + para.indentLeftPt;
+        const lineW = s.contentWidthPt - para.indentLeftPt;
+
+        const lines = layoutLines(s.pdf, tokens, lineW);
+
+        for (let li = 0; li < lines.length; li++) {
+          // First line of the paragraph's first segment: apply hanging indent
+          const isFirstLineOfPara = li === 0 && isFirst && !renderedContent;
+          const xAdj = isFirstLineOfPara ? lineX - para.indentHangingPt : lineX;
+          const wAdj = isFirstLineOfPara ? lineW + para.indentHangingPt : lineW;
+
+          ensureFits(s, lineH);
+          renderLine(s.pdf, lines[li].tokens, xAdj, s.y, wAdj, lines[li].isLast, para.alignment);
+          s.y += lineH;
+          renderedContent = true;
+        }
+      } else {
+        i++;
+      }
+    }
+
+    // --- Blank-line placeholder for empty / whitespace-only paragraphs ---
+    // Only on the last segment (so page breaks don't add phantom blank lines)
+    if (!renderedContent && isLast) {
+      const lineH = defaultFontSizePt * para.lineSpacingMult;
+      ensureFits(s, lineH);
+      s.y += lineH;
+    }
+
+    // Spacing after (only on last segment)
+    if (isLast) s.y += para.spacingAfterPt;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Quality score
+// ---------------------------------------------------------------------------
+
+function computeQualityScore(pageCount: number, imageItems: number, textRuns: number): number {
+  let score = 100;
+  if (pageCount === 0) score -= 50;
+  if (textRuns   === 0) score -= 30;
+  if (imageItems === 0) score -= 20;
+  return Math.max(0, Math.min(100, score));
 }
 
 // ---------------------------------------------------------------------------
@@ -95,7 +860,6 @@ export async function convertWordToPdf(
   if (!ext || !["docx", "doc"].includes(ext)) {
     throw new Error("Unsupported file format. Please upload a .docx or .doc file.");
   }
-
   if (ext === "doc") {
     throw new Error(
       "DOC_FORMAT_NOT_SUPPORTED: The legacy .doc format cannot be reliably " +
@@ -105,555 +869,73 @@ export async function convertWordToPdf(
   }
 
   try {
-    onProgress({ progress: 5, status: "Reading Word document..." });
+    onProgress({ progress: 5,  status: "Reading document..." });
+    onProgress({ progress: 15, status: "Loading libraries..." });
 
-    onProgress({ progress: 15, status: "Loading conversion libraries..." });
-    const [renderAsync, html2canvas, JsPDF] = await Promise.all([
-      getDocxPreview(),
-      getHtml2Canvas(),
-      getJsPDF(),
-    ]);
+    const [JsPDF] = await Promise.all([getJsPDF(), getJSZip()]);
 
-    onProgress({ progress: 25, status: "Rendering document..." });
+    onProgress({ progress: 25, status: "Parsing document structure..." });
+    const docxData = await parseDocx(file);
 
-    // Off-screen container — position:fixed keeps it in the layout flow
-    // without affecting scroll, but html2canvas can still measure and capture it.
-    const container = document.createElement("div");
-    container.setAttribute("data-docx-conv", "1");
-    container.style.cssText = [
-      "position:fixed",
-      "top:0",
-      "left:-99999px",
-      "width:794px",
-      "background:#fff",
-      "z-index:-9999",
-      "pointer-events:none",
-      "overflow:visible",
-    ].join(";");
-    document.body.appendChild(container);
+    const contentWidthPt = docxData.pageWidthPt - docxData.marginLeftPt - docxData.marginRightPt;
 
-    // Inject CSS overrides for the container.
-    // Critical: disabling hyphens prevents docx-preview from breaking words
-    // at syllable boundaries under justify alignment, which causes text like
-    // "mempertahankan" to appear as "memp ertahankan" in the captured image.
-    const styleEl = document.createElement("style");
-    styleEl.textContent = `
-      [data-docx-conv="1"] * {
-        hyphens: none !important;
-        -webkit-hyphens: none !important;
-        -ms-hyphens: none !important;
-        word-break: normal !important;
-        overflow-wrap: break-word !important;
-        word-wrap: break-word !important;
-      }
-    `;
-    document.head.appendChild(styleEl);
+    onProgress({ progress: 45, status: "Processing images..." });
+    const croppedImages = await cropAllImages(docxData, contentWidthPt);
 
-    try {
-      // renderAsync accepts Blob — pass File directly (extends Blob).
-      // className "docx" → pages become <section class="docx">
-      await renderAsync(file, container, null, {
-        className: "docx",
-        inWrapper: false,
-        ignoreWidth: false,
-        ignoreHeight: false,
-        ignoreFonts: false,
-        breakPages: true,
-        useBase64URL: true,
-        renderHeaders: true,
-        renderFooters: true,
-        renderFootnotes: true,
-        renderEndnotes: true,
-        ignoreLastRenderedPageBreak: false,
-      });
+    onProgress({ progress: 60, status: "Rendering PDF..." });
 
-      onProgress({ progress: 40, status: "Preparing pages..." });
+    const pdf = new JsPDF({ orientation: "portrait", unit: "pt", format: "a4" });
+    pdf.setTextColor(0, 0, 0);
 
-      // Wait for all images to be fully decoded (base64 URLs decode async in some browsers)
-      await waitForImages(container);
+    const state: RenderState = {
+      pdf,
+      y: docxData.marginTopPt,
+      pageCount: 1,
+      pageHeightPt: docxData.pageHeightPt,
+      marginTopPt: docxData.marginTopPt,
+      marginBottomPt: docxData.marginBottomPt,
+      marginLeftPt: docxData.marginLeftPt,
+      contentWidthPt,
+    };
 
-      // Force page breaks that docx-preview missed due to missing lastRenderedPageBreak hints.
-      // For testing-word.docx: soal 3 must split at "Mengikuti pola giliran" (page 3→4).
-      const didSplit = forcePageBreakAtText(container, "Mengikuti pola giliran");
-      if (didSplit) {
-        console.log("[word-to-pdf] Forced page break at 'Mengikuti pola giliran'");
-      }
+    let imageItems = 0;
+    let textRuns   = 0;
+    const total = docxData.paragraphs.length;
 
-      // Pre-crop srcRect images via canvas so html2canvas sees plain uncropped images.
-      // html2canvas 1.x does not support clip-path (neither rect() nor inset()), so
-      // CSS-based clipping is invisible to it. Canvas pre-cropping solves this by
-      // replacing the img src with the already-cropped pixels before html2canvas runs.
-      // Also clears transform:scale() that docx-preview adds for srcRect images — without
-      // clearing it the image renders 2-3× taller than intended, covering adjacent text.
-      const croppedCount = await applyImageCroppingViaCanvas(container);
-      console.log(`[word-to-pdf] Canvas-cropped ${croppedCount} srcRect images`);
-
-      // Wait for browser to decode newly-assigned data URL sources
-      await waitForImages(container);
-
-      // Fallback: any remaining rect() that canvas couldn't crop (naturalW=0) — remove
-      // transform and clip-path so html2canvas captures the full uncropped image.
-      const fallbackCount = fixClipPathRect(container);
-      if (fallbackCount > 0) {
-        console.log(`[word-to-pdf] Fallback clip-path cleared on ${fallbackCount} images`);
-      }
-
-      const pageElements = collectPageElements(container);
-
-      if (pageElements.length === 0) {
-        throw new Error("The document has no content to convert.");
-      }
-
-      const totalPages = pageElements.length;
-      onProgress({ progress: 45, status: `Found ${totalPages} pages`, totalPages });
-
-      const firstPage = pageElements[0];
-      const pageWidthPx = firstPage.offsetWidth || 794;
-      const pageHeightPx = firstPage.offsetHeight || 1123;
-
-      // A4 in PDF points
-      const PDF_WIDTH_PT = 595.28;
-      const PDF_HEIGHT_PT = 841.89;
-      const scaleX = PDF_WIDTH_PT / pageWidthPx;
-      const scaleY = PDF_HEIGHT_PT / pageHeightPx;
-
-      const pdf = new JsPDF({ orientation: "portrait", unit: "pt", format: "a4" });
-
-      let imagesRendered = 0;
-      let totalTextNodes = 0;
-
-      for (let i = 0; i < pageElements.length; i++) {
-        const pageEl = pageElements[i];
-        const pageNum = i + 1;
-
+    for (let i = 0; i < docxData.paragraphs.length; i++) {
+      if (i % 10 === 0) {
         onProgress({
-          progress: Math.round(45 + (i / totalPages) * 45),
-          status: `Converting page ${pageNum} of ${totalPages}...`,
-          currentPage: pageNum,
-          totalPages,
+          progress: Math.round(60 + (i / total) * 35),
+          status: `Rendering paragraph ${i + 1} of ${total}...`,
         });
-
-        if (i > 0) pdf.addPage("a4", "portrait");
-
-        // --- Visual layer ---
-        // Capture the page as a high-res raster image.
-        // clip-path:rect() has already been converted to inset() above.
-        const canvas = await html2canvas(pageEl, {
-          scale: 1.2,         // 1.2× = ~115 DPI — good balance of quality and file size
-          useCORS: true,
-          allowTaint: true,
-          backgroundColor: "#ffffff",
-          logging: false,
-          width: pageWidthPx,
-          height: pageHeightPx,
-          windowWidth: pageWidthPx,
-          windowHeight: pageHeightPx,
-          x: 0,
-          y: 0,
-        });
-
-        const imgData = canvas.toDataURL("image/jpeg", 0.75);
-        pdf.addImage(imgData, "JPEG", 0, 0, PDF_WIDTH_PT, PDF_HEIGHT_PT);
-        imagesRendered++;
-
-        // --- Invisible text layer ---
-        // Overlay text extracted from the DOM at the correct positions using
-        // renderingMode:"invisible". The text is in the PDF content stream
-        // but not painted, making it searchable, selectable, and copy-able.
-        const textNodes = extractTextNodes(pageEl);
-        totalTextNodes += textNodes.length;
-
-        if (textNodes.length > 0) {
-          // Use a single font family throughout for consistency.
-          // Helvetica is the closest standard PDF font to Segoe UI (sans-serif).
-          pdf.setFont("helvetica", "normal");
-
-          for (const node of textNodes) {
-            if (!node.text.trim()) continue;
-
-            const pdfX = node.x * scaleX;
-            const pdfY = node.y * scaleY;
-            const pdfFontSize = Math.max(4, node.fontSize * scaleY);
-
-            pdf.setFontSize(pdfFontSize);
-
-            try {
-              pdf.text(node.text, pdfX, pdfY, {
-                baseline: "top",
-                renderingMode: "invisible",
-              });
-            } catch {
-              // Skip text nodes that fail (special chars, zero-width, etc.)
-            }
-          }
-        }
       }
 
-      onProgress({ progress: 92, status: "Assembling PDF..." });
+      const para = docxData.paragraphs[i];
+      for (const item of para.items) {
+        if (item.kind === "image") imageItems++;
+        if (item.kind === "run" && (item as DocxRun).text.trim()) textRuns++;
+      }
 
-      const pdfBlob = pdf.output("blob");
-      const previewUrl = URL.createObjectURL(pdfBlob);
-
-      const qualityScore = computeQualityScore({ totalPages, imagesRendered, totalTextNodes });
-
-      onProgress({ progress: 100, status: "Done!" });
-
-      return {
-        blob: pdfBlob,
-        previewUrl,
-        originalSize: file.size,
-        processedSize: pdfBlob.size,
-        qualityScore,
-        pageCount: totalPages,
-      };
-    } finally {
-      document.head.removeChild(styleEl);
-      document.body.removeChild(container);
+      renderParagraph(para, state, croppedImages, docxData.defaultFontSizePt);
     }
+
+    onProgress({ progress: 97, status: "Assembling PDF..." });
+
+    const pdfBlob = pdf.output("blob");
+    const previewUrl = URL.createObjectURL(pdfBlob);
+
+    onProgress({ progress: 100, status: "Done!" });
+
+    return {
+      blob: pdfBlob,
+      previewUrl,
+      originalSize: file.size,
+      processedSize: pdfBlob.size,
+      qualityScore: computeQualityScore(state.pageCount, imageItems, textRuns),
+      pageCount: state.pageCount,
+    };
   } catch (err) {
     console.error("[word-to-pdf] Conversion failed:", err);
     throw err;
   }
-}
-
-// ---------------------------------------------------------------------------
-// Wait for all <img> elements inside container to finish loading
-// ---------------------------------------------------------------------------
-
-function waitForImages(container: HTMLElement): Promise<void> {
-  const imgs = Array.from(container.querySelectorAll<HTMLImageElement>("img"));
-  return Promise.all(
-    imgs.map(
-      (img) =>
-        new Promise<void>((resolve) => {
-          if (img.complete && img.naturalWidth > 0) {
-            resolve();
-            return;
-          }
-          const done = () => {
-            img.removeEventListener("load", done);
-            img.removeEventListener("error", done);
-            resolve();
-          };
-          img.addEventListener("load", done);
-          img.addEventListener("error", done);
-          // Safety timeout — don't block forever on a broken image
-          setTimeout(resolve, 5000);
-        })
-    )
-  ).then(() => undefined);
-}
-
-// ---------------------------------------------------------------------------
-// Canvas-based image pre-cropping for srcRect images
-//
-// docx-preview applies clip-path:rect() to <img> elements for DOCX srcRect
-// crops. html2canvas 1.x does not render clip-path at all, so images appear
-// uncropped. This function replaces each clipped img's src with a canvas-
-// cropped version (in natural pixel space) and removes the clip-path, so
-// html2canvas just sees a plain pre-cropped image.
-//
-// Returns the number of images successfully cropped.
-// ---------------------------------------------------------------------------
-
-async function applyImageCroppingViaCanvas(container: HTMLElement): Promise<number> {
-  const imgs = Array.from(container.querySelectorAll<HTMLImageElement>("img"));
-  let count = 0;
-
-  for (const img of imgs) {
-    const rawStyle = img.getAttribute("style") || "";
-    const cpMatch = rawStyle.match(/clip-path\s*:\s*(rect\([^)]+\))/i);
-    const cpInline =
-      img.style.clipPath ||
-      (img.style as CSSStyleDeclaration & Record<string, string>)["clip-path"] ||
-      "";
-    const cp =
-      (cpInline.startsWith("rect(") ? cpInline : "") ||
-      (cpMatch ? cpMatch[1] : "");
-
-    if (!cp || !cp.startsWith("rect(")) continue;
-
-    const nw = img.naturalWidth;
-    const nh = img.naturalHeight;
-    if (nw === 0 || nh === 0) continue; // no natural dimensions → skip (fallback handles it)
-
-    const inner = cp.slice(5, -1).trim(); // strip "rect(" and ")"
-    const parts = inner.split(/\s+/);
-    if (parts.length < 4) continue;
-
-    const topPct    = parseFloat(parts[0]);
-    const rightPct  = parseFloat(parts[1]);
-    const bottomPct = parseFloat(parts[2]);
-    const leftPct   = parseFloat(parts[3]);
-
-    if ([topPct, rightPct, bottomPct, leftPct].some(isNaN)) continue;
-
-    // Convert percentages to natural-image pixel coordinates
-    const cropTop    = (topPct    / 100) * nh;
-    const cropRight  = (rightPct  / 100) * nw;
-    const cropBottom = (bottomPct / 100) * nh;
-    const cropLeft   = (leftPct   / 100) * nw;
-
-    const cropW = cropRight  - cropLeft;
-    const cropH = cropBottom - cropTop;
-
-    if (cropW <= 0 || cropH <= 0) continue;
-
-    const canvas = document.createElement("canvas");
-    canvas.width  = Math.round(cropW);
-    canvas.height = Math.round(cropH);
-    const ctx = canvas.getContext("2d");
-    if (!ctx) continue;
-
-    // Draw only the visible crop region from the original image
-    ctx.drawImage(img, cropLeft, cropTop, cropW, cropH, 0, 0, canvas.width, canvas.height);
-
-    // Replace src with the cropped version, clear clip-path and transform.
-    // docx-preview applies transform:scale(1,N) to srcRect images so the correct
-    // crop region fills the CSS height. After canvas pre-cropping the src already
-    // contains exactly the visible pixels, so the scale transform must be cleared —
-    // otherwise the image renders N× taller than intended and covers adjacent text.
-    img.src = canvas.toDataURL("image/png");
-    img.style.clipPath = "";
-    (img.style as CSSStyleDeclaration & Record<string, string>)["clip-path"] = "";
-    img.style.transform = "";
-    (img.style as CSSStyleDeclaration & Record<string, string>)["transform"] = "";
-    count++;
-  }
-
-  return count;
-}
-
-// ---------------------------------------------------------------------------
-// Fix clip-path:rect() → clip-path:inset() for html2canvas compatibility
-//
-// docx-preview renders srcRect image crops as:
-//   clip-path: rect(top% right% bottom% left%)   ← CSS Shapes Level 2
-//
-// html2canvas 1.x does not support rect() in clip-path. It DOES support
-// inset(). Conversion formula:
-//   clip-path: rect(t r b l) → clip-path: inset(t (100-r) (100-b) l)
-//
-// Example: rect(6.48% 100% 45.70% 0%) → inset(6.48% 0% 54.30% 0%)
-//
-// Applied to the actual rendered container DOM (not a clone) before any
-// html2canvas capture, so the converted values are visible to the renderer.
-//
-// Returns the number of elements that were fixed.
-// ---------------------------------------------------------------------------
-
-function fixClipPathRect(root: HTMLElement): number {
-  let count = 0;
-  root.querySelectorAll<HTMLElement>("*").forEach((el) => {
-    // Try both camelCase and kebab-case accessors, plus raw style attribute
-    // to handle cross-browser inline style serialization differences.
-    const rawStyle = el.getAttribute("style") || "";
-    const cpMatch = rawStyle.match(/clip-path\s*:\s*(rect\([^)]+\))/i);
-    const cpInline = el.style.clipPath || (el.style as CSSStyleDeclaration & Record<string, string>)["clip-path"] || "";
-    const cp = (cpInline.startsWith("rect(") ? cpInline : "") || (cpMatch ? cpMatch[1] : "");
-
-    if (!cp || !cp.startsWith("rect(")) return;
-
-    const inner = cp.slice(5, -1).trim(); // strip "rect(" and ")"
-    const parts = inner.split(/\s+/);
-    if (parts.length < 4) return;
-
-    const top = parseFloat(parts[0]);
-    const right = parseFloat(parts[1]);
-    const bottom = parseFloat(parts[2]);
-    const left = parseFloat(parts[3]);
-
-    if (isNaN(top) || isNaN(right) || isNaN(bottom) || isNaN(left)) return;
-
-    // For fallback images (naturalW=0, can't canvas-crop): clear transform and clip-path
-    // entirely. The image will render uncropped but at least won't overflow its container.
-    el.style.clipPath = "";
-    (el.style as CSSStyleDeclaration & Record<string, string>)["clip-path"] = "";
-    el.style.transform = "";
-    (el.style as CSSStyleDeclaration & Record<string, string>)["transform"] = "";
-    count++;
-  });
-  return count;
-}
-
-// ---------------------------------------------------------------------------
-// Force a page break before the paragraph that contains the given text.
-//
-// docx-preview creates sections based on <w:lastRenderedPageBreak> hints in
-// the DOCX. If a hint is missing (e.g. Word computed a different overflow
-// point), docx-preview renders the content in fewer sections. This function
-// finds a specific paragraph and splits its parent section at that point,
-// creating an extra section so the content appears on the correct page.
-//
-// The DOM is split by walking from the target paragraph up to the section,
-// cloning intermediate containers in a new section, and moving the target
-// paragraph (and all following siblings at each level) into them.
-//
-// Returns true if the split was performed, false if the text was not found.
-// ---------------------------------------------------------------------------
-
-function forcePageBreakAtText(container: HTMLElement, searchText: string): boolean {
-  const sections = Array.from(container.querySelectorAll<HTMLElement>("section.docx"));
-
-  for (const section of sections) {
-    // Find a paragraph-like element whose text starts with searchText
-    const allEls = Array.from(section.querySelectorAll<HTMLElement>("p, div"));
-    const targetEl = allEls.find((el) => {
-      const text = (el.textContent || "").trimStart();
-      return text.startsWith(searchText.substring(0, 15));
-    });
-    if (!targetEl) continue;
-
-    // Build ancestor path from section down to targetEl
-    const path: HTMLElement[] = [];
-    let el: HTMLElement | null = targetEl;
-    while (el && el !== section) {
-      path.push(el);
-      el = el.parentElement;
-    }
-    path.reverse(); // [direct-child-of-section, ..., targetEl]
-
-    if (path.length === 0) continue;
-
-    // Create new section with same class and inline styles
-    const newSection = document.createElement("section");
-    newSection.className = section.className;
-    const sectionInlineStyle = section.getAttribute("style");
-    if (sectionInlineStyle) newSection.setAttribute("style", sectionInlineStyle);
-
-    let currentOrig: HTMLElement = section;
-    let currentNew: HTMLElement = newSection;
-
-    for (let depth = 0; depth < path.length; depth++) {
-      const splitEl = path[depth];
-      const siblings = Array.from(currentOrig.children) as HTMLElement[];
-      const splitIdx = siblings.indexOf(splitEl);
-
-      if (splitIdx < 0) break; // safety: element not found among siblings
-
-      if (depth === path.length - 1) {
-        // Deepest level: move splitEl and all following siblings to currentNew
-        const toMove = siblings.slice(splitIdx);
-        for (const s of toMove) currentNew.appendChild(s);
-      } else {
-        // Intermediate level: clone the container, move its tail siblings, then recurse
-        const cloneEl = document.createElement(splitEl.tagName.toLowerCase()) as HTMLElement;
-        cloneEl.className = splitEl.className;
-        const inlineStyle = splitEl.getAttribute("style");
-        if (inlineStyle) cloneEl.setAttribute("style", inlineStyle);
-
-        currentNew.appendChild(cloneEl);
-
-        // Any siblings of splitEl that come AFTER it also move to currentNew
-        const tailSiblings = siblings.slice(splitIdx + 1);
-        for (const s of tailSiblings) currentNew.appendChild(s);
-
-        currentOrig = splitEl;
-        currentNew = cloneEl;
-      }
-    }
-
-    // Guard: don't insert an empty new section
-    if (!newSection.firstChild) return false;
-
-    section.parentNode?.insertBefore(newSection, section.nextSibling);
-    return true;
-  }
-
-  return false;
-}
-
-// ---------------------------------------------------------------------------
-// Collect page elements from docx-preview rendered output
-// ---------------------------------------------------------------------------
-
-function collectPageElements(container: HTMLElement): HTMLElement[] {
-  // docx-preview v0.3.x renders each Word page as <section class="docx">
-  // when className option is "docx" and inWrapper is false.
-  const selectors = ["section.docx", "article.docx", ".docx"];
-
-  for (const sel of selectors) {
-    const found = Array.from(container.querySelectorAll<HTMLElement>(sel));
-    if (found.length > 0) {
-      // Only top-level page wrappers — exclude nested .docx elements
-      return found.filter(
-        (el) => !found.some((other) => other !== el && other.contains(el))
-      );
-    }
-  }
-
-  // Fallback: treat the container itself as a single page
-  return [container];
-}
-
-// ---------------------------------------------------------------------------
-// Extract text nodes with DOM positions for the invisible text layer
-// ---------------------------------------------------------------------------
-
-function extractTextNodes(pageEl: HTMLElement): ExtractedTextNode[] {
-  const nodes: ExtractedTextNode[] = [];
-  const pageRect = pageEl.getBoundingClientRect();
-
-  const walker = document.createTreeWalker(pageEl, NodeFilter.SHOW_TEXT, {
-    acceptNode(node) {
-      const text = node.textContent?.trim();
-      if (!text) return NodeFilter.FILTER_REJECT;
-      const parent = node.parentElement;
-      if (!parent) return NodeFilter.FILTER_REJECT;
-      const style = window.getComputedStyle(parent);
-      if (style.display === "none" || style.visibility === "hidden") {
-        return NodeFilter.FILTER_REJECT;
-      }
-      return NodeFilter.FILTER_ACCEPT;
-    },
-  });
-
-  let textNode: Node | null;
-  while ((textNode = walker.nextNode())) {
-    const content = textNode.textContent;
-    if (!content?.trim()) continue;
-
-    const parent = textNode.parentElement;
-    if (!parent) continue;
-
-    const range = document.createRange();
-    range.selectNode(textNode);
-    const rect = range.getBoundingClientRect();
-
-    if (rect.width === 0 && rect.height === 0) continue;
-
-    const style = window.getComputedStyle(parent);
-    const fontSize = parseFloat(style.fontSize) || 12;
-
-    nodes.push({
-      text: content,
-      x: rect.left - pageRect.left,
-      y: rect.top - pageRect.top,
-      fontSize,
-    });
-  }
-
-  return nodes;
-}
-
-// ---------------------------------------------------------------------------
-// Quality score (0–100)
-// ---------------------------------------------------------------------------
-
-function computeQualityScore({
-  totalPages,
-  imagesRendered,
-  totalTextNodes,
-}: {
-  totalPages: number;
-  imagesRendered: number;
-  totalTextNodes: number;
-}): number {
-  let score = 100;
-  if (totalTextNodes === 0) score -= 30;
-  if (totalPages === 0) score -= 50;
-  if (imagesRendered < totalPages) {
-    score -= Math.round(((totalPages - imagesRendered) / totalPages) * 40);
-  }
-  return Math.max(0, Math.min(100, score));
 }
