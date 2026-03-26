@@ -135,6 +135,19 @@ export const tools: ToolConfig[] = [
     outputFormats: [".pptx"],
     isAvailable: true,
   },
+  {
+    id: "word-to-pdf",
+    name: "Word to PDF",
+    description:
+      "Convert Word documents (.docx, .doc) into PDF files, preserving fonts, images, tables, charts, and all formatting.",
+    category: "transform",
+    icon: "FileOutput",
+    route: "/tools/word-to-pdf",
+    accentColor: "violet",
+    inputFormats: [".docx", ".doc"],
+    outputFormats: [".pdf"],
+    isAvailable: true,
+  },
 ];
 
 export interface ToolSection {
@@ -162,6 +175,10 @@ export const SECTIONS: ToolSection[] = [
   {
     label: "Convert from Image",
     toolIds: ["image-to-excel"],
+  },
+  {
+    label: "Convert from Word",
+    toolIds: ["word-to-pdf"],
   },
 ];
 
