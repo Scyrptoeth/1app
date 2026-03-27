@@ -537,13 +537,22 @@ interface TextRun {
   fontName: string;
 }
 
+interface BulletDef {
+  char: string;
+  fontName: string;
+  sizePt: number;
+  colorHex: string;
+}
+
 interface TextParagraph {
   runs: TextRun[];
   spaceBefore: number; // pts
   lineSpacingMult: number;
-  marginLeft: number; // pts
+  marginLeft: number; // pts — where the text content starts (after bullet)
   marginRight: number; // pts
+  indent: number; // pts — hanging indent (negative = bullet hangs left of text)
   align: "left" | "center" | "right" | "justify";
+  bullet?: BulletDef; // bullet character to render before the paragraph
 }
 
 /**
@@ -608,14 +617,32 @@ function parseTextBody(txBody: Element | null, fontDefaults?: FontDefaults): Tex
       lineSpacingMult = pct / 100000;
     }
 
-    // Margins
+    // Margins and hanging indent
     const marginLeft = emu(pPr?.getAttribute("marL") ?? "0");
     const marginRight = emu(pPr?.getAttribute("marR") ?? "0");
+    const indent = emu(pPr?.getAttribute("indent") ?? "0"); // negative = hanging bullet
 
     // Alignment
     const algn = pPr?.getAttribute("algn") ?? "l";
     const align: "left" | "center" | "right" | "justify" =
       algn === "ctr" ? "center" : algn === "r" ? "right" : algn === "just" ? "justify" : "left";
+
+    // Bullet character
+    let bullet: BulletDef | undefined;
+    const buNone = child(pPr, "buNone");
+    const buChar = child(pPr, "buChar");
+    if (buChar && !buNone) {
+      const buCharVal = buChar.getAttribute("char") ?? "•";
+      const buFont = child(pPr, "buFont");
+      const buClr = child(pPr, "buClr");
+      const buSzPct = child(pPr, "buSzPct");
+      const buTypeface = buFont?.getAttribute("typeface") ?? "helvetica";
+      const buFontName = mapFont(buTypeface);
+      const buPct = buSzPct ? parseFloat(attr(buSzPct, "val") || "100000") / 100000 : 1.0;
+      const buSizePt = paraFd.sizePt * buPct;
+      const buColor = getSolidFillColor(buClr) ?? paraFd.colorHex;
+      bullet = { char: buCharVal, fontName: buFontName, sizePt: buSizePt, colorHex: buColor };
+    }
 
     const runs: TextRun[] = [];
 
@@ -657,7 +684,7 @@ function parseTextBody(txBody: Element | null, fontDefaults?: FontDefaults): Tex
       runs.push({ text: displayText, fontSizePt, bold, italic, colorHex, fontName });
     }
 
-    paragraphs.push({ runs, spaceBefore, lineSpacingMult, marginLeft, marginRight, align });
+    paragraphs.push({ runs, spaceBefore, lineSpacingMult, marginLeft, marginRight, indent, align, bullet });
   }
 
   return paragraphs;
@@ -772,9 +799,11 @@ function renderTextBody(
     lineSpacingMult: number;
     marginLeft: number;
     marginRight: number;
+    indent: number;
     align: string;
     lines: WrapToken[][];
     lineH: number;
+    bullet?: BulletDef;
   };
 
   const builtParas: BuiltPara[] = [];
@@ -794,9 +823,11 @@ function renderTextBody(
       lineSpacingMult: para.lineSpacingMult,
       marginLeft: para.marginLeft,
       marginRight: para.marginRight,
+      indent: para.indent,
       align: para.align,
       lines: wrappedLines,
       lineH,
+      bullet: para.bullet,
     });
   }
 
@@ -811,6 +842,24 @@ function renderTextBody(
 
   for (const bp of builtParas) {
     curY += bp.spaceBefore;
+
+    // Render bullet character on the first line of the paragraph
+    if (bp.bullet && bp.lines.length > 0 && bp.lines[0].length > 0) {
+      if (!hasAutoFit && boxH > 0 && curY > boxY + boxH) {
+        // skip this paragraph entirely
+        curY += bp.lineH * bp.lines.length;
+        continue;
+      }
+      const bul = bp.bullet;
+      doc.setFont(bul.fontName, "normal");
+      doc.setFontSize(bul.sizePt);
+      const [br, bg, bb] = parseHex(bul.colorHex);
+      doc.setTextColor(br, bg, bb);
+      // Bullet sits at contentX + marginLeft + indent (indent is typically negative)
+      const bulletX = contentX + bp.marginLeft + bp.indent;
+      doc.text(bul.char, bulletX, curY, { baseline: "top" });
+      doc.setTextColor(0, 0, 0);
+    }
 
     for (const lineTokens of bp.lines) {
       // Stop rendering if line start is below box bottom (skip when shape auto-expands)
