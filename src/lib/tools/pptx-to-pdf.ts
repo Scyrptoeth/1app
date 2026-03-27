@@ -663,15 +663,13 @@ function parseTextBody(txBody: Element | null, fontDefaults?: FontDefaults): Tex
   return paragraphs;
 }
 
-/** Measure text width for any string using a run's font settings. */
+/** Measure text width for any string using a run's font settings. Returns actual Helvetica width. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function measureText(doc: any, run: TextRun, text: string): number {
   const fontStyle = run.bold && run.italic ? "bolditalic" : run.bold ? "bold" : run.italic ? "italic" : "normal";
   doc.setFont(run.fontName, fontStyle);
   doc.setFontSize(run.fontSizePt);
-  // Calibri (PowerPoint default) is ~0.85× the width of Helvetica at the same pt size.
-  // Apply correction to prevent premature line wrapping when Calibri is substituted.
-  return doc.getTextWidth(text) * 0.85;
+  return doc.getTextWidth(text);
 }
 
 /**
@@ -681,6 +679,13 @@ function measureText(doc: any, run: TextRun, text: string): number {
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function buildWrappedLines(doc: any, para: TextParagraph, availW: number): WrapToken[][] {
+  // Calibri (PowerPoint default) is ~0.85× the width of Helvetica at the same pt size.
+  // We measure in Helvetica units but wrap as if the box were Calibri-scaled wider,
+  // preventing premature line breaks. Token widths stay in Helvetica units so that
+  // curX position accumulation is accurate (no glyph overlap).
+  const CALIBRI_FACTOR = 0.85;
+  const wrapLimit = availW / CALIBRI_FACTOR;
+
   // Flatten all runs into tokens (words and whitespace)
   const allTokens: WrapToken[] = [];
   for (const run of para.runs) {
@@ -709,8 +714,8 @@ function buildWrappedLines(doc: any, para: TextParagraph, availW: number): WrapT
         currentLineW += token.width;
       }
     } else {
-      // Non-whitespace word: check if it fits
-      if (currentLine.length > 0 && currentLineW + token.width > availW + 0.5) {
+      // Non-whitespace word: check if it fits (using Calibri-adjusted limit)
+      if (currentLine.length > 0 && currentLineW + token.width > wrapLimit + 0.5) {
         // Trim trailing whitespace from current line
         while (currentLine.length > 0 && /^\s+$/.test(currentLine[currentLine.length - 1].text)) {
           currentLine.pop();
