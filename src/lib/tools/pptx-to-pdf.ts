@@ -76,6 +76,11 @@ interface PlaceholderDef {
   y: number;
   cx: number;
   cy: number;
+  // Optional font defaults from layout/master lstStyle (may be absent if no lstStyle)
+  fontSizePt?: number;
+  bold?: boolean;
+  colorHex?: string;
+  fontName?: string;
 }
 
 // Map from placeholder type or index string → default position
@@ -180,8 +185,9 @@ function parseXfrm(xfrm: Element | null): { x: number; y: number; cx: number; cy
 }
 
 /**
- * Parse placeholder positions from a slide master or layout XML document.
- * Returns a map from placeholder key ("title", "body", "idx:N") → position.
+ * Parse placeholder positions (and font defaults) from a slide master or layout XML document.
+ * Returns a map from placeholder key ("title", "body", "idx:N") → PlaceholderDef.
+ * Shapes without xfrm (common in layouts) are included if they carry font data.
  */
 function parsePlaceholderPositions(xmlDoc: Document): PlaceholderMap {
   const map: PlaceholderMap = new Map();
@@ -202,13 +208,41 @@ function parsePlaceholderPositions(xmlDoc: Document): PlaceholderMap {
     const phIdx = ph.getAttribute("idx") ?? "0";
     const spPr = child(sp, "spPr");
     const xfrm = child(spPr, "xfrm");
-    if (!xfrm) continue;
 
-    const pos = parseXfrm(xfrm);
-    if (pos.cx <= 0 && pos.cy <= 0) continue;
+    const def: PlaceholderDef = { x: 0, y: 0, cx: 0, cy: 0 };
 
-    map.set(phType, pos);
-    map.set(`idx:${phIdx}`, pos);
+    if (xfrm) {
+      const pos = parseXfrm(xfrm);
+      if (pos.cx > 0 || pos.cy > 0) {
+        def.x = pos.x;
+        def.y = pos.y;
+        def.cx = pos.cx;
+        def.cy = pos.cy;
+      }
+    }
+
+    // Extract font defaults from txBody lstStyle (even when no xfrm)
+    const txBody = child(sp, "txBody");
+    const lstStyle = child(txBody, "lstStyle");
+    const lvl1pPr = child(lstStyle, "lvl1pPr");
+    const defRPr = child(lvl1pPr, "defRPr");
+    if (defRPr) {
+      const sz = defRPr.getAttribute("sz");
+      if (sz) def.fontSizePt = parseInt(sz, 10) / 100;
+      const b = defRPr.getAttribute("b");
+      if (b === "1" || b === "true") def.bold = true;
+      const color = getSolidFillColor(defRPr);
+      if (color) def.colorHex = color;
+      const latin = child(defRPr, "latin");
+      const typeface = latin?.getAttribute("typeface");
+      if (typeface) def.fontName = mapFont(typeface);
+    }
+
+    // Include if has position or font data
+    if (def.cx > 0 || def.fontSizePt !== undefined) {
+      map.set(phType, def);
+      map.set(`idx:${phIdx}`, def);
+    }
   }
 
   return map;
@@ -216,11 +250,30 @@ function parsePlaceholderPositions(xmlDoc: Document): PlaceholderMap {
 
 /**
  * Merge master and layout placeholder maps.
- * Layout values override master values.
+ * Position: use layout's if layout has explicit non-zero cx/cy, else keep master's.
+ * Font: layout overrides master (layout defines the actual font spec for ph type).
  */
 function mergePlaceholderMaps(master: PlaceholderMap, layout: PlaceholderMap): PlaceholderMap {
   const merged = new Map(master);
-  for (const [k, v] of layout) merged.set(k, v);
+  for (const [k, layoutDef] of layout) {
+    const masterDef = merged.get(k);
+    if (!masterDef) {
+      merged.set(k, layoutDef);
+    } else {
+      merged.set(k, {
+        // Position: layout wins if it has an explicit non-zero size, else master
+        x: layoutDef.cx > 0 ? layoutDef.x : masterDef.x,
+        y: layoutDef.cx > 0 ? layoutDef.y : masterDef.y,
+        cx: layoutDef.cx > 0 ? layoutDef.cx : masterDef.cx,
+        cy: layoutDef.cy > 0 ? layoutDef.cy : masterDef.cy,
+        // Font: layout overrides master when present
+        fontSizePt: layoutDef.fontSizePt ?? masterDef.fontSizePt,
+        bold: layoutDef.bold ?? masterDef.bold,
+        colorHex: layoutDef.colorHex ?? masterDef.colorHex,
+        fontName: layoutDef.fontName ?? masterDef.fontName,
+      });
+    }
+  }
   return merged;
 }
 
@@ -497,8 +550,11 @@ interface TextParagraph {
  * Extract default font properties from txBody's lstStyle/lvl1pPr/defRPr.
  * This is the fallback when individual runs have no explicit sz/bold/color.
  */
-function getFontDefaults(txBody: Element | null): FontDefaults {
-  const defaults: FontDefaults = { sizePt: 12, bold: false, colorHex: "000000", fontName: "helvetica" };
+function getFontDefaults(txBody: Element | null, fallback?: FontDefaults): FontDefaults {
+  // Start from placeholder/layout fallback if provided, otherwise hard defaults
+  const defaults: FontDefaults = fallback
+    ? { ...fallback }
+    : { sizePt: 12, bold: false, colorHex: "000000", fontName: "helvetica" };
   if (!txBody) return defaults;
 
   const lstStyle = child(txBody, "lstStyle");
@@ -544,8 +600,8 @@ function parseTextBody(txBody: Element | null, fontDefaults?: FontDefaults): Tex
     const spcBef = child(child(pPr, "spcBef"), "spcPts");
     const spaceBefore = spcBef ? parseFloat(attr(spcBef, "val") || "0") / 100 : 0;
 
-    // Line spacing
-    let lineSpacingMult = 1.2;
+    // Line spacing — PowerPoint default is "Single" (1.0), not 1.2
+    let lineSpacingMult = 1.0;
     const lnSpc = child(child(pPr, "lnSpc"), "spcPct");
     if (lnSpc) {
       const pct = parseFloat(attr(lnSpc, "val") || "100000");
@@ -613,7 +669,9 @@ function measureText(doc: any, run: TextRun, text: string): number {
   const fontStyle = run.bold && run.italic ? "bolditalic" : run.bold ? "bold" : run.italic ? "italic" : "normal";
   doc.setFont(run.fontName, fontStyle);
   doc.setFontSize(run.fontSizePt);
-  return doc.getTextWidth(text);
+  // Calibri (PowerPoint default) is ~0.85× the width of Helvetica at the same pt size.
+  // Apply correction to prevent premature line wrapping when Calibri is substituted.
+  return doc.getTextWidth(text) * 0.85;
 }
 
 /**
@@ -689,6 +747,8 @@ function renderTextBody(
   if (!txBody) return;
 
   const bodyPr = child(txBody, "bodyPr");
+  // spAutoFit means the box grows to fit text — do not clip at boxH for these shapes
+  const hasAutoFit = !!child(bodyPr, "spAutoFit");
   // Default PPTX insets: lIns=91440, tIns=45720, rIns=91440, bIns=45720 EMU
   const lIns = emu(bodyPr?.getAttribute("lIns") ?? "91440");
   const tIns = emu(bodyPr?.getAttribute("tIns") ?? "45720");
@@ -748,8 +808,8 @@ function renderTextBody(
     curY += bp.spaceBefore;
 
     for (const lineTokens of bp.lines) {
-      // Stop rendering if line start is below box bottom
-      if (boxH > 0 && curY > boxY + boxH) break;
+      // Stop rendering if line start is below box bottom (skip when shape auto-expands)
+      if (!hasAutoFit && boxH > 0 && curY > boxY + boxH) break;
 
       if (lineTokens.length === 0) {
         curY += bp.lineH;
@@ -828,26 +888,36 @@ function renderShape(doc: any, el: Element, groupStack: GroupTransform[], placeh
   const xfrm = child(spPr, "xfrm");
   let pos = parseXfrm(xfrm);
 
-  // If no xfrm and this is a placeholder, look up position from master/layout
-  if (!xfrm && placeholders) {
-    const nvSpPr = child(el, "nvSpPr");
-    const nvPr = child(nvSpPr, "nvPr");
-    const ph = child(nvPr, "ph");
-    if (ph) {
+  // Look up placeholder for position AND font defaults
+  const nvSpPr = child(el, "nvSpPr");
+  const nvPr = child(nvSpPr, "nvPr");
+  const ph = child(nvPr, "ph");
+  let phFontFallback: FontDefaults | undefined;
+
+  if (ph) {
+    // Layout shapes that are placeholders are templates — skip rendering their text
+    if (isLayoutShape) return;
+
+    if (placeholders) {
       const phType = ph.getAttribute("type") ?? "body";
       const phIdx = ph.getAttribute("idx") ?? "0";
-      const fallback = placeholders.get(phType) ?? placeholders.get(`idx:${phIdx}`);
-      if (fallback) pos = { ...fallback };
+      const phDef = placeholders.get(phType) ?? placeholders.get(`idx:${phIdx}`);
+      if (phDef) {
+        // Use placeholder position when shape has no xfrm
+        if (!xfrm && phDef.cx > 0) {
+          pos = { x: phDef.x, y: phDef.y, cx: phDef.cx, cy: phDef.cy };
+        }
+        // Build font fallback from placeholder lstStyle data
+        if (phDef.fontSizePt !== undefined || phDef.bold !== undefined) {
+          phFontFallback = {
+            sizePt: phDef.fontSizePt ?? 12,
+            bold: phDef.bold ?? false,
+            colorHex: phDef.colorHex ?? "000000",
+            fontName: phDef.fontName ?? "helvetica",
+          };
+        }
+      }
     }
-  }
-
-  // Layout shapes that are placeholders (idx attribute present) are templates —
-  // they will be filled by slide content, so skip rendering their text.
-  if (isLayoutShape) {
-    const nvSpPr = child(el, "nvSpPr");
-    const nvPr = child(nvSpPr, "nvPr");
-    const ph = child(nvPr, "ph");
-    if (ph) return; // Skip placeholder template shapes in layout
   }
 
   const { x, y } = applyGroupStack(pos.x, pos.y, groupStack);
@@ -905,9 +975,9 @@ function renderShape(doc: any, el: Element, groupStack: GroupTransform[], placeh
     }
   }
 
-  // Render text body — extract font defaults from lstStyle for proper inheritance
+  // Render text body — pass placeholder font fallback for proper inheritance chain
   if (txBody) {
-    const fontDefaults = getFontDefaults(txBody);
+    const fontDefaults = getFontDefaults(txBody, phFontFallback);
     renderTextBody(doc, txBody, x, y, cx, cy, fontDefaults);
   }
 }
