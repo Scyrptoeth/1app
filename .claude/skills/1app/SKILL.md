@@ -93,6 +93,28 @@ Skill ini memberikan Claude seluruh konteks tentang proyek 1APP sehingga setiap 
   - `qualityScore = slidesWithText / totalPages * 100` — % slide dengan extractable text
 - **Status**: Production ready, deployed
 
+### 9. PowerPoint-to-PDF Converter
+- **URL**: `/tools/pptx-to-pdf`
+- **Files**: `src/lib/tools/pptx-to-pdf.ts`, `src/app/tools/pptx-to-pdf/page.tsx`
+- **Library**: JSZip (unpack PPTX), jsPDF v4 (PDF generation)
+- **Teknik**: Direct PPTX-to-PDF — tidak menggunakan html2canvas. Pipeline:
+  1. JSZip → unpack PPTX (slide XMLs, _rels/, media/)
+  2. DOMParser → parse OOXML slide XML → rendering elements
+  3. jsPDF → render shapes, images, dan text langsung sebagai PDF vector
+- **Key detail**:
+  - `parsePlaceholderPositions`: membaca position DAN font defaults (lstStyle/lvl1pPr/defRPr) dari master+layout, termasuk shape tanpa xfrm
+  - `mergePlaceholderMaps`: position dari master (kecuali layout punya xfrm), font dari layout (override master)
+  - `getFontDefaults(txBody, fallback?)`: inheritance chain — run rPr → para pPr defRPr → shape lstStyle → placeholder fallback → hard default 12pt
+  - `measureText`: return actual Helvetica width (1.0×) — dipakai untuk curX accumulation
+  - `buildWrappedLines`: `wrapLimit = availW / 0.85` — Calibri ≈0.85× Helvetica width, jadi batas wrap dinaikkan 18% untuk mencegah premature wrap tanpa merusak position rendering
+  - `parseTextBody`: baca `buChar/buNone/buFont/buClr/buSzPct` → `BulletDef`; baca `pPr/@indent` (negatif = hanging)
+  - `renderTextBody`: draw bullet char di `contentX + marL + indent` sebelum render lines
+  - `spAutoFit`: skip clip guard jika bodyPr punya `<a:spAutoFit/>`
+  - `doc.close()` untuk custGeom path (BUKAN `doc.closePath()` — itu Canvas context API, throw exception di jsPDF)
+  - Default `lineSpacingMult = 1.0` (PowerPoint default "Single"), bukan 1.2
+- **Status**: Production ready (setelah 4 iterasi fix major), deployed
+- Baca `resources/algorithms.md` untuk detail teknis
+
 ### 8. Word-to-PDF Converter
 - **URL**: `/tools/word-to-pdf`
 - **Files**: `src/lib/tools/word-to-pdf.ts`, `src/app/tools/word-to-pdf/page.tsx`
@@ -138,8 +160,10 @@ src/
 │   │   │   └── page.tsx          # UI halaman PDF-to-Word converter
 │   │   ├── pdf-to-ppt/
 │   │   │   └── page.tsx          # UI halaman PDF-to-PowerPoint converter
-│   │   └── word-to-pdf/
-│   │       └── page.tsx          # UI halaman Word-to-PDF converter
+│   │   ├── word-to-pdf/
+│   │   │   └── page.tsx          # UI halaman Word-to-PDF converter
+│   │   └── pptx-to-pdf/
+│   │       └── page.tsx          # UI halaman PowerPoint-to-PDF converter
 │   └── page.tsx                  # Landing page
 ├── lib/
 │   └── tools/
@@ -150,7 +174,8 @@ src/
 │       ├── pdf-to-image.ts           # PDF render to PNG + ZIP download
 │       ├── pdf-to-word.ts            # Hybrid PDF-to-Word (layout reconstruction)
 │       ├── pdf-to-ppt.ts             # 3-mode PDF-to-PPTX (Hybrid/Image/Text)
-│       └── word-to-pdf.ts            # Direct DOCX-to-PDF (JSZip + jsPDF, vector text)
+│       ├── word-to-pdf.ts            # Direct DOCX-to-PDF (JSZip + jsPDF, vector text)
+│       └── pptx-to-pdf.ts            # Direct PPTX-to-PDF (JSZip + jsPDF, vector text)
 └── components/                   # Shared components
 ```
 
@@ -242,6 +267,11 @@ Pelajaran penting dari pengembangan sebelumnya yang harus diingat:
 - **Segoe UI OS/2 line height = 1.44×, bukan 1.15×** — Diukur dari benchmark PDF dengan PyMuPDF: line positions menunjukkan 15.8pt per line untuk 11pt font = 1.436×. Default 1.15× (Helvetica) terlalu kecil → konten tidak overflow ke halaman berikutnya sesuai aslinya.
 - **FONT_WIDTH_CORRECTION harus per-font, bukan global** — Global 1.15 membuat dokumen Arial/Calibri over-wrap (15% lebih banyak baris → lebih banyak halaman). Hanya font yang memang lebih lebar dari Helvetica (Segoe UI, Verdana) yang butuh koreksi > 1.0.
 - **Word-to-PDF canvas image: PNG → JPEG WAJIB untuk dokumen dengan banyak gambar** — `toDataURL("image/png")` pada gambar 1458×886px menghasilkan ~1.4MB per gambar. 10 gambar = 14MB PDF. Switch ke `toDataURL("image/jpeg", 0.85)` + scale 2×display + white bg → 287KB total.
+- **jsPDF: `doc.closePath()` tidak ada di main API** — `doc.closePath()` hanya ada di jsPDF Canvas 2D context plugin (`p.prototype`), BUKAN di main jsPDF document API. Menggunakannya di main doc throw "is not a function" yang di-swallow oleh `try/catch`, menyebabkan seluruh custGeom shape silent skip. Gunakan `doc.close()` (menulis PDF 'h' operator) untuk close path di main jsPDF API.
+- **Width correction factor harus HANYA di wrap threshold, bukan di token.width** — Jika correction factor 0.85 diterapkan di `measureText()` yang return nilai untuk `token.width`, maka `curX += token.width` maju terlalu pelan → setiap token dimulai di dalam glyph token sebelumnya → kata-kata menempel tanpa spasi. Fix: `measureText()` return actual width; factor hanya di `wrapLimit = availW / factor` untuk wrap decision saja.
+- **PPTX layout placeholders: punya font data tapi tidak punya xfrm** — Shapes di slideLayout yang define font untuk title/body placeholder sering punya lstStyle (dengan sz, b, color) tapi TIDAK punya xfrm (posisi dari master). `parsePlaceholderPositions` harus mengumpulkan font data TERPISAH dari posisi — jangan skip shape hanya karena tidak ada xfrm.
+- **PPTX default line spacing = 1.0× ("Single"), bukan 1.2×** — PowerPoint default line spacing adalah "Single" = 1.0×. Menggunakan 1.2× sebagai default menyebabkan teks overflow dan terpotong (3 baris × 24pt font × 1.2 = 86.4pt > box 74pt; dengan 1.0 = 72pt ✓).
+- **PPTX bullet position = contentX + marL + indent** — `pPr/@marL` adalah di mana teks dimulai (e.g., 28pt). `pPr/@indent` biasanya negatif untuk hanging bullet (e.g., -27pt). Bullet karakter di-render di `contentX + marL + indent` ≈ 1pt dari kiri content. Teks di-render di `contentX + marL`.
 
 ## Resources
 

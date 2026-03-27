@@ -195,3 +195,59 @@ DocxImage { rId, widthEmu, heightEmu, srcRectT/B/L/R }
 - `layoutLines` menggunakan `layoutWidth` (×fontFactor) untuk line-break decisions
 - `renderLine` untuk justify: compute `avgFactor = sumLayoutW / (totalWordW + totalSpaceW)`
   → distribute ke `lineWidthPt / avgFactor` (bukan `lineWidthPt`) → natural space width
+
+---
+
+## 9. PowerPoint-to-PDF Converter — Direct PPTX-to-PDF
+
+**Library:** JSZip (unpack), jsPDF v4 (render)
+
+**Pipeline:**
+1. JSZip unpack PPTX → slide XMLs, _rels/, ppt/media/
+2. Load slide master → parse placeholder positions + font defaults
+3. Per slide: load layout → merge placeholder maps (master pos + layout font)
+4. jsPDF: render layout bg shapes → slide shapes (sp/pic/grpSp)
+
+**Placeholder inheritance chain:**
+```
+parsePlaceholderPositions(masterXml) → map: phType → {x,y,cx,cy, fontSizePt?, bold?, colorHex?, fontName?}
+parsePlaceholderPositions(layoutXml) → same, but NO xfrm for most ph (only font data)
+mergePlaceholderMaps(master, layout):
+  - position: layout.cx>0 ? layout pos : master pos
+  - font:     layout.fontSizePt ?? master.fontSizePt (layout overrides)
+renderShape(el, placeholders) → phDef = placeholders.get(phType)
+  → if !xfrm && phDef.cx>0: use phDef position
+  → phFontFallback = {sizePt: phDef.fontSizePt, bold: phDef.bold, ...}
+getFontDefaults(txBody, phFontFallback) → merge shape lstStyle ON TOP of fallback
+```
+
+**Font size inheritance (complete chain):**
+- Run rPr/@sz → para pPr/defRPr/@sz → shape lstStyle/lvl1pPr/defRPr/@sz → placeholder fallback → 12pt default
+- `sz` dalam hundredths of point: sz="3600" = 36pt
+
+**Text rendering:**
+- `measureText(doc, run, text)` → `doc.getTextWidth(text)` (actual Helvetica — 1.0×)
+- `buildWrappedLines(doc, para, availW)`:
+  - `wrapLimit = availW / 0.85` (Calibri ≈ 0.85× Helvetica width at same pt)
+  - Wrap decision: `currentLineW + token.width > wrapLimit` — pakai wrapLimit, BUKAN availW
+  - curX accumulation: `curX += token.width` (actual 1.0× width — no factor, no glyph overlap)
+- `lineSpacingMult` default = 1.0 (PowerPoint "Single"); baca dari `pPr/lnSpc/spcPct/@val`
+
+**Bullet rendering:**
+- `buChar = child(pPr, "buChar")`, `buNone = child(pPr, "buNone")`
+- Jika `buChar && !buNone`: draw bullet di `contentX + marginLeft + indent`
+  - `marginLeft` = `pPr/@marL` / 12700 (pt)
+  - `indent` = `pPr/@indent` / 12700 (pt, biasanya negatif → hanging bullet)
+- Bullet char, font, size, color dari `buChar/@char`, `buFont/@typeface`, `buSzPct/@val` (%), `buClr`
+
+**custGeom shapes:**
+- `parseCustGeomPaths(custGeom)` → array of `{w, h, cmds: PathCmd[]}`
+- Path commands: M (moveTo), L (lineTo), C (cubicBezTo), Z (close)
+- Scale: `sx = shapeW_pts / pathW_emu`, `sy = shapeH_pts / pathH_emu`
+- **KRITIS**: gunakan `doc.close()` untuk Z command (PDF 'h' operator) — BUKAN `doc.closePath()` (Canvas context API, tidak ada di main jsPDF)
+
+**spAutoFit:**
+- `const hasAutoFit = !!child(bodyPr, "spAutoFit")`
+- Jika true: skip clip guard `curY > boxY + boxH` → text tidak terpotong di box kecil
+
+**Key file:** `src/lib/tools/pptx-to-pdf.ts` (~1250 lines)

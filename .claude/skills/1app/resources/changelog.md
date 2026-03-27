@@ -2,6 +2,49 @@
 
 > History perubahan lengkap. Entry terbaru di atas.
 
+## 27 Maret 2026 — PowerPoint-to-PDF: Major Quality Fixes (4 commits)
+
+### Fix — custGeom shapes tidak ter-render (doc.closePath regression)
+- **Commit**: `d3f0658`
+- **Message**: `fix: use doc.close() instead of doc.closePath() for custGeom path rendering`
+- **Perubahan**:
+  - `doc.closePath()` → `doc.close()` di `renderCustomPath`
+  - `doc.closePath()` adalah Canvas 2D context API, BUKAN jsPDF main API. Throw silent exception → seluruh custGeom shape dilewati
+  - `doc.close()` adalah jsPDF method yang menulis PDF 'h' operator (close path)
+- **Hasil**: Semua diagonal clip overlay, diamond shapes, custom geometry shapes kembali ter-render
+
+### Fix — 4 system-level rendering improvements
+- **Commit**: `c2615a3`
+- **Message**: `fix(pptx-to-pdf): 4 system-level rendering fixes for text fidelity`
+- **Perubahan**:
+  - **A. Placeholder font inheritance**: `PlaceholderDef` diperluas dengan optional `fontSizePt?/bold?/colorHex?/fontName?`; `parsePlaceholderPositions` sekarang mengumpulkan font data dari lstStyle meskipun shape tidak punya xfrm; `mergePlaceholderMaps` merge position dari master + font dari layout; `getFontDefaults` menerima optional fallback; `renderShape` pass ph font sebagai fallback → heading seperti "MATERI TPA" (36pt bold) sekarang dapat ukuran benar dari slideLayout
+  - **B. Calibri→Helvetica wrap correction**: `measureText` returnnya tetap actual Helvetica width; `buildWrappedLines` menggunakan `wrapLimit = availW / 0.85` sebagai threshold wrap — mencegah premature line break tanpa merusak position accumulation
+  - **C. Line spacing 1.2→1.0**: Default `lineSpacingMult` dari 1.2 ke 1.0 (PowerPoint default "Single") → teks tidak overflow/terpotong di box
+  - **D. spAutoFit**: Check `<a:spAutoFit/>` di bodyPr; jika hadir, skip clip guard di tepi boxH → auto-expanding box menampilkan semua teks
+- **Hasil**: Heading font sizes lebih proporsional, line spacing lebih akurat, teks tidak terpotong
+
+### Fix — word spacing regression (critical)
+- **Commit**: `a4cae42`
+- **Message**: `fix(pptx-to-pdf): fix word spacing regression caused by 0.85 width correction`
+- **Perubahan**:
+  - Root cause: 0.85 correction di `measureText()` dipakai JUGA untuk `curX += token.width` accumulation. jsPDF render text di 1.0× Helvetica width, tapi curX hanya maju 0.85× per token → setiap token dimulai di tengah glyph token sebelumnya → kata menempel ("KosaKata:Arti")
+  - Fix: `measureText()` kembali ke `doc.getTextWidth(text)` (no factor); hanya `buildWrappedLines` yang pakai faktor via `wrapLimit = availW / 0.85`
+- **Hasil**: Semua kata terpisah dengan spasi benar di seluruh slide
+
+### Feat — bullet character rendering dari pPr/buChar
+- **Commit**: `0d6db57`
+- **Message**: `feat(pptx-to-pdf): implement bullet character rendering from pPr/buChar`
+- **Perubahan**:
+  - Tambah `BulletDef` interface: `{ char, fontName, sizePt, colorHex }`
+  - `TextParagraph` + `indent: number` (pPr/@indent, biasanya negatif untuk hanging bullet)
+  - `parseTextBody`: baca `buChar/buNone/buFont/buClr/buSzPct` dari pPr → build BulletDef
+  - `BuiltPara`: carry `indent` dan `bullet`
+  - `renderTextBody`: sebelum render lines paragraf bermasalah, draw bullet char di `contentX + marL + indent`
+  - Formula posisi bullet: `contentX + marginLeft + indent` = posisi hanging (biasanya ≈1pt dari kiri content)
+- **Hasil**: Slide 6, 7, 9, 11 sekarang menampilkan bullet "•" sebelum setiap item list
+
+---
+
 ## 26 Maret 2026 — Word-to-PDF: Per-Font Width Correction + Justify Fix
 
 ### Refactor — font-specific width correction
