@@ -270,6 +270,31 @@ export async function decodeQrFromImage(
   };
 }
 
+/**
+ * Lightweight single-frame QR decode for live camera scanning.
+ * Uses only raw jsQR (no multi-pass) for speed — camera feeds have
+ * natural contrast and quiet zones from the environment.
+ */
+export async function decodeQrFromVideoFrame(
+  imageData: ImageData
+): Promise<DecodedQr | null> {
+  const jsQR = (await import("jsqr")).default as unknown as JsQRFn;
+
+  const result = jsQR(imageData.data, imageData.width, imageData.height);
+  if (!result) return null;
+
+  return {
+    data: result.data,
+    isUrl: isValidUrl(result.data),
+    location: {
+      topLeft: { x: result.location.topLeftCorner.x, y: result.location.topLeftCorner.y },
+      topRight: { x: result.location.topRightCorner.x, y: result.location.topRightCorner.y },
+      bottomLeft: { x: result.location.bottomLeftCorner.x, y: result.location.bottomLeftCorner.y },
+      bottomRight: { x: result.location.bottomRightCorner.x, y: result.location.bottomRightCorner.y },
+    },
+  };
+}
+
 function maskRegion(
   ctx: CanvasRenderingContext2D,
   location: { topLeftCorner: { x: number; y: number }; topRightCorner: { x: number; y: number }; bottomLeftCorner: { x: number; y: number }; bottomRightCorner: { x: number; y: number } },

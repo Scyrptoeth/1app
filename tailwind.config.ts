@@ -26,6 +26,9 @@ const config: Config = {
         display: ['"DM Sans"', "system-ui", "sans-serif"],
         body: ['"DM Sans"', "system-ui", "sans-serif"],
       },
+      borderWidth: {
+        "3": "3px",
+      },
     },
   },
   plugins: [],
