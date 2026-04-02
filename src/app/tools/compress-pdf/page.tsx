@@ -97,6 +97,15 @@ export default function CompressPdfPage() {
     URL.revokeObjectURL(a.href);
   }, [result, file]);
 
+  const handleTryAnotherMode = useCallback(() => {
+    if (result?.previewUrl) {
+      URL.revokeObjectURL(result.previewUrl);
+    }
+    setResult(null);
+    setProgress({ progress: 0, status: "" });
+    setStage("mode-select");
+  }, [result]);
+
   const handleReset = useCallback(() => {
     if (result?.previewUrl) {
       URL.revokeObjectURL(result.previewUrl);
@@ -353,10 +362,17 @@ export default function CompressPdfPage() {
             </button>
 
             <button
+              onClick={handleTryAnotherMode}
+              className="w-full sm:w-auto px-6 py-3 text-accent-600 font-medium rounded-xl border border-accent-200 hover:bg-accent-50 transition-colors"
+            >
+              Try Another Mode
+            </button>
+
+            <button
               onClick={handleReset}
               className="w-full sm:w-auto px-6 py-3 text-slate-600 font-medium rounded-xl border border-slate-200 hover:bg-slate-50 transition-colors"
             >
-              Compress Another
+              Upload New File
             </button>
           </div>
         </div>
