@@ -1,10 +1,8 @@
 'use client';
 
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback } from 'react';
 import ToolPageLayout from '@/components/ToolPageLayout';
 import FileUploader from '@/components/FileUploader';
-import InputModeToggle, { type InputMode } from '@/components/InputModeToggle';
-import CameraCapture from '@/components/CameraCapture';
 import ProcessingView from '@/components/ProcessingView';
 import { getToolById } from '@/config/tools';
 import {
@@ -21,22 +19,13 @@ export default function ImageToExcelPage() {
   const tool = getToolById('image-to-excel')!;
 
   const [stage, setStage] = useState<Stage>('upload');
-  const [inputMode, setInputMode] = useState<InputMode>('file');
   const [file, setFile] = useState<File | null>(null);
   const [progress, setProgress] = useState<ProcessingUpdate>({ progress: 0, status: '' });
   const [result, setResult] = useState<ExtractionResult | null>(null);
   const [isExporting, setIsExporting] = useState(false);
-  const [hasCameraSupport, setHasCameraSupport] = useState(false);
 
-  useEffect(() => {
-    setHasCameraSupport(
-      typeof navigator !== 'undefined' &&
-      !!navigator.mediaDevices &&
-      !!navigator.mediaDevices.getUserMedia
-    );
-  }, []);
-
-  const processFile = useCallback(async (selected: File) => {
+  const handleFilesSelected = useCallback(async (files: File[]) => {
+    const selected = files[0];
     setFile(selected);
     setStage('processing');
 
@@ -52,10 +41,6 @@ export default function ImageToExcelPage() {
       );
     }
   }, []);
-
-  const handleFilesSelected = useCallback(async (files: File[]) => {
-    processFile(files[0]);
-  }, [processFile]);
 
   const handleDownload = useCallback(async () => {
     if (!result || !file) return;
@@ -90,25 +75,14 @@ export default function ImageToExcelPage() {
   return (
     <ToolPageLayout tool={tool}>
       {stage === 'upload' && (
-        <>
-          <InputModeToggle
-            mode={inputMode}
-            onModeChange={setInputMode}
-            hasCameraSupport={hasCameraSupport}
-          />
-          {inputMode === 'file' ? (
-            <FileUploader
-              acceptedFormats={['.png', '.jpg', '.jpeg']}
-              maxSizeMB={20}
-              multiple={false}
-              onFilesSelected={handleFilesSelected}
-              title="Select an image to extract data from"
-              subtitle="Supports PNG, JPG, JPEG — financial reports, tables, invoices"
-            />
-          ) : (
-            <CameraCapture onCapture={processFile} />
-          )}
-        </>
+        <FileUploader
+          acceptedFormats={['.png', '.jpg', '.jpeg']}
+          maxSizeMB={20}
+          multiple={false}
+          onFilesSelected={handleFilesSelected}
+          title="Select an image to extract data from"
+          subtitle="Supports PNG, JPG, JPEG — financial reports, tables, invoices"
+        />
       )}
 
       {stage === 'processing' && file && (
@@ -223,8 +197,8 @@ export default function ImageToExcelPage() {
           {[
             {
               step: '1',
-              title: 'Upload or Capture',
-              desc: 'Select a PNG, JPG, or JPEG image containing data, or take a photo with your camera.',
+              title: 'Upload Image',
+              desc: 'Select a PNG or JPG image containing a table or financial data.',
             },
             {
               step: '2',
