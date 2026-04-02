@@ -158,7 +158,13 @@ function FileCard({
 interface PageThumbProps {
   page: PageInfo;
   index: number;
+  isFirst: boolean;
+  isLast: boolean;
   onToggleInclude: () => void;
+  onMoveLeft: () => void;
+  onMoveRight: () => void;
+  onMoveUp: () => void;
+  onMoveDown: () => void;
   onDragStart: (e: React.DragEvent) => void;
   onDragOver: (e: React.DragEvent) => void;
   onDrop: (e: React.DragEvent) => void;
@@ -167,7 +173,13 @@ interface PageThumbProps {
 function PageThumb({
   page,
   index,
+  isFirst,
+  isLast,
   onToggleInclude,
+  onMoveLeft,
+  onMoveRight,
+  onMoveUp,
+  onMoveDown,
   onDragStart,
   onDragOver,
   onDrop,
@@ -232,29 +244,85 @@ function PageThumb({
         </span>
       </div>
 
-      {/* Toggle include/exclude */}
-      <button
-        type="button"
-        onClick={onToggleInclude}
-        className={`absolute top-1.5 right-1.5 w-5 h-5 rounded-full flex items-center justify-center transition-all ${
-          page.included
-            ? "bg-white/80 text-slate-400 opacity-0 group-hover:opacity-100 hover:text-red-500 hover:bg-white"
-            : "bg-white text-slate-400 hover:text-emerald-500"
-        }`}
-        aria-label={page.included ? "Exclude page" : "Include page"}
-      >
-        {page.included ? (
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-            <line x1="18" y1="6" x2="6" y2="18" />
-            <line x1="6" y1="6" x2="18" y2="18" />
-          </svg>
-        ) : (
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-            <line x1="12" y1="5" x2="12" y2="19" />
-            <line x1="5" y1="12" x2="19" y2="12" />
-          </svg>
-        )}
-      </button>
+      {/* Controls bar — always visible */}
+      {page.included && (
+        <div className="flex items-center justify-between px-1.5 py-1 border-t border-slate-100 bg-slate-50/80">
+          <div className="flex items-center gap-0.5">
+            <button
+              type="button"
+              onClick={onMoveLeft}
+              disabled={isFirst}
+              className="p-0.5 text-slate-400 hover:text-slate-700 disabled:opacity-25 disabled:cursor-not-allowed transition-colors"
+              aria-label="Move left"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <polyline points="15 18 9 12 15 6" />
+              </svg>
+            </button>
+            <button
+              type="button"
+              onClick={onMoveUp}
+              disabled={isFirst}
+              className="p-0.5 text-slate-400 hover:text-slate-700 disabled:opacity-25 disabled:cursor-not-allowed transition-colors"
+              aria-label="Move up"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <polyline points="18 15 12 9 6 15" />
+              </svg>
+            </button>
+            <button
+              type="button"
+              onClick={onMoveDown}
+              disabled={isLast}
+              className="p-0.5 text-slate-400 hover:text-slate-700 disabled:opacity-25 disabled:cursor-not-allowed transition-colors"
+              aria-label="Move down"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <polyline points="6 9 12 15 18 9" />
+              </svg>
+            </button>
+            <button
+              type="button"
+              onClick={onMoveRight}
+              disabled={isLast}
+              className="p-0.5 text-slate-400 hover:text-slate-700 disabled:opacity-25 disabled:cursor-not-allowed transition-colors"
+              aria-label="Move right"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <polyline points="9 18 15 12 9 6" />
+              </svg>
+            </button>
+          </div>
+          <button
+            type="button"
+            onClick={onToggleInclude}
+            className="p-0.5 text-slate-400 hover:text-red-500 transition-colors"
+            aria-label="Exclude page"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <line x1="18" y1="6" x2="6" y2="18" />
+              <line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
+          </button>
+        </div>
+      )}
+
+      {/* Excluded state — restore button */}
+      {!page.included && (
+        <div className="flex items-center justify-center px-1.5 py-1 border-t border-slate-100">
+          <button
+            type="button"
+            onClick={onToggleInclude}
+            className="p-0.5 text-slate-400 hover:text-emerald-500 transition-colors"
+            aria-label="Include page"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <line x1="12" y1="5" x2="12" y2="19" />
+              <line x1="5" y1="12" x2="19" y2="12" />
+            </svg>
+          </button>
+        </div>
+      )}
 
       {/* Order number badge */}
       {page.included && (
@@ -617,13 +685,19 @@ export default function PdfMergePage() {
 
           {/* Page-level view */}
           {viewMode === "page" && (
-            <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-2">
+            <div className="grid grid-cols-3 gap-3">
               {pages.map((page, idx) => (
                 <PageThumb
                   key={`page-${page.fileIndex}-${page.pageIndex}-${idx}`}
                   page={page}
                   index={pages.slice(0, idx).filter((p) => p.included).length}
+                  isFirst={idx === 0}
+                  isLast={idx === pages.length - 1}
                   onToggleInclude={() => togglePageInclude(idx)}
+                  onMoveLeft={() => movePage(idx, idx - 1)}
+                  onMoveRight={() => movePage(idx, idx + 1)}
+                  onMoveUp={() => movePage(idx, idx - 1)}
+                  onMoveDown={() => movePage(idx, idx + 1)}
                   onDragStart={onDragStartFactory(idx)}
                   onDragOver={onDragOverFactory()}
                   onDrop={onDropPageFactory(idx)}
