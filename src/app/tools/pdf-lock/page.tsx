@@ -129,23 +129,29 @@ export default function PdfLockPage() {
     setPermissions((prev) => ({ ...prev, [key]: !prev[key] }));
   }, []);
 
-  const allSelected = useMemo(
-    () => Object.values(permissions).every(Boolean),
-    [permissions]
-  );
-
-  const toggleAllRestrictions = useCallback(() => {
-    const newValue = !allSelected;
+  const selectAll = useCallback(() => {
     setPermissions({
-      blockOpening: newValue,
-      blockCopying: newValue,
-      blockPrinting: newValue,
-      blockModifying: newValue,
-      blockAnnotating: newValue,
-      blockFillingForms: newValue,
-      blockAssembly: newValue,
+      blockOpening: true,
+      blockCopying: true,
+      blockPrinting: true,
+      blockModifying: true,
+      blockAnnotating: true,
+      blockFillingForms: true,
+      blockAssembly: true,
     });
-  }, [allSelected]);
+  }, []);
+
+  const deselectAll = useCallback(() => {
+    setPermissions({
+      blockOpening: false,
+      blockCopying: false,
+      blockPrinting: false,
+      blockModifying: false,
+      blockAnnotating: false,
+      blockFillingForms: false,
+      blockAssembly: false,
+    });
+  }, []);
 
   const handleBackToConfigure = useCallback(() => {
     setStage("configure");
@@ -258,13 +264,23 @@ export default function PdfLockPage() {
               <h3 className="text-sm font-semibold text-slate-900">
                 Restrictions
               </h3>
-              <button
-                type="button"
-                onClick={toggleAllRestrictions}
-                className="text-xs text-slate-500 hover:text-slate-700 transition-colors"
-              >
-                {allSelected ? "Deselect all" : "Select all"}
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={selectAll}
+                  className="text-xs text-slate-500 hover:text-slate-700 transition-colors"
+                >
+                  Select all
+                </button>
+                <span className="text-slate-300">|</span>
+                <button
+                  type="button"
+                  onClick={deselectAll}
+                  className="text-xs text-slate-500 hover:text-slate-700 transition-colors"
+                >
+                  Deselect all
+                </button>
+              </div>
             </div>
             <div className="space-y-2">
               {RESTRICTION_OPTIONS.map((opt) => (
