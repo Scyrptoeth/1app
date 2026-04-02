@@ -229,6 +229,19 @@ export const tools: ToolConfig[] = [
     outputFormats: [".jpeg", ".jpg", ".png"],
     isAvailable: true,
   },
+  {
+    id: "pdf-lock",
+    name: "Lock PDF",
+    description:
+      "Add password protection and restrictions to PDF files. Block copying, printing, editing, and more.",
+    category: "protect",
+    icon: "Lock",
+    route: "/tools/pdf-lock",
+    accentColor: "slate",
+    inputFormats: [".pdf"],
+    outputFormats: [".pdf"],
+    isAvailable: true,
+  },
 ];
 
 export interface ToolSection {
@@ -272,6 +285,10 @@ export const SECTIONS: ToolSection[] = [
   {
     label: "Compress",
     toolIds: ["compress-pdf", "compress-image"],
+  },
+  {
+    label: "Protect",
+    toolIds: ["pdf-lock"],
   },
 ];
 
