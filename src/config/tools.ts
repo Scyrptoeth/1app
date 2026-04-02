@@ -165,6 +165,19 @@ export const tools: ToolConfig[] = [
     isAvailable: true,
   },
   {
+    id: "qr-code-to-link",
+    name: "QR Code to Link",
+    description:
+      "Decode QR codes from images to extract links and text. Supports single and multiple QR codes per image.",
+    category: "convert",
+    icon: "ScanLine",
+    route: "/tools/qr-code-to-link",
+    accentColor: "blue",
+    inputFormats: [".jpg", ".jpeg", ".png"],
+    outputFormats: ["Text/URL"],
+    isAvailable: true,
+  },
+  {
     id: "x-content-to-pdf",
     name: "X Content to PDF",
     description:
@@ -216,7 +229,7 @@ export const SECTIONS: ToolSection[] = [
   },
   {
     label: "Convert from Image",
-    toolIds: ["image-to-excel"],
+    toolIds: ["image-to-excel", "qr-code-to-link"],
   },
   {
     label: "Convert from Word",
