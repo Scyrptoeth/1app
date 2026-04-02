@@ -242,6 +242,19 @@ export const tools: ToolConfig[] = [
     outputFormats: [".pdf"],
     isAvailable: true,
   },
+  {
+    id: "pdf-merge",
+    name: "Merge PDF",
+    description:
+      "Combine multiple PDF files into one. Reorder files or individual pages with drag & drop.",
+    category: "merge",
+    icon: "Combine",
+    route: "/tools/pdf-merge",
+    accentColor: "emerald",
+    inputFormats: [".pdf"],
+    outputFormats: [".pdf"],
+    isAvailable: true,
+  },
 ];
 
 export interface ToolSection {
@@ -289,6 +302,10 @@ export const SECTIONS: ToolSection[] = [
   {
     label: "Protect",
     toolIds: ["pdf-lock"],
+  },
+  {
+    label: "Merge",
+    toolIds: ["pdf-merge"],
   },
 ];
 
