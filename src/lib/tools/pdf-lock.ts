@@ -6,6 +6,8 @@ export interface ProcessingUpdate {
 }
 
 export interface LockPdfPermissions {
+  /** Require password to open/view the PDF */
+  blockOpening: boolean;
   /** Block copy/select text */
   blockCopying: boolean;
   /** Block printing */
@@ -36,6 +38,7 @@ export interface LockPdfResult {
 }
 
 const RESTRICTION_LABELS: Record<keyof LockPdfPermissions, string> = {
+  blockOpening: "Require password to open",
   blockCopying: "Copy/Select text",
   blockPrinting: "Print",
   blockModifying: "Edit/Modify content",
@@ -65,7 +68,7 @@ export async function lockPdf(options: LockPdfOptions): Promise<LockPdfResult> {
   // Step 3: Build permission object
   report(40, "Configuring restrictions...");
   const securityOptions = {
-    userPassword: "", // Anyone can open the PDF
+    userPassword: permissions.blockOpening ? password : "", // If blockOpening, require password to view
     ownerPassword: password, // Owner password to remove restrictions
     permissions: {
       printing: permissions.blockPrinting ? false : "highResolution",

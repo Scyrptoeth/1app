@@ -21,6 +21,11 @@ const RESTRICTION_OPTIONS: Array<{
   description: string;
 }> = [
   {
+    key: "blockOpening",
+    label: "Require Password to Open",
+    description: "Require password to view the PDF",
+  },
+  {
     key: "blockCopying",
     label: "Block Copy/Select Text",
     description: "Prevent copy-paste and text selection",
@@ -89,6 +94,7 @@ export default function PdfLockPage() {
 
   // Configure stage state
   const [permissions, setPermissions] = useState<LockPdfPermissions>({
+    blockOpening: false,
     blockCopying: false,
     blockPrinting: false,
     blockModifying: false,
@@ -123,15 +129,28 @@ export default function PdfLockPage() {
     setPermissions((prev) => ({ ...prev, [key]: !prev[key] }));
   }, []);
 
-  const selectAllRestrictions = useCallback(() => {
+  const allSelected = useMemo(
+    () => Object.values(permissions).every(Boolean),
+    [permissions]
+  );
+
+  const toggleAllRestrictions = useCallback(() => {
+    const newValue = !allSelected;
     setPermissions({
-      blockCopying: true,
-      blockPrinting: true,
-      blockModifying: true,
-      blockAnnotating: true,
-      blockFillingForms: true,
-      blockAssembly: true,
+      blockOpening: newValue,
+      blockCopying: newValue,
+      blockPrinting: newValue,
+      blockModifying: newValue,
+      blockAnnotating: newValue,
+      blockFillingForms: newValue,
+      blockAssembly: newValue,
     });
+  }, [allSelected]);
+
+  const handleBackToConfigure = useCallback(() => {
+    setStage("configure");
+    setProgress({ progress: 0, status: "" });
+    setResult(null);
   }, []);
 
   const handleLock = useCallback(async () => {
@@ -175,6 +194,7 @@ export default function PdfLockPage() {
     setProgress({ progress: 0, status: "" });
     setResult(null);
     setPermissions({
+      blockOpening: false,
       blockCopying: false,
       blockPrinting: false,
       blockModifying: false,
@@ -240,10 +260,10 @@ export default function PdfLockPage() {
               </h3>
               <button
                 type="button"
-                onClick={selectAllRestrictions}
+                onClick={toggleAllRestrictions}
                 className="text-xs text-slate-500 hover:text-slate-700 transition-colors"
               >
-                Select all
+                {allSelected ? "Deselect all" : "Select all"}
               </button>
             </div>
             <div className="space-y-2">
@@ -390,6 +410,28 @@ export default function PdfLockPage() {
             onDownload={handleDownload}
             onReset={handleReset}
           />
+
+          {/* Modify restrictions button */}
+          <div className="mt-3 flex justify-center">
+            <button
+              type="button"
+              onClick={handleBackToConfigure}
+              className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-medium text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors"
+            >
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+              >
+                <path d="M12 20h9" />
+                <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
+              </svg>
+              Modify restrictions
+            </button>
+          </div>
 
           {/* File size comparison */}
           <div className="mt-6 flex items-center justify-center gap-6 text-sm text-slate-500">
