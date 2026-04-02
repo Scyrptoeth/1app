@@ -1,8 +1,10 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import ToolPageLayout from "@/components/ToolPageLayout";
 import FileUploader from "@/components/FileUploader";
+import InputModeToggle, { type InputMode } from "@/components/InputModeToggle";
+import CameraCapture from "@/components/CameraCapture";
 import ProcessingView from "@/components/ProcessingView";
 import DownloadView from "@/components/DownloadView";
 import { getToolById } from "@/config/tools";
@@ -18,15 +20,24 @@ export default function ImageWatermarkRemovePage() {
   const tool = getToolById("image-watermark-remove")!;
 
   const [stage, setStage] = useState<Stage>("upload");
+  const [inputMode, setInputMode] = useState<InputMode>("file");
   const [file, setFile] = useState<File | null>(null);
   const [progress, setProgress] = useState<ProcessingUpdate>({
     progress: 0,
     status: "",
   });
   const [result, setResult] = useState<ProcessingResult | null>(null);
+  const [hasCameraSupport, setHasCameraSupport] = useState(false);
 
-  const handleFilesSelected = useCallback(async (files: File[]) => {
-    const selectedFile = files[0];
+  useEffect(() => {
+    setHasCameraSupport(
+      typeof navigator !== "undefined" &&
+      !!navigator.mediaDevices &&
+      !!navigator.mediaDevices.getUserMedia
+    );
+  }, []);
+
+  const processFile = useCallback(async (selectedFile: File) => {
     setFile(selectedFile);
     setStage("processing");
 
@@ -45,6 +56,10 @@ export default function ImageWatermarkRemovePage() {
       );
     }
   }, []);
+
+  const handleFilesSelected = useCallback(async (files: File[]) => {
+    processFile(files[0]);
+  }, [processFile]);
 
   const handleDownload = useCallback(() => {
     if (!result || !file) return;
@@ -81,14 +96,25 @@ export default function ImageWatermarkRemovePage() {
   return (
     <ToolPageLayout tool={tool}>
       {stage === "upload" && (
-        <FileUploader
-          acceptedFormats={[".jpg", ".jpeg", ".png"]}
-          maxSizeMB={50}
-          multiple={false}
-          onFilesSelected={handleFilesSelected}
-          title="Select an image to remove watermark"
-          subtitle="Supports JPG, JPEG, and PNG files"
-        />
+        <>
+          <InputModeToggle
+            mode={inputMode}
+            onModeChange={setInputMode}
+            hasCameraSupport={hasCameraSupport}
+          />
+          {inputMode === "file" ? (
+            <FileUploader
+              acceptedFormats={[".jpg", ".jpeg", ".png"]}
+              maxSizeMB={50}
+              multiple={false}
+              onFilesSelected={handleFilesSelected}
+              title="Select an image to remove watermark"
+              subtitle="Supports JPG, JPEG, and PNG files"
+            />
+          ) : (
+            <CameraCapture onCapture={processFile} />
+          )}
+        </>
       )}
 
       {stage === "processing" && file && (
@@ -162,8 +188,8 @@ export default function ImageWatermarkRemovePage() {
           {[
             {
               step: "1",
-              title: "Upload",
-              desc: "Select a JPG, JPEG, or PNG image with a watermark.",
+              title: "Upload or Capture",
+              desc: "Select a JPG, JPEG, or PNG image with a watermark, or take a photo with your camera.",
             },
             {
               step: "2",
