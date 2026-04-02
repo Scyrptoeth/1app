@@ -216,6 +216,19 @@ export const tools: ToolConfig[] = [
     outputFormats: [".pdf"],
     isAvailable: true,
   },
+  {
+    id: "compress-image",
+    name: "Compress Image",
+    description:
+      "Reduce image file size while preserving dimensions. Supports JPEG quality adjustment and PNG color quantization.",
+    category: "compress",
+    icon: "ImageDown",
+    route: "/tools/compress-image",
+    accentColor: "amber",
+    inputFormats: [".jpeg", ".jpg", ".png"],
+    outputFormats: [".jpeg", ".jpg", ".png"],
+    isAvailable: true,
+  },
 ];
 
 export interface ToolSection {
@@ -258,7 +271,7 @@ export const SECTIONS: ToolSection[] = [
   },
   {
     label: "Compress",
-    toolIds: ["compress-pdf"],
+    toolIds: ["compress-pdf", "compress-image"],
   },
 ];
 
