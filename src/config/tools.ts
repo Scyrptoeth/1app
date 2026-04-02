@@ -15,6 +15,7 @@ export type ToolCategory =
   | "watermark"
   | "convert"
   | "transform"
+  | "extract"
   | "merge"
   | "compress"
   | "ocr"
@@ -25,6 +26,7 @@ export const categoryLabels: Record<ToolCategory, string> = {
   watermark: "Watermark",
   convert: "Extract",
   transform: "Convert",
+  extract: "X Content",
   merge: "Merge",
   compress: "Compress",
   ocr: "OCR",
@@ -36,6 +38,7 @@ export const categoryColors: Record<ToolCategory, string> = {
   watermark: "bg-rose-500",
   convert: "bg-blue-500",
   transform: "bg-violet-500",
+  extract: "bg-teal-500",
   merge: "bg-emerald-500",
   compress: "bg-amber-500",
   ocr: "bg-violet-500",
@@ -161,6 +164,32 @@ export const tools: ToolConfig[] = [
     outputFormats: [".pdf"],
     isAvailable: true,
   },
+  {
+    id: "x-content-to-pdf",
+    name: "X Content to PDF",
+    description:
+      "Extract posts, threads, and articles from X (Twitter) into clean, formatted PDF documents.",
+    category: "extract",
+    icon: "FileText",
+    route: "/tools/x-content-to-pdf",
+    accentColor: "teal",
+    inputFormats: ["URL"],
+    outputFormats: [".pdf"],
+    isAvailable: true,
+  },
+  {
+    id: "x-content-to-word",
+    name: "X Content to Word",
+    description:
+      "Extract posts, threads, and articles from X (Twitter) into editable Word documents.",
+    category: "extract",
+    icon: "FileType",
+    route: "/tools/x-content-to-word",
+    accentColor: "teal",
+    inputFormats: ["URL"],
+    outputFormats: [".docx"],
+    isAvailable: true,
+  },
 ];
 
 export interface ToolSection {
@@ -196,6 +225,10 @@ export const SECTIONS: ToolSection[] = [
   {
     label: "Convert from PowerPoint",
     toolIds: ["pptx-to-pdf"],
+  },
+  {
+    label: "Extract from X",
+    toolIds: ["x-content-to-pdf", "x-content-to-word"],
   },
 ];
 

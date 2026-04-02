@@ -7,9 +7,10 @@ import * as LucideIcons from "lucide-react";
 interface ToolPageLayoutProps {
   tool: ToolConfig;
   children: React.ReactNode;
+  privacyMessage?: string;
 }
 
-export default function ToolPageLayout({ tool, children }: ToolPageLayoutProps) {
+export default function ToolPageLayout({ tool, children, privacyMessage }: ToolPageLayoutProps) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const icons = LucideIcons as any;
   const IconComponent = icons[tool.icon] || LucideIcons.FileQuestion;
@@ -63,7 +64,7 @@ export default function ToolPageLayout({ tool, children }: ToolPageLayoutProps) 
               <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10" />
             </svg>
             <span className="text-xs font-medium text-emerald-700">
-              Files are processed locally — nothing is uploaded
+              {privacyMessage || "Files are processed locally — nothing is uploaded"}
             </span>
           </div>
         </div>
