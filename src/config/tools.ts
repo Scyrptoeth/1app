@@ -203,6 +203,19 @@ export const tools: ToolConfig[] = [
     outputFormats: [".docx"],
     isAvailable: true,
   },
+  {
+    id: "compress-pdf",
+    name: "Compress PDF",
+    description:
+      "Reduce PDF file size with three compression modes — choose between maximum compression or maximum quality.",
+    category: "compress",
+    icon: "FileDown",
+    route: "/tools/compress-pdf",
+    accentColor: "amber",
+    inputFormats: [".pdf"],
+    outputFormats: [".pdf"],
+    isAvailable: true,
+  },
 ];
 
 export interface ToolSection {
@@ -242,6 +255,10 @@ export const SECTIONS: ToolSection[] = [
   {
     label: "Extract from X",
     toolIds: ["x-content-to-pdf", "x-content-to-word"],
+  },
+  {
+    label: "Compress",
+    toolIds: ["compress-pdf"],
   },
 ];
 
