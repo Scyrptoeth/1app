@@ -20,7 +20,8 @@ export type ToolCategory =
   | "compress"
   | "ocr"
   | "protect"
-  | "split";
+  | "split"
+  | "rotate";
 
 export const categoryLabels: Record<ToolCategory, string> = {
   watermark: "Watermark",
@@ -32,6 +33,7 @@ export const categoryLabels: Record<ToolCategory, string> = {
   ocr: "OCR",
   protect: "Protect",
   split: "Split",
+  rotate: "Rotate",
 };
 
 export const categoryColors: Record<ToolCategory, string> = {
@@ -44,6 +46,7 @@ export const categoryColors: Record<ToolCategory, string> = {
   ocr: "bg-violet-500",
   protect: "bg-slate-700",
   split: "bg-cyan-500",
+  rotate: "bg-orange-500",
 };
 
 export const tools: ToolConfig[] = [
@@ -268,6 +271,19 @@ export const tools: ToolConfig[] = [
     outputFormats: [".pdf", ".zip"],
     isAvailable: true,
   },
+  {
+    id: "rotate-pdf",
+    name: "Rotate PDF",
+    description:
+      "Rotate PDF pages individually or in bulk. Lossless rotation — original quality fully preserved.",
+    category: "rotate",
+    icon: "RotateCw",
+    route: "/tools/rotate-pdf",
+    accentColor: "orange",
+    inputFormats: [".pdf"],
+    outputFormats: [".pdf"],
+    isAvailable: true,
+  },
 ];
 
 export interface ToolSection {
@@ -323,6 +339,10 @@ export const SECTIONS: ToolSection[] = [
   {
     label: "Split",
     toolIds: ["split-pdf"],
+  },
+  {
+    label: "Rotate",
+    toolIds: ["rotate-pdf"],
   },
 ];
 
