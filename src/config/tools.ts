@@ -285,6 +285,19 @@ export const tools: ToolConfig[] = [
     isAvailable: true,
   },
   {
+    id: "remove-page-pdf",
+    name: "Remove Page PDF",
+    description:
+      "Remove one or more pages from a PDF file. Reorder remaining pages with drag & drop. Lossless — original quality preserved.",
+    category: "split",
+    icon: "FileX",
+    route: "/tools/remove-page-pdf",
+    accentColor: "cyan",
+    inputFormats: [".pdf"],
+    outputFormats: [".pdf"],
+    isAvailable: true,
+  },
+  {
     id: "reorder-pdf",
     name: "Reorder PDF",
     description:
@@ -323,7 +336,7 @@ export const SECTIONS: ToolSection[] = [
   },
   {
     label: "PDF Utilities",
-    toolIds: ["compress-pdf", "pdf-lock", "pdf-merge", "pdf-watermark-remove", "reorder-pdf", "rotate-pdf", "split-pdf"],
+    toolIds: ["compress-pdf", "pdf-lock", "pdf-merge", "pdf-watermark-remove", "remove-page-pdf", "reorder-pdf", "rotate-pdf", "split-pdf"],
   },
   {
     label: "PowerPoint",
