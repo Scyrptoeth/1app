@@ -371,35 +371,68 @@ export default function ExcelToPdfPage() {
                     </span>
                   )}
 
-                  {/* Thumbnail */}
-                  <div className="p-3 pt-8 pb-1 flex justify-center" style={{ minHeight: 160 }}>
+                  {/* Thumbnail with arrow overlay */}
+                  <div className="relative w-full aspect-[3/4] bg-slate-50 overflow-hidden flex items-center justify-center">
                     {thumbnails[pageIdx] ? (
                       <img
                         src={thumbnails[pageIdx]}
                         alt={`Page ${pageIdx + 1}`}
-                        className="max-h-[130px] rounded shadow-sm object-contain"
+                        className="w-full h-full object-contain"
                         style={{ transform: `rotate(${rot}deg)` }}
                         draggable={false}
                       />
                     ) : (
-                      <div className="w-24 h-[120px] bg-slate-100 rounded animate-pulse" />
+                      <div className="text-slate-300">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                          <polyline points="14 2 14 8 20 8" />
+                        </svg>
+                      </div>
                     )}
-                  </div>
 
-                  {/* Arrow controls — move page in grid */}
-                  <div className="flex items-center justify-center gap-1 py-1">
-                    <button onClick={() => moveByArrow(orderIdx, "left")} disabled={!canLeft} className="p-1 text-slate-400 hover:text-slate-700 disabled:opacity-20 transition-colors" title="Move left">
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
-                    </button>
-                    <button onClick={() => moveByArrow(orderIdx, "up")} disabled={!canUp} className="p-1 text-slate-400 hover:text-slate-700 disabled:opacity-20 transition-colors" title="Move up">
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="18 15 12 9 6 15"/></svg>
-                    </button>
-                    <button onClick={() => moveByArrow(orderIdx, "down")} disabled={!canDown} className="p-1 text-slate-400 hover:text-slate-700 disabled:opacity-20 transition-colors" title="Move down">
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-                    </button>
-                    <button onClick={() => moveByArrow(orderIdx, "right")} disabled={!canRight} className="p-1 text-slate-400 hover:text-slate-700 disabled:opacity-20 transition-colors" title="Move right">
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
-                    </button>
+                    {/* Arrow controls — center overlay (diamond layout) */}
+                    <div className="absolute inset-0 flex items-center justify-center">
+                      <div className="flex flex-col items-center gap-0.5">
+                        <button
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); moveByArrow(orderIdx, "up"); }}
+                          disabled={!canUp}
+                          className="p-1 rounded-full bg-white/80 text-slate-500 hover:bg-white hover:text-slate-900 disabled:opacity-25 disabled:cursor-not-allowed transition-all shadow-sm"
+                          aria-label="Move up"
+                        >
+                          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="18 15 12 9 6 15" /></svg>
+                        </button>
+                        <div className="flex items-center gap-3">
+                          <button
+                            type="button"
+                            onClick={(e) => { e.stopPropagation(); moveByArrow(orderIdx, "left"); }}
+                            disabled={!canLeft}
+                            className="p-1 rounded-full bg-white/80 text-slate-500 hover:bg-white hover:text-slate-900 disabled:opacity-25 disabled:cursor-not-allowed transition-all shadow-sm"
+                            aria-label="Move left"
+                          >
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="15 18 9 12 15 6" /></svg>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(e) => { e.stopPropagation(); moveByArrow(orderIdx, "right"); }}
+                            disabled={!canRight}
+                            className="p-1 rounded-full bg-white/80 text-slate-500 hover:bg-white hover:text-slate-900 disabled:opacity-25 disabled:cursor-not-allowed transition-all shadow-sm"
+                            aria-label="Move right"
+                          >
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="9 18 15 12 9 6" /></svg>
+                          </button>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); moveByArrow(orderIdx, "down"); }}
+                          disabled={!canDown}
+                          className="p-1 rounded-full bg-white/80 text-slate-500 hover:bg-white hover:text-slate-900 disabled:opacity-25 disabled:cursor-not-allowed transition-all shadow-sm"
+                          aria-label="Move down"
+                        >
+                          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="6 9 12 15 18 9" /></svg>
+                        </button>
+                      </div>
+                    </div>
                   </div>
 
                   {/* Bottom controls — rotate + remove */}
