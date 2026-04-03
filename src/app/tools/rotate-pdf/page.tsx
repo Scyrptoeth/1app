@@ -37,23 +37,23 @@ function getRotationTransform(degrees: number): string {
   return `rotate(${norm}deg)`;
 }
 
-// ─── Page Thumbnail ────────────────────────────────────────────────
+// ─── Active Page Thumbnail ─────────────────────────────────────────
 
 interface PageThumbnailProps {
   pageIndex: number;
   thumbnailUrl?: string;
   rotation: number;
   selected: boolean;
-  included: boolean;
   isFirst: boolean;
   isLast: boolean;
   canMoveUp: boolean;
   canMoveDown: boolean;
+  canRemove: boolean;
   onRotateLeft: () => void;
   onRotateRight: () => void;
   onRotate180: () => void;
   onToggleSelect: () => void;
-  onToggleInclude: () => void;
+  onRemove: () => void;
   onMoveLeft: () => void;
   onMoveRight: () => void;
   onMoveUp: () => void;
@@ -68,16 +68,16 @@ function PageThumbnail({
   thumbnailUrl,
   rotation,
   selected,
-  included,
   isFirst,
   isLast,
   canMoveUp,
   canMoveDown,
+  canRemove,
   onRotateLeft,
   onRotateRight,
   onRotate180,
   onToggleSelect,
-  onToggleInclude,
+  onRemove,
   onMoveLeft,
   onMoveRight,
   onMoveUp,
@@ -111,52 +111,47 @@ function PageThumbnail({
   return (
     <div
       ref={observerRef}
-      draggable={included}
-      onDragStart={included ? onDragStart : undefined}
+      draggable
+      onDragStart={onDragStart}
       onDragOver={onDragOver}
       onDrop={onDrop}
-      className={`relative rounded-lg border-2 transition-all ${
-        included
-          ? selected
-            ? "border-accent-400 ring-2 ring-accent-100 cursor-grab active:cursor-grabbing"
-            : "border-slate-200 hover:border-slate-300 cursor-grab active:cursor-grabbing"
-          : "border-dashed border-slate-200 opacity-40 cursor-default"
+      className={`relative rounded-lg border-2 transition-all cursor-grab active:cursor-grabbing ${
+        selected
+          ? "border-accent-400 ring-2 ring-accent-100"
+          : "border-slate-200 hover:border-slate-300"
       }`}
     >
-      {/* Checkbox — top left (only when included) */}
-      {included && (
-        <button
-          type="button"
-          onClick={onToggleSelect}
-          className={`absolute top-1.5 left-1.5 z-10 w-5 h-5 rounded border-2 flex items-center justify-center transition-all ${
-            selected
-              ? "bg-accent-500 border-accent-500"
-              : "bg-white/80 border-slate-300 hover:border-slate-400"
-          }`}
-          aria-label={`Select page ${pageIndex + 1}`}
-        >
-          {selected && (
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3">
-              <polyline points="20 6 9 17 4 12" />
-            </svg>
-          )}
-        </button>
-      )}
-
-      {/* X exclude button — top right (only when included) */}
-      {included && (
-        <button
-          type="button"
-          onClick={onToggleInclude}
-          className="absolute top-1.5 right-1.5 z-10 p-1 rounded-full bg-white/80 text-slate-400 hover:bg-white hover:text-red-500 transition-all shadow-sm"
-          aria-label="Exclude page"
-        >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-            <line x1="18" y1="6" x2="6" y2="18" />
-            <line x1="6" y1="6" x2="18" y2="18" />
+      {/* Checkbox — top left */}
+      <button
+        type="button"
+        onClick={onToggleSelect}
+        className={`absolute top-1.5 left-1.5 z-10 w-5 h-5 rounded border-2 flex items-center justify-center transition-all ${
+          selected
+            ? "bg-accent-500 border-accent-500"
+            : "bg-white/80 border-slate-300 hover:border-slate-400"
+        }`}
+        aria-label={`Select page ${pageIndex + 1}`}
+      >
+        {selected && (
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3">
+            <polyline points="20 6 9 17 4 12" />
           </svg>
-        </button>
-      )}
+        )}
+      </button>
+
+      {/* Remove button — top right */}
+      <button
+        type="button"
+        onClick={onRemove}
+        disabled={!canRemove}
+        className="absolute top-1.5 right-1.5 z-10 p-1 rounded-full bg-white/80 text-slate-400 hover:bg-white hover:text-red-500 disabled:opacity-30 disabled:cursor-not-allowed transition-all shadow-sm"
+        aria-label="Remove page"
+      >
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+          <line x1="18" y1="6" x2="6" y2="18" />
+          <line x1="6" y1="6" x2="18" y2="18" />
+        </svg>
+      </button>
 
       {/* Thumbnail with CSS rotation */}
       <div className="relative w-full aspect-[3/4] bg-slate-50 rounded-t-md overflow-hidden flex items-center justify-center">
@@ -176,76 +171,57 @@ function PageThumbnail({
           </div>
         )}
 
-        {/* Arrow controls — center overlay (only when included) */}
-        {included && (
-          <div className="absolute inset-0 flex items-center justify-center">
-            <div className="flex flex-col items-center gap-0.5">
+        {/* Arrow controls — center overlay */}
+        <div className="absolute inset-0 flex items-center justify-center">
+          <div className="flex flex-col items-center gap-0.5">
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); onMoveUp(); }}
+              disabled={!canMoveUp}
+              className="p-1 rounded-full bg-white/80 text-slate-500 hover:bg-white hover:text-slate-900 disabled:opacity-25 disabled:cursor-not-allowed transition-all shadow-sm"
+              aria-label="Move up"
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                <polyline points="18 15 12 9 6 15" />
+              </svg>
+            </button>
+            <div className="flex items-center gap-3">
               <button
                 type="button"
-                onClick={(e) => { e.stopPropagation(); onMoveUp(); }}
-                disabled={!canMoveUp}
+                onClick={(e) => { e.stopPropagation(); onMoveLeft(); }}
+                disabled={isFirst}
                 className="p-1 rounded-full bg-white/80 text-slate-500 hover:bg-white hover:text-slate-900 disabled:opacity-25 disabled:cursor-not-allowed transition-all shadow-sm"
-                aria-label="Move up"
+                aria-label="Move left"
               >
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                  <polyline points="18 15 12 9 6 15" />
+                  <polyline points="15 18 9 12 15 6" />
                 </svg>
               </button>
-              <div className="flex items-center gap-3">
-                <button
-                  type="button"
-                  onClick={(e) => { e.stopPropagation(); onMoveLeft(); }}
-                  disabled={isFirst}
-                  className="p-1 rounded-full bg-white/80 text-slate-500 hover:bg-white hover:text-slate-900 disabled:opacity-25 disabled:cursor-not-allowed transition-all shadow-sm"
-                  aria-label="Move left"
-                >
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                    <polyline points="15 18 9 12 15 6" />
-                  </svg>
-                </button>
-                <button
-                  type="button"
-                  onClick={(e) => { e.stopPropagation(); onMoveRight(); }}
-                  disabled={isLast}
-                  className="p-1 rounded-full bg-white/80 text-slate-500 hover:bg-white hover:text-slate-900 disabled:opacity-25 disabled:cursor-not-allowed transition-all shadow-sm"
-                  aria-label="Move right"
-                >
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                    <polyline points="9 18 15 12 9 6" />
-                  </svg>
-                </button>
-              </div>
               <button
                 type="button"
-                onClick={(e) => { e.stopPropagation(); onMoveDown(); }}
-                disabled={!canMoveDown}
+                onClick={(e) => { e.stopPropagation(); onMoveRight(); }}
+                disabled={isLast}
                 className="p-1 rounded-full bg-white/80 text-slate-500 hover:bg-white hover:text-slate-900 disabled:opacity-25 disabled:cursor-not-allowed transition-all shadow-sm"
-                aria-label="Move down"
+                aria-label="Move right"
               >
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                  <polyline points="6 9 12 15 18 9" />
+                  <polyline points="9 18 15 12 9 6" />
                 </svg>
               </button>
             </div>
-          </div>
-        )}
-
-        {/* Restore button — center (only when excluded) */}
-        {!included && (
-          <div className="absolute inset-0 flex items-center justify-center">
             <button
               type="button"
-              onClick={onToggleInclude}
-              className="p-2 rounded-full bg-white/90 text-slate-400 hover:text-emerald-500 transition-all shadow-sm"
-              aria-label="Include page"
+              onClick={(e) => { e.stopPropagation(); onMoveDown(); }}
+              disabled={!canMoveDown}
+              className="p-1 rounded-full bg-white/80 text-slate-500 hover:bg-white hover:text-slate-900 disabled:opacity-25 disabled:cursor-not-allowed transition-all shadow-sm"
+              aria-label="Move down"
             >
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                <line x1="12" y1="5" x2="12" y2="19" />
-                <line x1="5" y1="12" x2="19" y2="12" />
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                <polyline points="6 9 12 15 18 9" />
               </svg>
             </button>
           </div>
-        )}
+        </div>
       </div>
 
       {/* Page label + rotation badge + rotation controls */}
@@ -260,46 +236,106 @@ function PageThumbnail({
             </span>
           )}
         </div>
-        {included && (
-          <div className="flex items-center justify-center gap-1">
-            <button
-              type="button"
-              onClick={(e) => { e.stopPropagation(); onRotateLeft(); }}
-              className="p-1 rounded-md bg-slate-100 text-slate-500 hover:bg-slate-200 hover:text-slate-700 transition-all"
-              aria-label="Rotate left 90°"
-              title="Rotate left 90°"
-            >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                <path d="M1 4v6h6" />
-                <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
-              </svg>
-            </button>
-            <button
-              type="button"
-              onClick={(e) => { e.stopPropagation(); onRotateRight(); }}
-              className="p-1 rounded-md bg-slate-100 text-slate-500 hover:bg-slate-200 hover:text-slate-700 transition-all"
-              aria-label="Rotate right 90°"
-              title="Rotate right 90°"
-            >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                <path d="M23 4v6h-6" />
-                <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
-              </svg>
-            </button>
-            <button
-              type="button"
-              onClick={(e) => { e.stopPropagation(); onRotate180(); }}
-              className="p-1 rounded-md bg-slate-100 text-slate-500 hover:bg-slate-200 hover:text-slate-700 transition-all"
-              aria-label="Rotate 180°"
-              title="Rotate 180°"
-            >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                <path d="M21 12a9 9 0 1 1-9-9" />
-                <polyline points="21 3 21 9 15 9" />
-              </svg>
-            </button>
+        <div className="flex items-center justify-center gap-1">
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); onRotateLeft(); }}
+            className="p-1 rounded-md bg-slate-100 text-slate-500 hover:bg-slate-200 hover:text-slate-700 transition-all"
+            aria-label="Rotate left 90°"
+            title="Rotate left 90°"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+              <path d="M1 4v6h6" />
+              <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); onRotateRight(); }}
+            className="p-1 rounded-md bg-slate-100 text-slate-500 hover:bg-slate-200 hover:text-slate-700 transition-all"
+            aria-label="Rotate right 90°"
+            title="Rotate right 90°"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+              <path d="M23 4v6h-6" />
+              <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); onRotate180(); }}
+            className="p-1 rounded-md bg-slate-100 text-slate-500 hover:bg-slate-200 hover:text-slate-700 transition-all"
+            aria-label="Rotate 180°"
+            title="Rotate 180°"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+              <path d="M21 12a9 9 0 1 1-9-9" />
+              <polyline points="21 3 21 9 15 9" />
+            </svg>
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Removed Page Thumbnail ────────────────────────────────────────
+
+interface RemovedPageThumbProps {
+  pageIndex: number;
+  thumbnailUrl?: string;
+  rotation: number;
+  onRestore: () => void;
+}
+
+function RemovedPageThumb({ pageIndex, thumbnailUrl, rotation, onRestore }: RemovedPageThumbProps) {
+  const normRotation = normalizeAngle(rotation);
+  const transform = getRotationTransform(rotation);
+
+  return (
+    <div className="relative rounded-lg border-2 border-dashed border-slate-200 opacity-50 hover:opacity-70 transition-all">
+      <div className="relative w-full aspect-[3/4] bg-slate-50 rounded-t-md overflow-hidden flex items-center justify-center">
+        {thumbnailUrl ? (
+          <img
+            src={thumbnailUrl}
+            alt={`Page ${pageIndex + 1}`}
+            className="w-full h-full object-contain"
+            style={transform ? { transform } : undefined}
+          />
+        ) : (
+          <div className="text-slate-300">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+              <polyline points="14 2 14 8 20 8" />
+            </svg>
           </div>
         )}
+
+        {/* Restore button — center */}
+        <div className="absolute inset-0 flex items-center justify-center">
+          <button
+            type="button"
+            onClick={onRestore}
+            className="p-2 rounded-full bg-white/90 text-slate-400 hover:text-emerald-500 transition-all shadow-sm"
+            aria-label="Restore page"
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+              <line x1="12" y1="5" x2="12" y2="19" />
+              <line x1="5" y1="12" x2="19" y2="12" />
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <div className="px-2 py-1.5 border-t border-slate-100">
+        <div className="flex items-center justify-between">
+          <p className="text-[10px] font-medium text-slate-500">Page {pageIndex + 1}</p>
+          {normRotation !== 0 && (
+            <span className="px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 text-[10px] font-bold">
+              {normRotation}°
+            </span>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -315,8 +351,8 @@ export default function RotatePdfPage() {
   const [pageCount, setPageCount] = useState(0);
   const [thumbnails, setThumbnails] = useState<Record<number, string>>({});
   const [pageOrder, setPageOrder] = useState<number[]>([]);
+  const [removedPages, setRemovedPages] = useState<number[]>([]);
   const [rotations, setRotations] = useState<Map<number, number>>(new Map());
-  const [excludedPages, setExcludedPages] = useState<Set<number>>(new Set());
   const [selectedPages, setSelectedPages] = useState<Set<number>>(new Set());
   const [progress, setProgress] = useState<ProcessingUpdate>({ progress: 0, status: "" });
   const [result, setResult] = useState<RotatePdfResult | null>(null);
@@ -326,9 +362,8 @@ export default function RotatePdfPage() {
 
   // ─── Computed values ───────────────────────────────────────────
 
-  const isDefaultOrder = pageOrder.length === pageCount && pageOrder.every((v, i) => v === i);
-  const hasChanges = rotations.size > 0 || excludedPages.size > 0 || !isDefaultOrder;
-  const includedCount = pageCount - excludedPages.size;
+  const isDefaultOrder = pageOrder.length === pageCount && removedPages.length === 0 && pageOrder.every((v, i) => v === i);
+  const hasChanges = rotations.size > 0 || removedPages.length > 0 || !isDefaultOrder;
   const rotatedPageCount = rotations.size;
 
   // ─── File handling ─────────────────────────────────────────────
@@ -342,7 +377,7 @@ export default function RotatePdfPage() {
     setLoadingThumbnails(true);
     setRotations(new Map());
     setSelectedPages(new Set());
-    setExcludedPages(new Set());
+    setRemovedPages([]);
     setThumbnails({});
 
     try {
@@ -419,7 +454,7 @@ export default function RotatePdfPage() {
   const rotateSelected = useCallback((degrees: number) => {
     const targets = selectedPages.size > 0
       ? Array.from(selectedPages)
-      : pageOrder.filter((idx) => !excludedPages.has(idx));
+      : [...pageOrder];
 
     setRotations((prev) => {
       const next = new Map(prev);
@@ -434,26 +469,29 @@ export default function RotatePdfPage() {
       }
       return next;
     });
-  }, [selectedPages, pageOrder, excludedPages]);
+  }, [selectedPages, pageOrder]);
 
-  // ─── Exclude / Include ─────────────────────────────────────────
+  // ─── Remove & Restore ─────────────────────────────────────────
 
-  const toggleInclude = useCallback((pageIndex: number) => {
-    setExcludedPages((prev) => {
-      const next = new Set(prev);
-      if (next.has(pageIndex)) {
-        next.delete(pageIndex);
-      } else {
-        next.add(pageIndex);
-        // Deselect excluded page
-        setSelectedPages((sp) => {
-          const ns = new Set(sp);
-          ns.delete(pageIndex);
-          return ns;
-        });
-      }
+  const removePage = useCallback((posIdx: number) => {
+    setPageOrder((prev) => {
+      if (prev.length <= 1) return prev;
+      const pageIndex = prev[posIdx];
+      const next = prev.filter((_, i) => i !== posIdx);
+      setRemovedPages((rm) => [...rm, pageIndex]);
+      // Deselect removed page
+      setSelectedPages((sp) => {
+        const ns = new Set(sp);
+        ns.delete(pageIndex);
+        return ns;
+      });
       return next;
     });
+  }, []);
+
+  const restorePage = useCallback((pageIndex: number) => {
+    setRemovedPages((prev) => prev.filter((p) => p !== pageIndex));
+    setPageOrder((prev) => [...prev, pageIndex]);
   }, []);
 
   // ─── Selection ─────────────────────────────────────────────────
@@ -471,9 +509,8 @@ export default function RotatePdfPage() {
   }, []);
 
   const selectAll = useCallback(() => {
-    const included = pageOrder.filter((idx) => !excludedPages.has(idx));
-    setSelectedPages(new Set(included));
-  }, [pageOrder, excludedPages]);
+    setSelectedPages(new Set(pageOrder));
+  }, [pageOrder]);
 
   const deselectAll = useCallback(() => {
     setSelectedPages(new Set());
@@ -483,7 +520,7 @@ export default function RotatePdfPage() {
 
   const resetAll = useCallback(() => {
     setRotations(new Map());
-    setExcludedPages(new Set());
+    setRemovedPages([]);
     setSelectedPages(new Set());
     setPageOrder(Array.from({ length: pageCount }, (_, i) => i));
   }, [pageCount]);
@@ -494,10 +531,8 @@ export default function RotatePdfPage() {
     if (!file || !hasChanges) return;
     setStage("processing");
 
-    const finalOrder = pageOrder.filter((idx) => !excludedPages.has(idx));
-
     try {
-      const processResult = await rotatePdf(file, finalOrder, rotations, (update) => setProgress(update));
+      const processResult = await rotatePdf(file, pageOrder, rotations, (update) => setProgress(update));
       setResult(processResult);
       setStage("done");
     } catch (err) {
@@ -505,7 +540,7 @@ export default function RotatePdfPage() {
       setStage("configure");
       alert("Failed to process PDF. The file may be corrupted or encrypted.");
     }
-  }, [file, hasChanges, pageOrder, excludedPages, rotations]);
+  }, [file, hasChanges, pageOrder, rotations]);
 
   const handleDownload = useCallback(() => {
     if (!result || !file) return;
@@ -525,8 +560,8 @@ export default function RotatePdfPage() {
     setPageCount(0);
     setThumbnails({});
     setPageOrder([]);
+    setRemovedPages([]);
     setRotations(new Map());
-    setExcludedPages(new Set());
     setSelectedPages(new Set());
     setProgress({ progress: 0, status: "" });
     setResult(null);
@@ -653,49 +688,67 @@ export default function RotatePdfPage() {
             )}
           </div>
 
-          {/* Thumbnail grid — max 3 columns */}
+          {/* Active pages grid */}
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-            {pageOrder.map((pageIdx, posIdx) => {
-              const isIncluded = !excludedPages.has(pageIdx);
-              return (
-                <PageThumbnail
-                  key={`${pageIdx}-${posIdx}`}
-                  pageIndex={pageIdx}
-                  thumbnailUrl={thumbnails[pageIdx]}
-                  rotation={rotations.get(pageIdx) || 0}
-                  selected={selectedPages.has(pageIdx)}
-                  included={isIncluded}
-                  isFirst={posIdx === 0}
-                  isLast={posIdx === pageOrder.length - 1}
-                  canMoveUp={posIdx >= GRID_COLS}
-                  canMoveDown={posIdx + GRID_COLS <= pageOrder.length - 1}
-                  onRotateLeft={() => rotatePage(pageIdx, -90)}
-                  onRotateRight={() => rotatePage(pageIdx, 90)}
-                  onRotate180={() => rotatePage(pageIdx, 180)}
-                  onToggleSelect={() => togglePageSelect(pageIdx)}
-                  onToggleInclude={() => toggleInclude(pageIdx)}
-                  onMoveLeft={() => { if (posIdx > 0) movePage(posIdx, posIdx - 1); }}
-                  onMoveRight={() => { if (posIdx < pageOrder.length - 1) movePage(posIdx, posIdx + 1); }}
-                  onMoveUp={() => { if (posIdx >= GRID_COLS) movePage(posIdx, Math.max(0, posIdx - GRID_COLS)); }}
-                  onMoveDown={() => { if (posIdx + GRID_COLS <= pageOrder.length - 1) movePage(posIdx, Math.min(pageOrder.length - 1, posIdx + GRID_COLS)); }}
-                  onDragStart={onDragStartFactory(posIdx)}
-                  onDragOver={onDragOverFactory()}
-                  onDrop={onDropFactory(posIdx)}
-                />
-              );
-            })}
+            {pageOrder.map((pageIdx, posIdx) => (
+              <PageThumbnail
+                key={`${pageIdx}-${posIdx}`}
+                pageIndex={pageIdx}
+                thumbnailUrl={thumbnails[pageIdx]}
+                rotation={rotations.get(pageIdx) || 0}
+                selected={selectedPages.has(pageIdx)}
+                isFirst={posIdx === 0}
+                isLast={posIdx === pageOrder.length - 1}
+                canMoveUp={posIdx >= GRID_COLS}
+                canMoveDown={posIdx + GRID_COLS <= pageOrder.length - 1}
+                canRemove={pageOrder.length > 1}
+                onRotateLeft={() => rotatePage(pageIdx, -90)}
+                onRotateRight={() => rotatePage(pageIdx, 90)}
+                onRotate180={() => rotatePage(pageIdx, 180)}
+                onToggleSelect={() => togglePageSelect(pageIdx)}
+                onRemove={() => removePage(posIdx)}
+                onMoveLeft={() => { if (posIdx > 0) movePage(posIdx, posIdx - 1); }}
+                onMoveRight={() => { if (posIdx < pageOrder.length - 1) movePage(posIdx, posIdx + 1); }}
+                onMoveUp={() => { if (posIdx >= GRID_COLS) movePage(posIdx, Math.max(0, posIdx - GRID_COLS)); }}
+                onMoveDown={() => { if (posIdx + GRID_COLS <= pageOrder.length - 1) movePage(posIdx, Math.min(pageOrder.length - 1, posIdx + GRID_COLS)); }}
+                onDragStart={onDragStartFactory(posIdx)}
+                onDragOver={onDragOverFactory()}
+                onDrop={onDropFactory(posIdx)}
+              />
+            ))}
           </div>
+
+          {/* Removed pages section */}
+          {removedPages.length > 0 && (
+            <div className="pt-4 border-t border-slate-100">
+              <div className="flex items-center gap-2 mb-3">
+                <h3 className="text-sm font-semibold text-slate-500">Removed Pages</h3>
+                <span className="text-[10px] text-slate-400">{removedPages.length} page{removedPages.length !== 1 ? "s" : ""}</span>
+              </div>
+              <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2">
+                {removedPages.map((pageIdx) => (
+                  <RemovedPageThumb
+                    key={`removed-${pageIdx}`}
+                    pageIndex={pageIdx}
+                    thumbnailUrl={thumbnails[pageIdx]}
+                    rotation={rotations.get(pageIdx) || 0}
+                    onRestore={() => restorePage(pageIdx)}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Summary + action buttons */}
           <div className="pt-4 border-t border-slate-100">
             <div className="flex items-center justify-between mb-3">
               <div className="text-xs text-slate-500">
-                {includedCount} of {pageCount} page{pageCount !== 1 ? "s" : ""} included
+                {pageOrder.length} of {pageCount} page{pageCount !== 1 ? "s" : ""}
                 {rotatedPageCount > 0 && (
                   <span> &middot; {rotatedPageCount} rotated</span>
                 )}
-                {excludedPages.size > 0 && (
-                  <span className="text-slate-400"> &middot; {excludedPages.size} excluded</span>
+                {removedPages.length > 0 && (
+                  <span className="text-slate-400"> &middot; {removedPages.length} removed</span>
                 )}
               </div>
               <div className="text-xs text-slate-400">
@@ -723,7 +776,7 @@ export default function RotatePdfPage() {
 
             {!hasChanges && (
               <p className="mt-2 text-xs text-amber-600 text-center">
-                Make changes to download — rotate, reorder, or exclude pages.
+                Make changes to download — rotate, reorder, or remove pages.
               </p>
             )}
           </div>
@@ -789,7 +842,7 @@ export default function RotatePdfPage() {
             {
               step: "2",
               title: "Rotate & Arrange",
-              desc: "Rotate pages individually or in bulk, reorder with drag & drop or arrows, and exclude pages you don't need.",
+              desc: "Rotate pages individually or in bulk, reorder with drag & drop or arrows, and remove pages you don't need.",
             },
             {
               step: "3",

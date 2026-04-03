@@ -153,16 +153,18 @@ function FileCard({
   );
 }
 
-// ─── Page Thumbnail Card ───────────────────────────────────────────
+// ─── Page Thumbnail Card (Active Pages Only) ──────────────────────
 
 interface PageThumbProps {
   page: PageInfo;
-  index: number;
+  /** 0-based display index among active pages */
+  displayIndex: number;
   isFirst: boolean;
   isLast: boolean;
   canMoveUp: boolean;
   canMoveDown: boolean;
-  onToggleInclude: () => void;
+  canRemove: boolean;
+  onRemove: () => void;
   onMoveLeft: () => void;
   onMoveRight: () => void;
   onMoveUp: () => void;
@@ -174,12 +176,13 @@ interface PageThumbProps {
 
 function PageThumb({
   page,
-  index,
+  displayIndex,
   isFirst,
   isLast,
   canMoveUp,
   canMoveDown,
-  onToggleInclude,
+  canRemove,
+  onRemove,
   onMoveLeft,
   onMoveRight,
   onMoveUp,
@@ -210,15 +213,11 @@ function PageThumb({
   return (
     <div
       ref={observerRef}
-      draggable={page.included}
-      onDragStart={page.included ? onDragStart : undefined}
+      draggable
+      onDragStart={onDragStart}
       onDragOver={onDragOver}
       onDrop={onDrop}
-      className={`relative group rounded-lg border-2 transition-all ${
-        page.included
-          ? "border-slate-200 hover:border-slate-300 cursor-grab active:cursor-grabbing"
-          : "border-dashed border-slate-200 opacity-40 cursor-default"
-      }`}
+      className="relative group rounded-lg border-2 border-slate-200 hover:border-slate-300 cursor-grab active:cursor-grabbing transition-all"
     >
       {/* Thumbnail image */}
       <div className="relative w-full aspect-[3/4] bg-slate-50 rounded-t-md overflow-hidden">
@@ -238,93 +237,73 @@ function PageThumb({
         )}
 
         {/* Arrow controls — centered overlay on thumbnail */}
-        {page.included && (
-          <div className="absolute inset-0 flex items-center justify-center">
-            <div className="flex flex-col items-center gap-0.5">
-              {/* Up */}
+        <div className="absolute inset-0 flex items-center justify-center">
+          <div className="flex flex-col items-center gap-0.5">
+            {/* Up */}
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); onMoveUp(); }}
+              disabled={!canMoveUp}
+              className="p-1 rounded-full bg-white/80 text-slate-500 hover:bg-white hover:text-slate-900 disabled:opacity-25 disabled:cursor-not-allowed transition-all shadow-sm"
+              aria-label="Move up"
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                <polyline points="18 15 12 9 6 15" />
+              </svg>
+            </button>
+            {/* Left / Right row */}
+            <div className="flex items-center gap-3">
               <button
                 type="button"
-                onClick={(e) => { e.stopPropagation(); onMoveUp(); }}
-                disabled={!canMoveUp}
+                onClick={(e) => { e.stopPropagation(); onMoveLeft(); }}
+                disabled={isFirst}
                 className="p-1 rounded-full bg-white/80 text-slate-500 hover:bg-white hover:text-slate-900 disabled:opacity-25 disabled:cursor-not-allowed transition-all shadow-sm"
-                aria-label="Move up"
+                aria-label="Move left"
               >
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                  <polyline points="18 15 12 9 6 15" />
+                  <polyline points="15 18 9 12 15 6" />
                 </svg>
               </button>
-              {/* Left / Right row */}
-              <div className="flex items-center gap-3">
-                <button
-                  type="button"
-                  onClick={(e) => { e.stopPropagation(); onMoveLeft(); }}
-                  disabled={isFirst}
-                  className="p-1 rounded-full bg-white/80 text-slate-500 hover:bg-white hover:text-slate-900 disabled:opacity-25 disabled:cursor-not-allowed transition-all shadow-sm"
-                  aria-label="Move left"
-                >
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                    <polyline points="15 18 9 12 15 6" />
-                  </svg>
-                </button>
-                <button
-                  type="button"
-                  onClick={(e) => { e.stopPropagation(); onMoveRight(); }}
-                  disabled={isLast}
-                  className="p-1 rounded-full bg-white/80 text-slate-500 hover:bg-white hover:text-slate-900 disabled:opacity-25 disabled:cursor-not-allowed transition-all shadow-sm"
-                  aria-label="Move right"
-                >
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                    <polyline points="9 18 15 12 9 6" />
-                  </svg>
-                </button>
-              </div>
-              {/* Down */}
               <button
                 type="button"
-                onClick={(e) => { e.stopPropagation(); onMoveDown(); }}
-                disabled={!canMoveDown}
+                onClick={(e) => { e.stopPropagation(); onMoveRight(); }}
+                disabled={isLast}
                 className="p-1 rounded-full bg-white/80 text-slate-500 hover:bg-white hover:text-slate-900 disabled:opacity-25 disabled:cursor-not-allowed transition-all shadow-sm"
-                aria-label="Move down"
+                aria-label="Move right"
               >
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                  <polyline points="6 9 12 15 18 9" />
+                  <polyline points="9 18 15 12 9 6" />
                 </svg>
               </button>
             </div>
-          </div>
-        )}
-
-        {/* Exclude button — top right of thumbnail */}
-        {page.included && (
-          <button
-            type="button"
-            onClick={onToggleInclude}
-            className="absolute top-1.5 right-1.5 p-1 rounded-full bg-white/80 text-slate-400 hover:bg-white hover:text-red-500 transition-all shadow-sm"
-            aria-label="Exclude page"
-          >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-              <line x1="18" y1="6" x2="6" y2="18" />
-              <line x1="6" y1="6" x2="18" y2="18" />
-            </svg>
-          </button>
-        )}
-
-        {/* Excluded — restore button centered */}
-        {!page.included && (
-          <div className="absolute inset-0 flex items-center justify-center">
+            {/* Down */}
             <button
               type="button"
-              onClick={onToggleInclude}
-              className="p-2 rounded-full bg-white/90 text-slate-400 hover:text-emerald-500 transition-all shadow-sm"
-              aria-label="Include page"
+              onClick={(e) => { e.stopPropagation(); onMoveDown(); }}
+              disabled={!canMoveDown}
+              className="p-1 rounded-full bg-white/80 text-slate-500 hover:bg-white hover:text-slate-900 disabled:opacity-25 disabled:cursor-not-allowed transition-all shadow-sm"
+              aria-label="Move down"
             >
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                <line x1="12" y1="5" x2="12" y2="19" />
-                <line x1="5" y1="12" x2="19" y2="12" />
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                <polyline points="6 9 12 15 18 9" />
               </svg>
             </button>
           </div>
-        )}
+        </div>
+
+        {/* Remove button — top right of thumbnail */}
+        <button
+          type="button"
+          onClick={onRemove}
+          disabled={!canRemove}
+          className="absolute top-1.5 right-1.5 p-1 rounded-full bg-white/80 text-slate-400 hover:bg-white hover:text-red-500 disabled:opacity-25 disabled:cursor-not-allowed transition-all shadow-sm"
+          aria-label="Remove page"
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </button>
       </div>
 
       {/* Info bar */}
@@ -338,11 +317,63 @@ function PageThumb({
       </div>
 
       {/* Order number badge */}
-      {page.included && (
-        <div className="absolute top-1.5 left-1.5 w-5 h-5 rounded-full bg-slate-900/70 text-white text-[9px] font-bold flex items-center justify-center">
-          {index + 1}
-        </div>
-      )}
+      <div className="absolute top-1.5 left-1.5 w-5 h-5 rounded-full bg-slate-900/70 text-white text-[9px] font-bold flex items-center justify-center">
+        {displayIndex + 1}
+      </div>
+    </div>
+  );
+}
+
+// ─── Removed Page Thumbnail ───────────────────────────────────────
+
+interface RemovedPageThumbProps {
+  page: PageInfo;
+  onRestore: () => void;
+}
+
+function RemovedPageThumb({ page, onRestore }: RemovedPageThumbProps) {
+  return (
+    <div className="flex items-center gap-2 p-2 bg-white/60 border border-dashed border-slate-200 rounded-lg opacity-50 hover:opacity-75 transition-opacity">
+      {/* Small thumbnail */}
+      <div className="w-8 h-11 bg-slate-50 rounded border border-slate-100 shrink-0 overflow-hidden">
+        {page.thumbnailUrl ? (
+          <img
+            src={page.thumbnailUrl}
+            alt={page.pageLabel}
+            className="w-full h-full object-contain"
+          />
+        ) : (
+          <div className="w-full h-full flex items-center justify-center text-slate-300">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+              <polyline points="14 2 14 8 20 8" />
+            </svg>
+          </div>
+        )}
+      </div>
+
+      {/* Page info */}
+      <div className="flex-1 min-w-0">
+        <p className="text-[10px] font-medium text-slate-600 truncate">
+          Page {page.pageIndex + 1}
+        </p>
+        <span className={`inline-block px-1.5 py-0.5 text-[8px] font-medium rounded-full ${getFileColor(page.fileIndex)}`}>
+          {page.fileName.length > 15 ? page.fileName.slice(0, 13) + "..." : page.fileName}
+        </span>
+      </div>
+
+      {/* Restore button */}
+      <button
+        type="button"
+        onClick={onRestore}
+        className="p-1 rounded-full text-slate-400 hover:text-emerald-500 hover:bg-emerald-50 transition-all shrink-0"
+        aria-label="Restore page"
+      >
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+          <line x1="12" y1="5" x2="12" y2="19" />
+          <line x1="5" y1="12" x2="19" y2="12" />
+        </svg>
+      </button>
     </div>
   );
 }
@@ -378,6 +409,10 @@ export default function PdfMergePage() {
   // Derived: included page count
   const includedPageCount = useMemo(() => pages.filter((p) => p.included).length, [pages]);
 
+  // Derived: active and removed page lists for page view
+  const activePages = useMemo(() => pages.filter((p) => p.included), [pages]);
+  const removedPagesList = useMemo(() => pages.filter((p) => !p.included), [pages]);
+
   // Derived: pages ordered by file order (for file-level mode output)
   const pagesInFileOrder = useMemo(() => {
     const ordered: PageInfo[] = [];
@@ -388,6 +423,23 @@ export default function PdfMergePage() {
   }, [pages, fileOrder]);
 
   const canMerge = files.length >= 2 && includedPageCount >= 1;
+
+  // ─── Index mapping helpers ────────────────────────────────────────
+
+  /** Given an active-pages index, find the corresponding index in the full pages array */
+  const activeIdxToFullIdx = useCallback(
+    (activeIdx: number): number => {
+      let count = -1;
+      for (let i = 0; i < pages.length; i++) {
+        if (pages[i].included) {
+          count++;
+          if (count === activeIdx) return i;
+        }
+      }
+      return -1;
+    },
+    [pages]
+  );
 
   // ─── File handling ─────────────────────────────────────────────
 
@@ -462,24 +514,60 @@ export default function PdfMergePage() {
     [fileOrder]
   );
 
-  // ─── Page-level reorder ────────────────────────────────────────
+  // ─── Page-level reorder (operates on active-page indices) ──────
 
-  const movePage = useCallback(
-    (fromIdx: number, toIdx: number) => {
+  const moveActivePage = useCallback(
+    (fromActiveIdx: number, toActiveIdx: number) => {
       setPages((prev) => {
+        const fromFullIdx = (() => {
+          let count = -1;
+          for (let i = 0; i < prev.length; i++) {
+            if (prev[i].included) {
+              count++;
+              if (count === fromActiveIdx) return i;
+            }
+          }
+          return -1;
+        })();
+
+        const toFullIdx = (() => {
+          let count = -1;
+          for (let i = 0; i < prev.length; i++) {
+            if (prev[i].included) {
+              count++;
+              if (count === toActiveIdx) return i;
+            }
+          }
+          return -1;
+        })();
+
+        if (fromFullIdx < 0 || toFullIdx < 0) return prev;
+
         const next = [...prev];
-        const [moved] = next.splice(fromIdx, 1);
-        next.splice(toIdx, 0, moved);
+        const [moved] = next.splice(fromFullIdx, 1);
+        next.splice(toFullIdx, 0, moved);
         return next;
       });
     },
     []
   );
 
-  const togglePageInclude = useCallback((idx: number) => {
+  /** Remove a page (set included=false). The page stays in the pages array. */
+  const removePage = useCallback((fullIdx: number) => {
     setPages((prev) =>
-      prev.map((p, i) => (i === idx ? { ...p, included: !p.included } : p))
+      prev.map((p, i) => (i === fullIdx ? { ...p, included: false } : p))
     );
+  }, []);
+
+  /** Restore a removed page: set included=true and move it to the end of the pages array */
+  const restorePage = useCallback((fullIdx: number) => {
+    setPages((prev) => {
+      const next = [...prev];
+      const [restored] = next.splice(fullIdx, 1);
+      restored.included = true;
+      next.push(restored);
+      return next;
+    });
   }, []);
 
   // ─── Lazy thumbnail loading for page-level view ────────────────
@@ -588,11 +676,12 @@ export default function PdfMergePage() {
     dragIndexRef.current = -1;
   };
 
-  const onDropPageFactory = (dropIdx: number) => (e: React.DragEvent) => {
+  /** Drag-drop for page view — indices are active-page indices */
+  const onDropActivePageFactory = (dropActiveIdx: number) => (e: React.DragEvent) => {
     e.preventDefault();
-    const fromIdx = dragIndexRef.current;
-    if (fromIdx >= 0 && fromIdx !== dropIdx) {
-      movePage(fromIdx, dropIdx);
+    const fromActiveIdx = dragIndexRef.current;
+    if (fromActiveIdx >= 0 && fromActiveIdx !== dropActiveIdx) {
+      moveActivePage(fromActiveIdx, dropActiveIdx);
     }
     dragIndexRef.current = -1;
   };
@@ -698,27 +787,56 @@ export default function PdfMergePage() {
 
           {/* Page-level view */}
           {viewMode === "page" && (
-            <div className="grid grid-cols-3 gap-3">
-              {pages.map((page, idx) => (
-                <PageThumb
-                  key={`page-${page.fileIndex}-${page.pageIndex}-${idx}`}
-                  page={page}
-                  index={pages.slice(0, idx).filter((p) => p.included).length}
-                  isFirst={idx === 0}
-                  isLast={idx === pages.length - 1}
-                  canMoveUp={idx >= 3}
-                  canMoveDown={idx + 3 <= pages.length - 1}
-                  onToggleInclude={() => togglePageInclude(idx)}
-                  onMoveLeft={() => movePage(idx, idx - 1)}
-                  onMoveRight={() => movePage(idx, idx + 1)}
-                  onMoveUp={() => movePage(idx, Math.max(0, idx - 3))}
-                  onMoveDown={() => movePage(idx, Math.min(pages.length - 1, idx + 3))}
-                  onDragStart={onDragStartFactory(idx)}
-                  onDragOver={onDragOverFactory()}
-                  onDrop={onDropPageFactory(idx)}
-                />
-              ))}
-            </div>
+            <>
+              {/* Active pages grid */}
+              <div className="grid grid-cols-3 gap-3">
+                {activePages.map((page, activeIdx) => {
+                  const fullIdx = activeIdxToFullIdx(activeIdx);
+                  return (
+                    <PageThumb
+                      key={`page-${page.fileIndex}-${page.pageIndex}-${fullIdx}`}
+                      page={page}
+                      displayIndex={activeIdx}
+                      isFirst={activeIdx === 0}
+                      isLast={activeIdx === activePages.length - 1}
+                      canMoveUp={activeIdx >= 3}
+                      canMoveDown={activeIdx + 3 <= activePages.length - 1}
+                      canRemove={includedPageCount > 1}
+                      onRemove={() => removePage(fullIdx)}
+                      onMoveLeft={() => moveActivePage(activeIdx, activeIdx - 1)}
+                      onMoveRight={() => moveActivePage(activeIdx, activeIdx + 1)}
+                      onMoveUp={() => moveActivePage(activeIdx, Math.max(0, activeIdx - 3))}
+                      onMoveDown={() => moveActivePage(activeIdx, Math.min(activePages.length - 1, activeIdx + 3))}
+                      onDragStart={onDragStartFactory(activeIdx)}
+                      onDragOver={onDragOverFactory()}
+                      onDrop={onDropActivePageFactory(activeIdx)}
+                    />
+                  );
+                })}
+              </div>
+
+              {/* Removed pages section */}
+              {removedPagesList.length > 0 && (
+                <div className="mt-4 p-3 border border-dashed border-slate-200 rounded-xl bg-slate-50/50">
+                  <p className="text-xs font-medium text-slate-400 mb-2">
+                    Removed Pages ({removedPagesList.length})
+                  </p>
+                  <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2">
+                    {removedPagesList.map((page) => {
+                      // Find the full index of this removed page in the pages array
+                      const fullIdx = pages.indexOf(page);
+                      return (
+                        <RemovedPageThumb
+                          key={`removed-${page.fileIndex}-${page.pageIndex}-${fullIdx}`}
+                          page={page}
+                          onRestore={() => restorePage(fullIdx)}
+                        />
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </>
           )}
 
           {/* Summary + Merge button */}
