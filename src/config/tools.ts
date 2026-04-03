@@ -64,6 +64,19 @@ export const tools: ToolConfig[] = [
     isAvailable: true,
   },
   {
+    id: "pdf-insert-watermark",
+    name: "Insert PDF Watermark",
+    description:
+      "Add text or image watermark to PDF pages with customizable position, opacity, rotation, and mosaic pattern.",
+    category: "watermark",
+    icon: "Stamp",
+    route: "/tools/pdf-insert-watermark",
+    accentColor: "rose",
+    inputFormats: [".pdf"],
+    outputFormats: [".pdf"],
+    isAvailable: true,
+  },
+  {
     id: "pdf-watermark-remove",
     name: "Remove PDF Watermark",
     description:
@@ -336,7 +349,7 @@ export const SECTIONS: ToolSection[] = [
   },
   {
     label: "PDF Utilities",
-    toolIds: ["compress-pdf", "pdf-lock", "pdf-merge", "pdf-watermark-remove", "remove-page-pdf", "reorder-pdf", "rotate-pdf", "split-pdf"],
+    toolIds: ["compress-pdf", "pdf-insert-watermark", "pdf-lock", "pdf-merge", "pdf-watermark-remove", "remove-page-pdf", "reorder-pdf", "rotate-pdf", "split-pdf"],
   },
   {
     label: "PowerPoint",
@@ -348,7 +361,7 @@ export const SECTIONS: ToolSection[] = [
   },
   {
     label: "Watermark",
-    toolIds: ["image-watermark-remove", "pdf-watermark-remove"],
+    toolIds: ["image-watermark-remove", "pdf-insert-watermark", "pdf-watermark-remove"],
   },
   {
     label: "Word",
