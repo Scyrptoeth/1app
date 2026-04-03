@@ -44,15 +44,24 @@ function nextGroupId(): string {
   return `group-${++groupIdCounter}`;
 }
 
+// Grid columns constant for up/down arrow movement
+const GRID_COLS = 3;
+
 // ─── Page Thumbnail in a Group ─────────────────────────────────────
 
 interface PageThumbInGroupProps {
   pageIndex: number; // 0-based original page index
   thumbnailUrl?: string;
+  included: boolean;
   isFirst: boolean;
   isLast: boolean;
+  canMoveUp: boolean;
+  canMoveDown: boolean;
   onMoveLeft: () => void;
   onMoveRight: () => void;
+  onMoveUp: () => void;
+  onMoveDown: () => void;
+  onToggleInclude: () => void;
   onDragStart: (e: React.DragEvent) => void;
   onDragOver: (e: React.DragEvent) => void;
   onDrop: (e: React.DragEvent) => void;
@@ -61,10 +70,16 @@ interface PageThumbInGroupProps {
 function PageThumbInGroup({
   pageIndex,
   thumbnailUrl,
+  included,
   isFirst,
   isLast,
+  canMoveUp,
+  canMoveDown,
   onMoveLeft,
   onMoveRight,
+  onMoveUp,
+  onMoveDown,
+  onToggleInclude,
   onDragStart,
   onDragOver,
   onDrop,
@@ -91,11 +106,15 @@ function PageThumbInGroup({
   return (
     <div
       ref={observerRef}
-      draggable
-      onDragStart={onDragStart}
+      draggable={included}
+      onDragStart={included ? onDragStart : undefined}
       onDragOver={onDragOver}
       onDrop={onDrop}
-      className="relative group rounded-lg border-2 border-slate-200 hover:border-slate-300 transition-all cursor-grab active:cursor-grabbing"
+      className={`relative group rounded-lg border-2 transition-all ${
+        included
+          ? "border-slate-200 hover:border-slate-300 cursor-grab active:cursor-grabbing"
+          : "border-dashed border-slate-200 opacity-40 cursor-default"
+      }`}
     >
       {/* Thumbnail */}
       <div className="relative w-full aspect-[3/4] bg-slate-50 rounded-t-md overflow-hidden">
@@ -114,33 +133,94 @@ function PageThumbInGroup({
           </div>
         )}
 
-        {/* Reorder controls on hover */}
-        <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-          <div className="flex items-center gap-1">
+        {/* Arrow controls — centered overlay on thumbnail */}
+        {included && (
+          <div className="absolute inset-0 flex items-center justify-center">
+            <div className="flex flex-col items-center gap-0.5">
+              {/* Up */}
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); onMoveUp(); }}
+                disabled={!canMoveUp}
+                className="p-1 rounded-full bg-white/80 text-slate-500 hover:bg-white hover:text-slate-900 disabled:opacity-25 disabled:cursor-not-allowed transition-all shadow-sm"
+                aria-label="Move up"
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                  <polyline points="18 15 12 9 6 15" />
+                </svg>
+              </button>
+              {/* Left / Right row */}
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); onMoveLeft(); }}
+                  disabled={isFirst}
+                  className="p-1 rounded-full bg-white/80 text-slate-500 hover:bg-white hover:text-slate-900 disabled:opacity-25 disabled:cursor-not-allowed transition-all shadow-sm"
+                  aria-label="Move left"
+                >
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                    <polyline points="15 18 9 12 15 6" />
+                  </svg>
+                </button>
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); onMoveRight(); }}
+                  disabled={isLast}
+                  className="p-1 rounded-full bg-white/80 text-slate-500 hover:bg-white hover:text-slate-900 disabled:opacity-25 disabled:cursor-not-allowed transition-all shadow-sm"
+                  aria-label="Move right"
+                >
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                    <polyline points="9 18 15 12 9 6" />
+                  </svg>
+                </button>
+              </div>
+              {/* Down */}
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); onMoveDown(); }}
+                disabled={!canMoveDown}
+                className="p-1 rounded-full bg-white/80 text-slate-500 hover:bg-white hover:text-slate-900 disabled:opacity-25 disabled:cursor-not-allowed transition-all shadow-sm"
+                aria-label="Move down"
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                  <polyline points="6 9 12 15 18 9" />
+                </svg>
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Exclude button — top right of thumbnail */}
+        {included && (
+          <button
+            type="button"
+            onClick={onToggleInclude}
+            className="absolute top-1.5 right-1.5 p-1 rounded-full bg-white/80 text-slate-400 hover:bg-white hover:text-red-500 transition-all shadow-sm"
+            aria-label="Exclude page"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+              <line x1="18" y1="6" x2="6" y2="18" />
+              <line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
+          </button>
+        )}
+
+        {/* Excluded — restore button centered */}
+        {!included && (
+          <div className="absolute inset-0 flex items-center justify-center">
             <button
               type="button"
-              onClick={(e) => { e.stopPropagation(); onMoveLeft(); }}
-              disabled={isFirst}
-              className="p-1 rounded-full bg-white/80 text-slate-500 hover:bg-white hover:text-slate-900 disabled:opacity-25 disabled:cursor-not-allowed transition-all shadow-sm"
-              aria-label="Move left"
+              onClick={onToggleInclude}
+              className="p-2 rounded-full bg-white/90 text-slate-400 hover:text-emerald-500 transition-all shadow-sm"
+              aria-label="Include page"
             >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                <polyline points="15 18 9 12 15 6" />
-              </svg>
-            </button>
-            <button
-              type="button"
-              onClick={(e) => { e.stopPropagation(); onMoveRight(); }}
-              disabled={isLast}
-              className="p-1 rounded-full bg-white/80 text-slate-500 hover:bg-white hover:text-slate-900 disabled:opacity-25 disabled:cursor-not-allowed transition-all shadow-sm"
-              aria-label="Move right"
-            >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                <polyline points="9 18 15 12 9 6" />
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                <line x1="12" y1="5" x2="12" y2="19" />
+                <line x1="5" y1="12" x2="19" y2="12" />
               </svg>
             </button>
           </div>
-        </div>
+        )}
       </div>
 
       {/* Page number label */}
@@ -151,9 +231,11 @@ function PageThumbInGroup({
       </div>
 
       {/* Order badge */}
-      <div className="absolute top-1.5 left-1.5 w-5 h-5 rounded-full bg-slate-900/70 text-white text-[9px] font-bold flex items-center justify-center">
-        {pageIndex + 1}
-      </div>
+      {included && (
+        <div className="absolute top-1.5 left-1.5 w-5 h-5 rounded-full bg-slate-900/70 text-white text-[9px] font-bold flex items-center justify-center">
+          {pageIndex + 1}
+        </div>
+      )}
     </div>
   );
 }
@@ -172,6 +254,7 @@ export default function SplitPdfPage() {
   const [progress, setProgress] = useState<ProcessingUpdate>({ progress: 0, status: "" });
   const [result, setResult] = useState<SplitPdfResult | null>(null);
   const [loadingThumbnails, setLoadingThumbnails] = useState(false);
+  const [excludedPages, setExcludedPages] = useState<Set<number>>(new Set());
 
   const dragDataRef = useRef<{ pageIndex: number; fromGroupId: string } | null>(null);
 
@@ -192,7 +275,7 @@ export default function SplitPdfPage() {
       // Create default group with all pages
       const defaultGroup: SplitGroup = {
         id: nextGroupId(),
-        label: "Output 1",
+        label: "PDF 1",
         pageIndices: Array.from({ length: count }, (_, i) => i),
       };
       setGroups([defaultGroup]);
@@ -222,7 +305,7 @@ export default function SplitPdfPage() {
       ...prev,
       {
         id: nextGroupId(),
-        label: `Output ${prev.length + 1}`,
+        label: `PDF ${prev.length + 1}`,
         pageIndices: [],
       },
     ]);
@@ -289,6 +372,20 @@ export default function SplitPdfPage() {
     },
     []
   );
+
+  // ─── Exclude / Include pages ────────────────────────────────────
+
+  const togglePageInclude = useCallback((pageIndex: number) => {
+    setExcludedPages((prev) => {
+      const next = new Set(prev);
+      if (next.has(pageIndex)) {
+        next.delete(pageIndex);
+      } else {
+        next.add(pageIndex);
+      }
+      return next;
+    });
+  }, []);
 
   // ─── Drag and drop between groups ──────────────────────────────
 
@@ -365,17 +462,27 @@ export default function SplitPdfPage() {
 
   // ─── Split ────────────────────────────────────────────────────
 
-  const canSplit = groups.some((g) => g.pageIndices.length > 0);
+  const includedGroups = groups.map((g) => ({
+    ...g,
+    pageIndices: g.pageIndices.filter((pi) => !excludedPages.has(pi)),
+  }));
+  const canSplit = includedGroups.some((g) => g.pageIndices.length > 0);
 
   const handleSplit = useCallback(async () => {
     if (!file || !canSplit) return;
 
     setStage("processing");
 
+    // Filter out excluded pages from each group before splitting
+    const filteredGroups = groups.map((g) => ({
+      ...g,
+      pageIndices: g.pageIndices.filter((pi) => !excludedPages.has(pi)),
+    }));
+
     try {
       const splitResult = await splitPdf({
         file,
-        groups,
+        groups: filteredGroups,
         onProgress: (update) => setProgress(update),
       });
       setResult(splitResult);
@@ -416,6 +523,7 @@ export default function SplitPdfPage() {
     setPageCount(0);
     setThumbnails({});
     setGroups([]);
+    setExcludedPages(new Set());
     setEditingLabelId(null);
     setProgress({ progress: 0, status: "" });
     setResult(null);
@@ -509,7 +617,10 @@ export default function SplitPdfPage() {
                         </button>
                       )}
                       <span className="text-xs opacity-60">
-                        {group.pageIndices.length} page{group.pageIndices.length !== 1 ? "s" : ""}
+                        {group.pageIndices.filter((pi) => !excludedPages.has(pi)).length} page{group.pageIndices.filter((pi) => !excludedPages.has(pi)).length !== 1 ? "s" : ""}
+                        {group.pageIndices.some((pi) => excludedPages.has(pi)) && (
+                          <span className="opacity-60"> ({group.pageIndices.filter((pi) => excludedPages.has(pi)).length} excluded)</span>
+                        )}
                       </span>
                     </div>
 
@@ -536,26 +647,41 @@ export default function SplitPdfPage() {
                         Drag pages here
                       </div>
                     ) : (
-                      <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2">
-                        {group.pageIndices.map((pageIdx, posIdx) => (
-                          <PageThumbInGroup
-                            key={`${group.id}-${pageIdx}`}
-                            pageIndex={pageIdx}
-                            thumbnailUrl={thumbnails[pageIdx]}
-                            isFirst={posIdx === 0}
-                            isLast={posIdx === group.pageIndices.length - 1}
-                            onMoveLeft={() => {
-                              if (posIdx > 0) movePageWithinGroup(group.id, posIdx, posIdx - 1);
-                            }}
-                            onMoveRight={() => {
-                              if (posIdx < group.pageIndices.length - 1)
-                                movePageWithinGroup(group.id, posIdx, posIdx + 1);
-                            }}
-                            onDragStart={onPageDragStart(pageIdx, group.id)}
-                            onDragOver={onPageDragOverInGroup()}
-                            onDrop={onPageDropInGroup(group.id, posIdx)}
-                          />
-                        ))}
+                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                        {group.pageIndices.map((pageIdx, posIdx) => {
+                          const isIncluded = !excludedPages.has(pageIdx);
+                          return (
+                            <PageThumbInGroup
+                              key={`${group.id}-${pageIdx}`}
+                              pageIndex={pageIdx}
+                              thumbnailUrl={thumbnails[pageIdx]}
+                              included={isIncluded}
+                              isFirst={posIdx === 0}
+                              isLast={posIdx === group.pageIndices.length - 1}
+                              canMoveUp={posIdx >= GRID_COLS}
+                              canMoveDown={posIdx + GRID_COLS <= group.pageIndices.length - 1}
+                              onMoveLeft={() => {
+                                if (posIdx > 0) movePageWithinGroup(group.id, posIdx, posIdx - 1);
+                              }}
+                              onMoveRight={() => {
+                                if (posIdx < group.pageIndices.length - 1)
+                                  movePageWithinGroup(group.id, posIdx, posIdx + 1);
+                              }}
+                              onMoveUp={() => {
+                                if (posIdx >= GRID_COLS)
+                                  movePageWithinGroup(group.id, posIdx, Math.max(0, posIdx - GRID_COLS));
+                              }}
+                              onMoveDown={() => {
+                                if (posIdx + GRID_COLS <= group.pageIndices.length - 1)
+                                  movePageWithinGroup(group.id, posIdx, Math.min(group.pageIndices.length - 1, posIdx + GRID_COLS));
+                              }}
+                              onToggleInclude={() => togglePageInclude(pageIdx)}
+                              onDragStart={onPageDragStart(pageIdx, group.id)}
+                              onDragOver={onPageDragOverInGroup()}
+                              onDrop={onPageDropInGroup(group.id, posIdx)}
+                            />
+                          );
+                        })}
                       </div>
                     )}
 
@@ -608,15 +734,18 @@ export default function SplitPdfPage() {
               <line x1="12" y1="5" x2="12" y2="19" />
               <line x1="5" y1="12" x2="19" y2="12" />
             </svg>
-            Add output group
+            Add PDF group
           </button>
 
           {/* Summary + Split button */}
           <div className="pt-4 border-t border-slate-100">
             <div className="flex items-center justify-between mb-3">
               <div className="text-xs text-slate-500">
-                {groups.filter((g) => g.pageIndices.length > 0).length} output file{groups.filter((g) => g.pageIndices.length > 0).length !== 1 ? "s" : ""} &middot;{" "}
-                {groups.reduce((sum, g) => sum + g.pageIndices.length, 0)} pages total
+                {includedGroups.filter((g) => g.pageIndices.length > 0).length} PDF file{includedGroups.filter((g) => g.pageIndices.length > 0).length !== 1 ? "s" : ""} &middot;{" "}
+                {includedGroups.reduce((sum, g) => sum + g.pageIndices.length, 0)} pages
+                {excludedPages.size > 0 && (
+                  <span className="text-slate-400"> ({excludedPages.size} excluded)</span>
+                )}
               </div>
               <div className="text-xs text-slate-400">
                 {file ? formatFileSize(file.size) : ""}
@@ -641,9 +770,9 @@ export default function SplitPdfPage() {
               </button>
             </div>
 
-            {groups.filter((g) => g.pageIndices.length > 0).length < 2 && (
+            {includedGroups.filter((g) => g.pageIndices.length > 0).length < 2 && (
               <p className="mt-2 text-xs text-amber-600 text-center">
-                Create at least 2 groups with pages to split the PDF.
+                Create at least 2 PDF groups with pages to split.
               </p>
             )}
           </div>
