@@ -1,8 +1,10 @@
 /**
  * PDF Rotator
  *
- * Rotates PDF pages using pdf-lib's setRotation() — a lossless operation
- * that only modifies rotation metadata without re-encoding page content.
+ * Rotates and reorders PDF pages using pdf-lib — a lossless operation.
+ * Rotation uses setRotation() (only modifies rotation metadata).
+ * Reordering uses copyPages() (copies page structure as-is).
+ * No re-rendering or re-encoding occurs — quality is fully preserved.
  */
 
 import { renderPageThumbnail, getPdfPageCount } from "./pdf-splitter";
@@ -22,16 +24,18 @@ export interface RotatePdfResult {
 }
 
 /**
- * Apply rotation to PDF pages.
- * Uses pdf-lib page.setRotation(degrees()) — lossless, only changes rotation metadata.
- * Quality is fully preserved: no re-rendering or re-encoding occurs.
+ * Apply rotation and reordering to PDF pages.
+ * Uses copyPages() to build a new PDF in the desired page order,
+ * then applies rotation via setRotation() on each copied page.
  *
  * @param file - Source PDF file
- * @param rotations - Map of pageIndex (0-based) to rotation degrees (90, 180, 270)
+ * @param pageOrder - Ordered list of page indices (0-based) to include in output
+ * @param rotations - Map of original pageIndex to rotation degrees (90, 180, 270)
  * @param onProgress - Progress callback for UI
  */
 export async function rotatePdf(
   file: File,
+  pageOrder: number[],
   rotations: Map<number, number>,
   onProgress: (update: ProcessingUpdate) => void
 ): Promise<RotatePdfResult> {
@@ -40,39 +44,43 @@ export async function rotatePdf(
   const { PDFDocument, degrees } = await import("pdf-lib");
 
   const arrayBuffer = await file.arrayBuffer();
-  const pdfDoc = await PDFDocument.load(arrayBuffer, { ignoreEncryption: true });
-  const pages = pdfDoc.getPages();
-  const pageCount = pages.length;
+  const srcDoc = await PDFDocument.load(arrayBuffer, { ignoreEncryption: true });
 
   onProgress({
-    progress: 30,
-    status: `Rotating ${pageCount} page${pageCount > 1 ? "s" : ""}...`,
+    progress: 25,
+    status: `Processing ${pageOrder.length} page${pageOrder.length > 1 ? "s" : ""}...`,
   });
 
-  for (let i = 0; i < pageCount; i++) {
-    const userRotation = rotations.get(i) || 0;
+  const newDoc = await PDFDocument.create();
+
+  for (let i = 0; i < pageOrder.length; i++) {
+    const srcIndex = pageOrder[i];
+    const [copiedPage] = await newDoc.copyPages(srcDoc, [srcIndex]);
+
+    const userRotation = rotations.get(srcIndex) || 0;
     if (userRotation !== 0) {
-      const page = pages[i];
-      const currentAngle = page.getRotation().angle;
+      const currentAngle = copiedPage.getRotation().angle;
       const newAngle = ((currentAngle + userRotation) % 360 + 360) % 360;
-      page.setRotation(degrees(newAngle));
+      copiedPage.setRotation(degrees(newAngle));
     }
 
+    newDoc.addPage(copiedPage);
+
     onProgress({
-      progress: 30 + ((i + 1) / pageCount) * 50,
-      status: `Rotating... page ${i + 1}/${pageCount}`,
+      progress: 25 + ((i + 1) / pageOrder.length) * 55,
+      status: `Processing... page ${i + 1}/${pageOrder.length}`,
     });
   }
 
   onProgress({ progress: 85, status: "Saving PDF..." });
-  const pdfBytes = await pdfDoc.save();
+  const pdfBytes = await newDoc.save();
   const blob = new Blob([pdfBytes], { type: "application/pdf" });
 
   onProgress({ progress: 100, status: "Complete!" });
 
   return {
     blob,
-    pageCount,
+    pageCount: pageOrder.length,
     originalSize: file.size,
     processedSize: blob.size,
   };
