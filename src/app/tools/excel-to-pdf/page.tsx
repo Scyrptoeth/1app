@@ -94,7 +94,7 @@ export default function ExcelToPdfPage() {
             multiple={false}
             onFilesSelected={handleFilesSelected}
             title="Select an Excel file to convert to PDF"
-            subtitle="Supports .xlsx files up to 50 MB"
+            subtitle="Supports .xlsx and .xls files up to 50 MB"
           />
 
           <div className="mt-4 flex items-start gap-3 p-3 bg-amber-50 border border-amber-100 rounded-xl">
@@ -104,8 +104,8 @@ export default function ExcelToPdfPage() {
               <line x1="12" y1="17" x2="12.01" y2="17" />
             </svg>
             <p className="text-xs text-amber-700 leading-relaxed">
-              <strong>.xlsx (Excel 2007+)</strong> is the recommended format. The legacy <strong>.xls</strong> format
-              has limited support. If you have a .xls file, open it in Excel or LibreOffice and re-save as .xlsx first.
+              <strong>.xlsx (Excel 2007+)</strong> preserves full styling — colors, borders, fonts, images.
+              Legacy <strong>.xls</strong> files are supported with data and formatting, but visual styles may be limited.
             </p>
           </div>
         </>

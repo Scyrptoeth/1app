@@ -2,9 +2,11 @@
 // Excel to PDF Converter — Client-Side
 //
 // Pipeline:
-//   1. ExcelJS        → read .xlsx, extract cells, styles, merges
-//   2. Format/Resolve → apply number formats, resolve theme colors
-//   3. jspdf-autotable → render styled tables with auto-fit & pagination
+//   1. ExcelJS (.xlsx) or SheetJS (.xls) → read file
+//   2. Extract cells, styles, merges, images
+//   3. Format values, resolve theme colors
+//   4. jspdf-autotable → render styled tables with auto-fit & pagination
+//   5. Overlay embedded images via didDrawCell hook
 //
 // Output: vector-text PDF (searchable, selectable, printable)
 // ============================================================================
@@ -38,6 +40,15 @@ async function getExcelJS() {
   const mod = await import("exceljs");
   _ExcelJS = mod.default || mod;
   return _ExcelJS;
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let _XLSX: any = null;
+async function getXLSX() {
+  if (_XLSX) return _XLSX;
+  const mod = await import("xlsx");
+  _XLSX = mod;
+  return _XLSX;
 }
 
 // ---------------------------------------------------------------------------
@@ -86,6 +97,15 @@ interface CellData {
   isMergedSlave: boolean;
 }
 
+interface EmbeddedImage {
+  dataUrl: string;     // base64 data URL for jsPDF
+  format: string;      // 'PNG' | 'JPEG'
+  tlRow: number;       // top-left row (0-indexed)
+  tlCol: number;       // top-left col (0-indexed)
+  brRow: number;       // bottom-right row (0-indexed)
+  brCol: number;       // bottom-right col (0-indexed)
+}
+
 interface SheetData {
   name: string;
   rows: CellData[][];
@@ -95,6 +115,7 @@ interface SheetData {
   headerRowIndex: number | null;
   colCount: number;
   rowCount: number;
+  images: EmbeddedImage[];
 }
 
 // ---------------------------------------------------------------------------
@@ -184,58 +205,175 @@ function resolveColor(color: any): [number, number, number] | null {
     return hexToRgb(INDEXED_COLORS[color.indexed]);
   }
 
+  // Direct RGB string (e.g., 'FF0000' — from SheetJS)
+  if (color.rgb && typeof color.rgb === "string" && /^[0-9A-Fa-f]{6}$/.test(color.rgb)) {
+    return hexToRgb(color.rgb);
+  }
+
   return null;
 }
 
 // ---------------------------------------------------------------------------
-// Number & date formatting
+// Image helpers
+// ---------------------------------------------------------------------------
+
+function bufferToBase64(buffer: ArrayBuffer | Uint8Array): string {
+  const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
+  let binary = "";
+  for (let i = 0; i < bytes.length; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary);
+}
+
+function imgExtToFormat(ext: string): string {
+  const e = ext.toLowerCase().replace(".", "");
+  if (e === "jpg" || e === "jpeg") return "JPEG";
+  if (e === "png") return "PNG";
+  if (e === "gif") return "GIF";
+  return "PNG"; // fallback
+}
+
+// ---------------------------------------------------------------------------
+// Number & date formatting (comprehensive)
 // ---------------------------------------------------------------------------
 
 function formatNumber(value: number, numFmt: string): string {
   if (!numFmt || numFmt === "General") {
-    // Avoid floating-point noise for "whole" numbers stored as float
     if (Number.isInteger(value)) return String(value);
     return String(parseFloat(value.toPrecision(10)));
   }
 
-  // Percentage: 0%, 0.00%, #.##%, etc.
-  if (numFmt.includes("%")) {
+  // Handle multi-section formats: positive;negative;zero;text
+  // Use the appropriate section based on value sign
+  const sections = numFmt.split(";");
+  let fmt = sections[0]; // positive/default
+  if (value < 0 && sections.length >= 2) {
+    fmt = sections[1];
+    value = Math.abs(value); // section handles the sign
+  } else if (value === 0 && sections.length >= 3) {
+    fmt = sections[2];
+  }
+
+  // Strip color codes: [Red], [Blue], [Color15], etc.
+  fmt = fmt.replace(/\[(?:Red|Blue|Green|Yellow|Magenta|Cyan|White|Black|Color\d+)\]/gi, "");
+
+  // Strip condition brackets: [>100], [<=0], etc.
+  fmt = fmt.replace(/\[(?:>|<|>=|<=|=|<>)\d+(?:\.\d+)?\]/g, "");
+
+  // Percentage: 0%, 0.00%, etc.
+  if (fmt.includes("%")) {
     const pct = value * 100;
-    const decMatch = numFmt.match(/0\.(0+)%/);
+    const decMatch = fmt.match(/0\.(0+)%/);
     const decimals = decMatch ? decMatch[1].length : 0;
     return `${pct.toFixed(decimals)}%`;
   }
 
-  // Thousands separator: #,##0 or #,##0.00 etc.
-  if (numFmt.includes("#,##0") || numFmt.includes("#,###")) {
+  // Scientific notation: 0.00E+00
+  if (/[eE][+-]/.test(fmt)) {
+    const decMatch = fmt.match(/0\.(0+)[eE]/);
+    const decimals = decMatch ? decMatch[1].length : 2;
+    return value.toExponential(decimals).toUpperCase();
+  }
+
+  // Currency/accounting with symbol: $#,##0.00 or [$Rp-421]#,##0
+  const currencyMatch = fmt.match(/(\$|£|€|¥|Rp|IDR|USD|[\$][^\]]*]?)/);
+  const currencySymbol = currencyMatch ? currencyMatch[1].replace(/[\[\]$]/g, "").trim() || "$" : "";
+
+  // Thousands separator: #,##0 or variants
+  if (fmt.includes("#,##0") || fmt.includes("#,###") || fmt.includes("0,0")) {
     const isNeg = value < 0;
     const abs = Math.abs(value);
-    const decMatch = numFmt.match(/#,##0\.(0+)/);
+    const decMatch = fmt.match(/0\.(0+)/);
     const decimals = decMatch ? decMatch[1].length : 0;
     const fixed = abs.toFixed(decimals);
     const [intPart, decPart] = fixed.split(".");
     const withSep = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
     let result = decPart ? `${withSep}.${decPart}` : withSep;
+
+    // Wrap in parentheses or minus for negatives
     if (isNeg) {
-      result = numFmt.includes("(") ? `(${result})` : `-${result}`;
+      result = fmt.includes("(") || fmt.includes(")") ? `(${result})` : `-${result}`;
     }
+
+    // Add currency symbol
+    if (currencySymbol) {
+      // Check if symbol goes before or after: format "$#" vs "#$"
+      const symIdx = fmt.indexOf(currencySymbol.charAt(0));
+      const hashIdx = fmt.indexOf("#");
+      const zeroIdx = fmt.indexOf("0");
+      const numIdx = Math.min(hashIdx >= 0 ? hashIdx : 999, zeroIdx >= 0 ? zeroIdx : 999);
+      if (symIdx < numIdx) {
+        result = `${currencySymbol}${result}`;
+      } else {
+        result = `${result} ${currencySymbol}`;
+      }
+    }
+
     return result;
   }
 
+  // Fraction: # ?/? or # ??/??
+  if (fmt.includes("?/")) {
+    const whole = Math.floor(Math.abs(value));
+    const frac = Math.abs(value) - whole;
+    if (frac === 0) return String(value < 0 ? -whole : whole);
+    // Simple fraction approximation
+    const denom = fmt.includes("??/") ? 100 : 10;
+    const num = Math.round(frac * denom);
+    const sign = value < 0 ? "-" : "";
+    return whole > 0 ? `${sign}${whole} ${num}/${denom}` : `${sign}${num}/${denom}`;
+  }
+
   // Fixed decimal: 0.00, 0.0, etc.
-  const fixedMatch = numFmt.match(/^0\.(0+)$/);
+  const fixedMatch = fmt.match(/^0\.(0+)$/);
   if (fixedMatch) return value.toFixed(fixedMatch[1].length);
+
+  // Plain 0 format
+  if (fmt.trim() === "0") return Math.round(value).toString();
 
   // Fallback
   if (Number.isInteger(value)) return String(value);
   return String(parseFloat(value.toPrecision(10)));
 }
 
-function formatDate(date: Date): string {
-  const d = date.getDate().toString().padStart(2, "0");
-  const m = (date.getMonth() + 1).toString().padStart(2, "0");
-  const y = date.getFullYear();
-  return `${m}/${d}/${y}`;
+function formatDate(date: Date, numFmt?: string): string {
+  const day = date.getDate();
+  const month = date.getMonth(); // 0-indexed
+  const year = date.getFullYear();
+  const dd = String(day).padStart(2, "0");
+  const mm = String(month + 1).padStart(2, "0");
+  const yy = String(year).slice(-2);
+  const yyyy = String(year);
+  const months3 = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+  if (!numFmt) return `${mm}/${dd}/${yyyy}`;
+
+  const f = numFmt.toLowerCase();
+
+  // yyyy-mm-dd
+  if (f.includes("yyyy") && f.includes("mm") && f.includes("dd") && f.includes("-")) {
+    return `${yyyy}-${mm}-${dd}`;
+  }
+  // dd/mm/yyyy
+  if (f.startsWith("d") && f.includes("/")) {
+    return `${dd}/${mm}/${yyyy}`;
+  }
+  // d-mmm-yy or dd-mmm-yy
+  if (f.includes("mmm") && f.includes("-")) {
+    return `${day}-${months3[month]}-${yy}`;
+  }
+  // mmm-yy
+  if (f.includes("mmm") && !f.includes("d")) {
+    return `${months3[month]}-${yy}`;
+  }
+  // m/d/yy or m/d/yyyy
+  if (f.includes("m") && f.includes("d") && f.includes("/")) {
+    return f.includes("yyyy") ? `${month + 1}/${day}/${yyyy}` : `${month + 1}/${day}/${yy}`;
+  }
+
+  // Default
+  return `${mm}/${dd}/${yyyy}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -264,7 +402,7 @@ function getCellText(cell: any): string {
       return ERROR_STRINGS[code] || "#ERROR!";
     }
     if (typeof result === "number") return formatNumber(result, numFmt);
-    if (result instanceof Date) return formatDate(result);
+    if (result instanceof Date) return formatDate(result, numFmt);
     return String(result);
   }
 
@@ -274,7 +412,7 @@ function getCellText(cell: any): string {
     return value.richText.map((rt: any) => rt.text || "").join("");
   }
 
-  if (value instanceof Date) return formatDate(value);
+  if (value instanceof Date) return formatDate(value, numFmt);
   if (typeof value === "number") return formatNumber(value, numFmt);
   if (typeof value === "boolean") return value ? "TRUE" : "FALSE";
   return String(value);
@@ -311,11 +449,11 @@ function colToNum(letters: string): number {
 }
 
 // ---------------------------------------------------------------------------
-// Extract all data from one worksheet
+// Extract data from one ExcelJS worksheet (.xlsx)
 // ---------------------------------------------------------------------------
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function extractSheet(ws: any): SheetData | null {
+function extractSheet(ws: any, wb: any): SheetData | null {
   // 1. Find used range
   let maxRow = 0;
   let maxCol = 0;
@@ -383,7 +521,6 @@ function extractSheet(ws: any): SheetData | null {
     for (let c = 1; c <= maxCol; c++) {
       const mi = mergeMap.get(`${r},${c}`);
 
-      // Slave cell inside a merge — placeholder
       if (mi && !mi.master) {
         cells.push(emptyCellData(true));
         continue;
@@ -396,31 +533,25 @@ function extractSheet(ws: any): SheetData | null {
       const border = st.border || {};
       const align = st.alignment || {};
 
-      // Background
       let fillColor: [number, number, number] | null = null;
       if (fill.type === "pattern" && fill.fgColor) {
         fillColor = resolveColor(fill.fgColor);
       }
 
-      // Text color
       const textColor = resolveColor(font.color);
 
-      // Font style
       const b = !!font.bold, it = !!font.italic;
       const fontStyle: CellData["fontStyle"] =
         b && it ? "bolditalic" : b ? "bold" : it ? "italic" : "normal";
 
-      // Font size
       const fontSize = font.size || 11;
 
-      // Alignment — numbers default to right, text to left
       let halign: CellData["halign"] = "left";
       if (align.horizontal === "center" || align.horizontal === "centerContinuous") {
         halign = "center";
       } else if (align.horizontal === "right") {
         halign = "right";
       } else if (!align.horizontal) {
-        // Auto: numbers right, text left
         const v = cell.value;
         if (
           typeof v === "number" ||
@@ -434,12 +565,6 @@ function extractSheet(ws: any): SheetData | null {
       if (align.vertical === "top") valign = "top";
       else if (align.vertical === "bottom") valign = "bottom";
 
-      // Borders
-      const bT = borderWidth(border.top?.style);
-      const bB = borderWidth(border.bottom?.style);
-      const bL = borderWidth(border.left?.style);
-      const bR = borderWidth(border.right?.style);
-
       cells.push({
         value: getCellText(cell),
         colSpan: mi?.colSpan || 1,
@@ -450,10 +575,10 @@ function extractSheet(ws: any): SheetData | null {
         fontSize,
         halign,
         valign,
-        borderTop: bT,
-        borderBottom: bB,
-        borderLeft: bL,
-        borderRight: bR,
+        borderTop: borderWidth(border.top?.style),
+        borderBottom: borderWidth(border.bottom?.style),
+        borderLeft: borderWidth(border.left?.style),
+        borderRight: borderWidth(border.right?.style),
         borderColorTop: resolveColor(border.top?.color),
         borderColorBottom: resolveColor(border.bottom?.color),
         borderColorLeft: resolveColor(border.left?.color),
@@ -464,15 +589,43 @@ function extractSheet(ws: any): SheetData | null {
     rows.push(cells);
   }
 
-  // 5. Page orientation from page setup
+  // 5. Extract embedded images
+  const images: EmbeddedImage[] = [];
+  try {
+    const wsImages = ws.getImages?.() || [];
+    for (const img of wsImages) {
+      const imgData = wb.getImage?.(img.imageId);
+      if (!imgData?.buffer) continue;
+
+      const ext = imgExtToFormat(imgData.extension || "png");
+      const b64 = bufferToBase64(imgData.buffer);
+      const dataUrl = `data:image/${ext.toLowerCase()};base64,${b64}`;
+
+      const range = img.range || {};
+      const tl = range.tl || {};
+      const br = range.br || {};
+
+      images.push({
+        dataUrl,
+        format: ext,
+        tlRow: tl.nativeRow ?? tl.row ?? 0,
+        tlCol: tl.nativeCol ?? tl.col ?? 0,
+        brRow: br.nativeRow ?? br.row ?? (tl.nativeRow ?? tl.row ?? 0) + 5,
+        brCol: br.nativeCol ?? br.col ?? (tl.nativeCol ?? tl.col ?? 0) + 3,
+      });
+    }
+  } catch {
+    // Image extraction failed — continue without images
+  }
+
+  // 6. Page orientation
   const ps = ws.pageSetup || {};
   const orientation: "portrait" | "landscape" =
     ps.orientation === "landscape" ? "landscape" : "portrait";
 
-  // 6. Detect header row — first row (in top 5) with ≥2 background-colored cells
+  // 7. Detect header row
   let headerRowIndex: number | null = null;
 
-  // Try print titles first
   if (ps.printTitlesRow) {
     const pMatch = String(ps.printTitlesRow).match(/(\d+)/);
     if (pMatch) headerRowIndex = parseInt(pMatch[1]) - 1;
@@ -480,12 +633,8 @@ function extractSheet(ws: any): SheetData | null {
 
   if (headerRowIndex === null) {
     for (let i = 0; i < Math.min(5, rows.length); i++) {
-      const colored = rows[i].filter(
-        (c) => c.fillColor && !c.isMergedSlave
-      ).length;
-      const withData = rows[i].filter(
-        (c) => c.value.trim() !== "" && !c.isMergedSlave
-      ).length;
+      const colored = rows[i].filter((c) => c.fillColor && !c.isMergedSlave).length;
+      const withData = rows[i].filter((c) => c.value.trim() !== "" && !c.isMergedSlave).length;
       if (colored >= 2 && withData >= 2) {
         headerRowIndex = i;
         break;
@@ -502,6 +651,142 @@ function extractSheet(ws: any): SheetData | null {
     headerRowIndex,
     colCount: maxCol,
     rowCount: maxRow,
+    images,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Extract data from one SheetJS worksheet (.xls legacy)
+// SheetJS community edition: values + formatted text, limited styles
+// ---------------------------------------------------------------------------
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function extractSheetFromXls(sheetName: string, sheet: any, XLSX: any): SheetData | null {
+  const ref = sheet["!ref"];
+  if (!ref) return null;
+
+  const range = XLSX.utils.decode_range(ref);
+  const maxRow = range.e.r + 1; // 1-indexed
+  const maxCol = range.e.c + 1;
+
+  if (maxRow === 0 || maxCol === 0) return null;
+
+  // Merge map from SheetJS
+  const mergeMap = new Map<
+    string,
+    { master: boolean; rowSpan: number; colSpan: number }
+  >();
+
+  const xlsMerges: Array<{ s: { r: number; c: number }; e: { r: number; c: number } }> = sheet["!merges"] || [];
+  for (const m of xlsMerges) {
+    const sr = m.s.r + 1, sc = m.s.c + 1;
+    const er = m.e.r + 1, ec = m.e.c + 1;
+    mergeMap.set(`${sr},${sc}`, { master: true, rowSpan: er - sr + 1, colSpan: ec - sc + 1 });
+    for (let r = sr; r <= er; r++) {
+      for (let c = sc; c <= ec; c++) {
+        if (r === sr && c === sc) continue;
+        mergeMap.set(`${r},${c}`, { master: false, rowSpan: 0, colSpan: 0 });
+      }
+    }
+  }
+
+  // Column widths from SheetJS
+  const colWidths: number[] = [];
+  const colInfo: Array<{ wch?: number; wpx?: number }> = sheet["!cols"] || [];
+  for (let c = 0; c < maxCol; c++) {
+    const ci = colInfo[c];
+    const w = ci?.wch ?? ci?.wpx ? (ci.wpx! * 0.75) : 8.43 * PAGE.EXCEL_CHAR_PT;
+    colWidths.push(ci?.wch ? ci.wch * PAGE.EXCEL_CHAR_PT : w);
+  }
+
+  // Row heights
+  const rowHeights: number[] = [];
+  const rowInfo: Array<{ hpt?: number; hpx?: number }> = sheet["!rows"] || [];
+
+  // Extract rows
+  const rows: CellData[][] = [];
+
+  for (let r = 0; r < maxRow; r++) {
+    const ri = rowInfo[r];
+    rowHeights.push(ri?.hpt ?? ri?.hpx ? (ri.hpx! * 0.75) : PAGE.DEFAULT_ROW_H * 0.75);
+
+    const cells: CellData[] = [];
+    for (let c = 0; c < maxCol; c++) {
+      const mi = mergeMap.get(`${r + 1},${c + 1}`);
+
+      if (mi && !mi.master) {
+        cells.push(emptyCellData(true));
+        continue;
+      }
+
+      const addr = XLSX.utils.encode_cell({ r, c });
+      const cell = sheet[addr];
+
+      if (!cell) {
+        const cd = emptyCellData(false);
+        cd.colSpan = mi?.colSpan || 1;
+        cd.rowSpan = mi?.rowSpan || 1;
+        cells.push(cd);
+        continue;
+      }
+
+      // Use formatted text (cell.w) if available, else raw value
+      let value = "";
+      if (cell.w !== undefined) {
+        value = cell.w;
+      } else if (cell.v !== undefined) {
+        value = String(cell.v);
+      }
+
+      // Detect number alignment
+      const isNumber = cell.t === "n";
+      const halign: CellData["halign"] = isNumber ? "right" : "left";
+
+      cells.push({
+        value,
+        colSpan: mi?.colSpan || 1,
+        rowSpan: mi?.rowSpan || 1,
+        fillColor: null,      // SheetJS community: no style support
+        textColor: null,
+        fontStyle: "normal",
+        fontSize: 11,
+        halign,
+        valign: "middle",
+        borderTop: 0,
+        borderBottom: 0,
+        borderLeft: 0,
+        borderRight: 0,
+        borderColorTop: null,
+        borderColorBottom: null,
+        borderColorLeft: null,
+        borderColorRight: null,
+        isMergedSlave: false,
+      });
+    }
+    rows.push(cells);
+  }
+
+  // Detect header row
+  let headerRowIndex: number | null = null;
+  for (let i = 0; i < Math.min(5, rows.length); i++) {
+    const withData = rows[i].filter((c) => c.value.trim() !== "" && !c.isMergedSlave).length;
+    // For XLS without styles, use first row with ≥3 non-empty cells as header
+    if (withData >= 3 && i === 0) {
+      headerRowIndex = 0;
+      break;
+    }
+  }
+
+  return {
+    name: sheetName,
+    rows,
+    colWidths,
+    rowHeights,
+    orientation: "portrait",
+    headerRowIndex,
+    colCount: maxCol,
+    rowCount: maxRow,
+    images: [],
   };
 }
 
@@ -538,7 +823,6 @@ function renderSheet(doc: any, autoTable: any, sd: SheetData, first: boolean): v
   const pageW = landscape ? PAGE.A4_H : PAGE.A4_W;
   const availW = pageW - PAGE.MARGIN * 2;
 
-  // New page for non-first sheets
   if (!first) {
     doc.addPage("a4", landscape ? "landscape" : "portrait");
   }
@@ -564,7 +848,6 @@ function renderSheet(doc: any, autoTable: any, sd: SheetData, first: boolean): v
         overflow: "linebreak" as const,
       };
 
-      // Per-side borders
       const lw = {
         top: c.borderTop > 0 ? c.borderTop * scale : 0,
         bottom: c.borderBottom > 0 ? c.borderBottom * scale : 0,
@@ -573,13 +856,9 @@ function renderSheet(doc: any, autoTable: any, sd: SheetData, first: boolean): v
       };
       if (lw.top || lw.bottom || lw.left || lw.right) {
         s.lineWidth = lw;
-        // Use the most prominent border color, fallback black
         s.lineColor =
-          c.borderColorBottom ||
-          c.borderColorTop ||
-          c.borderColorLeft ||
-          c.borderColorRight ||
-          [0, 0, 0];
+          c.borderColorBottom || c.borderColorTop ||
+          c.borderColorLeft || c.borderColorRight || [0, 0, 0];
       } else {
         s.lineWidth = 0;
       }
@@ -601,13 +880,14 @@ function renderSheet(doc: any, autoTable: any, sd: SheetData, first: boolean): v
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let body: any[][];
   let startY = PAGE.MARGIN;
+  let bodyStartOrigRow = 0; // original row index where body starts
 
   if (hIdx !== null && hIdx >= 0 && hIdx < sd.rows.length) {
     const preRows = sd.rows.slice(0, hIdx);
     head = [toRow(sd.rows[hIdx])];
     body = sd.rows.slice(hIdx + 1).map(toRow);
+    bodyStartOrigRow = hIdx + 1;
 
-    // Render pre-header rows as a separate mini-table
     if (preRows.length > 0) {
       autoTable(doc, {
         body: preRows.map(toRow),
@@ -633,8 +913,51 @@ function renderSheet(doc: any, autoTable: any, sd: SheetData, first: boolean): v
     body = sd.rows.map(toRow);
   }
 
+  // ---- Image overlay via didDrawCell ----
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const didDrawCell = sd.images.length > 0 ? (data: any) => {
+    if (data.section !== "body") return;
+
+    const origRow = bodyStartOrigRow + data.row.index;
+    const origCol = data.column.index;
+
+    for (const img of sd.images) {
+      if (img.tlRow === origRow && img.tlCol === origCol) {
+        // Calculate image width from spanned columns
+        let imgW = 0;
+        for (let c = img.tlCol; c <= img.brCol && c < colW.length; c++) {
+          imgW += colW[c];
+        }
+        // Calculate image height from spanned rows
+        let imgH = 0;
+        for (let r = img.tlRow; r <= img.brRow && r < sd.rowHeights.length; r++) {
+          imgH += sd.rowHeights[r] * scale;
+        }
+        // Clamp to reasonable bounds
+        imgW = Math.min(imgW, data.cell.width * 3);
+        imgH = Math.min(imgH, 300);
+
+        if (imgW > 0 && imgH > 0) {
+          try {
+            doc.addImage(
+              img.dataUrl,
+              img.format,
+              data.cell.x + 2,
+              data.cell.y + 2,
+              imgW - 4,
+              imgH - 4
+            );
+          } catch {
+            // Image embed failed — skip silently
+          }
+        }
+      }
+    }
+  } : undefined;
+
   // ---- Main table ----
-  autoTable(doc, {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const opts: any = {
     head,
     body,
     startY,
@@ -661,7 +984,11 @@ function renderSheet(doc: any, autoTable: any, sd: SheetData, first: boolean): v
     ),
     pageBreak: "auto" as const,
     rowPageBreak: "avoid" as const,
-  });
+  };
+
+  if (didDrawCell) opts.didDrawCell = didDrawCell;
+
+  autoTable(doc, opts);
 }
 
 // ---------------------------------------------------------------------------
@@ -673,41 +1000,70 @@ export async function convertExcelToPdf(
   onProgress: OnProgress
 ): Promise<ExcelToPdfResult> {
   const originalSize = file.size;
+  const isXls = /\.xls$/i.test(file.name) && !/\.xlsx$/i.test(file.name);
 
-  // 1. Load libraries in parallel
+  // 1. Load libraries
   onProgress({ progress: 5, status: "Loading libraries..." });
-  const [JsPDF, autoTable, ExcelJS] = await Promise.all([
-    getJsPDF(),
-    getAutoTable(),
-    getExcelJS(),
-  ]);
 
-  // 2. Read Excel file
+  const loadPromises: Promise<unknown>[] = [getJsPDF(), getAutoTable()];
+  if (isXls) {
+    loadPromises.push(getXLSX());
+  } else {
+    loadPromises.push(getExcelJS());
+  }
+
+  const [JsPDF, autoTable, lib] = await Promise.all(loadPromises);
+
+  // 2. Read file
   onProgress({ progress: 10, status: "Reading Excel file..." });
   const buf = await file.arrayBuffer();
-  const wb = new ExcelJS.Workbook();
-  await wb.xlsx.load(buf);
 
-  const wsCount = wb.worksheets.length;
-  if (wsCount === 0) throw new Error("No worksheets found in the Excel file.");
+  let sheets: SheetData[] = [];
 
-  // 3. Extract data from all sheets
-  const sheets: SheetData[] = [];
-  for (let i = 0; i < wsCount; i++) {
-    const ws = wb.worksheets[i];
-    const pct = 15 + Math.round((i / wsCount) * 35);
-    onProgress({
-      progress: pct,
-      status: `Analyzing sheet ${i + 1}/${wsCount}: ${ws.name}...`,
-    });
+  if (isXls) {
+    // ---- .xls path via SheetJS ----
+    const XLSX = lib;
+    const wb = XLSX.read(buf, { type: "array", cellDates: true });
+    const sheetNames: string[] = wb.SheetNames || [];
 
-    const data = extractSheet(ws);
-    if (data) sheets.push(data);
+    if (sheetNames.length === 0) throw new Error("No worksheets found in the .xls file.");
+
+    for (let i = 0; i < sheetNames.length; i++) {
+      const pct = 15 + Math.round((i / sheetNames.length) * 35);
+      onProgress({
+        progress: pct,
+        status: `Analyzing sheet ${i + 1}/${sheetNames.length}: ${sheetNames[i]}...`,
+      });
+
+      const sheet = wb.Sheets[sheetNames[i]];
+      const data = extractSheetFromXls(sheetNames[i], sheet, XLSX);
+      if (data) sheets.push(data);
+    }
+  } else {
+    // ---- .xlsx path via ExcelJS ----
+    const ExcelJS = lib;
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.load(buf);
+
+    const wsCount = wb.worksheets.length;
+    if (wsCount === 0) throw new Error("No worksheets found in the Excel file.");
+
+    for (let i = 0; i < wsCount; i++) {
+      const ws = wb.worksheets[i];
+      const pct = 15 + Math.round((i / wsCount) * 35);
+      onProgress({
+        progress: pct,
+        status: `Analyzing sheet ${i + 1}/${wsCount}: ${ws.name}...`,
+      });
+
+      const data = extractSheet(ws, wb);
+      if (data) sheets.push(data);
+    }
   }
 
   if (sheets.length === 0) throw new Error("All worksheets are empty.");
 
-  // 4. Create PDF and render each sheet
+  // 3. Create PDF and render each sheet
   const doc = new JsPDF({
     orientation: sheets[0].orientation,
     unit: "pt",
@@ -725,13 +1081,18 @@ export async function convertExcelToPdf(
     rendered++;
   }
 
-  // 5. Output
+  // 4. Output
   onProgress({ progress: 98, status: "Generating PDF..." });
   const blob: Blob = doc.output("blob");
   const previewUrl = URL.createObjectURL(blob);
   const pageCount: number = doc.getNumberOfPages();
 
-  const qualityScore = Math.round((rendered / wsCount) * 100);
+  // Quality score: 100% for xlsx (full styles), 70% base for xls (data only)
+  const totalSheets = isXls
+    ? sheets.length // from SheetJS
+    : sheets.length; // from ExcelJS
+  const baseScore = isXls ? 70 : 100;
+  const qualityScore = Math.round(baseScore * (rendered / Math.max(1, totalSheets)));
 
   onProgress({ progress: 100, status: "Done!" });
 
