@@ -215,6 +215,27 @@ export default function ExcelToPdfPage() {
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   };
 
+  // --- Reset all changes ---
+  const resetAll = () => {
+    if (!result) return;
+    const total = result.pageCount;
+    setPageOrder(Array.from({ length: total }, (_, i) => i));
+    setRotations(new Map());
+    setRemovedPages([]);
+    setSelectedPages(new Set());
+  };
+
+  // --- Arrow movement (grid-aware: 3 columns) ---
+  const COLS = 3;
+  const moveByArrow = (orderIdx: number, dir: "up" | "down" | "left" | "right") => {
+    let target = orderIdx;
+    if (dir === "left" && orderIdx > 0) target = orderIdx - 1;
+    if (dir === "right" && orderIdx < pageOrder.length - 1) target = orderIdx + 1;
+    if (dir === "up" && orderIdx >= COLS) target = orderIdx - COLS;
+    if (dir === "down" && orderIdx + COLS < pageOrder.length) target = orderIdx + COLS;
+    if (target !== orderIdx) movePage(orderIdx, target);
+  };
+
   // --- Drag handlers ---
   const onDragStart = (idx: number) => { dragIdx.current = idx; };
   const onDragOver = (e: React.DragEvent) => { e.preventDefault(); };
@@ -301,16 +322,22 @@ export default function ExcelToPdfPage() {
             <button onClick={() => rotateBulk(-90)} className="px-3 py-1.5 text-xs font-medium text-slate-600 bg-white rounded-lg border border-slate-200 hover:bg-slate-50">↺ 90°</button>
             <button onClick={() => rotateBulk(90)} className="px-3 py-1.5 text-xs font-medium text-slate-600 bg-white rounded-lg border border-slate-200 hover:bg-slate-50">↻ 90°</button>
             <button onClick={() => rotateBulk(180)} className="px-3 py-1.5 text-xs font-medium text-slate-600 bg-white rounded-lg border border-slate-200 hover:bg-slate-50">180°</button>
+            <div className="w-px h-5 bg-slate-200 mx-1" />
+            <button onClick={resetAll} className="px-3 py-1.5 text-xs font-medium text-red-600 bg-white rounded-lg border border-red-200 hover:bg-red-50">Reset All</button>
             {selectedPages.size > 0 && (
               <span className="text-xs text-slate-400 ml-2">{selectedPages.size} selected</span>
             )}
           </div>
 
-          {/* Page grid */}
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3 mb-6">
+          {/* Page grid — 3 columns */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 mb-6">
             {pageOrder.map((pageIdx, orderIdx) => {
               const rot = rotations.get(pageIdx) || 0;
               const isSelected = selectedPages.has(pageIdx);
+              const canUp = orderIdx >= COLS;
+              const canDown = orderIdx + COLS < pageOrder.length;
+              const canLeft = orderIdx > 0;
+              const canRight = orderIdx < pageOrder.length - 1;
               return (
                 <div
                   key={pageIdx}
@@ -345,25 +372,41 @@ export default function ExcelToPdfPage() {
                   )}
 
                   {/* Thumbnail */}
-                  <div className="p-2 pt-7 pb-1 flex justify-center" style={{ minHeight: 130 }}>
+                  <div className="p-3 pt-8 pb-1 flex justify-center" style={{ minHeight: 160 }}>
                     {thumbnails[pageIdx] ? (
                       <img
                         src={thumbnails[pageIdx]}
                         alt={`Page ${pageIdx + 1}`}
-                        className="max-h-[110px] rounded shadow-sm object-contain"
+                        className="max-h-[130px] rounded shadow-sm object-contain"
                         style={{ transform: `rotate(${rot}deg)` }}
                         draggable={false}
                       />
                     ) : (
-                      <div className="w-20 h-[100px] bg-slate-100 rounded animate-pulse" />
+                      <div className="w-24 h-[120px] bg-slate-100 rounded animate-pulse" />
                     )}
                   </div>
 
-                  {/* Controls */}
-                  <div className="flex items-center justify-between px-2 pb-2">
-                    <div className="flex gap-0.5">
-                      <button onClick={() => rotatePage(pageIdx, -90)} className="p-1 text-slate-400 hover:text-slate-600 text-xs" title="Rotate left">↺</button>
-                      <button onClick={() => rotatePage(pageIdx, 90)} className="p-1 text-slate-400 hover:text-slate-600 text-xs" title="Rotate right">↻</button>
+                  {/* Arrow controls — move page in grid */}
+                  <div className="flex items-center justify-center gap-1 py-1">
+                    <button onClick={() => moveByArrow(orderIdx, "left")} disabled={!canLeft} className="p-1 text-slate-400 hover:text-slate-700 disabled:opacity-20 transition-colors" title="Move left">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+                    </button>
+                    <button onClick={() => moveByArrow(orderIdx, "up")} disabled={!canUp} className="p-1 text-slate-400 hover:text-slate-700 disabled:opacity-20 transition-colors" title="Move up">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="18 15 12 9 6 15"/></svg>
+                    </button>
+                    <button onClick={() => moveByArrow(orderIdx, "down")} disabled={!canDown} className="p-1 text-slate-400 hover:text-slate-700 disabled:opacity-20 transition-colors" title="Move down">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+                    </button>
+                    <button onClick={() => moveByArrow(orderIdx, "right")} disabled={!canRight} className="p-1 text-slate-400 hover:text-slate-700 disabled:opacity-20 transition-colors" title="Move right">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+                    </button>
+                  </div>
+
+                  {/* Bottom controls — rotate + remove */}
+                  <div className="flex items-center justify-between px-2 pb-2 border-t border-slate-100 pt-1.5">
+                    <div className="flex gap-1">
+                      <button onClick={() => rotatePage(pageIdx, -90)} className="p-1 text-slate-400 hover:text-slate-600 text-sm" title="Rotate left 90°">↺</button>
+                      <button onClick={() => rotatePage(pageIdx, 90)} className="p-1 text-slate-400 hover:text-slate-600 text-sm" title="Rotate right 90°">↻</button>
                     </div>
                     <button
                       onClick={() => removePage(pageIdx)}
