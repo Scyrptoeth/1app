@@ -284,6 +284,19 @@ export const tools: ToolConfig[] = [
     outputFormats: [".pdf"],
     isAvailable: true,
   },
+  {
+    id: "reorder-pdf",
+    name: "Reorder PDF",
+    description:
+      "Rearrange, reorder, and remove PDF pages with drag & drop. Lossless — original quality preserved.",
+    category: "split",
+    icon: "ArrowUpDown",
+    route: "/tools/reorder-pdf",
+    accentColor: "cyan",
+    inputFormats: [".pdf"],
+    outputFormats: [".pdf"],
+    isAvailable: true,
+  },
 ];
 
 export interface ToolSection {
@@ -310,7 +323,7 @@ export const SECTIONS: ToolSection[] = [
   },
   {
     label: "PDF Utilities",
-    toolIds: ["compress-pdf", "pdf-lock", "pdf-merge", "pdf-watermark-remove", "rotate-pdf", "split-pdf"],
+    toolIds: ["compress-pdf", "pdf-lock", "pdf-merge", "pdf-watermark-remove", "reorder-pdf", "rotate-pdf", "split-pdf"],
   },
   {
     label: "PowerPoint",
