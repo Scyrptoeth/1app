@@ -255,6 +255,19 @@ export const tools: ToolConfig[] = [
     outputFormats: [".pdf"],
     isAvailable: true,
   },
+  {
+    id: "split-pdf",
+    name: "Split PDF",
+    description:
+      "Split a PDF into multiple files. Reorder pages, create groups, and download individually or as ZIP.",
+    category: "split",
+    icon: "Scissors",
+    route: "/tools/split-pdf",
+    accentColor: "cyan",
+    inputFormats: [".pdf"],
+    outputFormats: [".pdf", ".zip"],
+    isAvailable: true,
+  },
 ];
 
 export interface ToolSection {
@@ -306,6 +319,10 @@ export const SECTIONS: ToolSection[] = [
   {
     label: "Merge",
     toolIds: ["pdf-merge"],
+  },
+  {
+    label: "Split",
+    toolIds: ["split-pdf"],
   },
 ];
 
