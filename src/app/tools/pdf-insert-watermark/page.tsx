@@ -252,14 +252,14 @@ function ActivePageThumb(props: ActivePageThumbProps) {
 
   return (
     <div
-      ref={observerRef} draggable onDragStart={onDragStart} onDragOver={onDragOver} onDrop={onDrop}
+      ref={observerRef} draggable onClick={() => onPreview()} onDragStart={onDragStart} onDragOver={onDragOver} onDrop={onDrop}
       className={`relative rounded-lg border-2 ${isPreviewPage ? "border-accent-400 ring-2 ring-accent-200" : "border-slate-200 hover:border-slate-300"} cursor-grab active:cursor-grabbing transition-all`}
     >
       <div className="absolute top-1.5 left-1.5 z-10 px-1.5 py-0.5 rounded-full bg-slate-900/70 text-white text-[9px] font-bold">
         {pageIndex + 1}
       </div>
 
-      <button type="button" onClick={onRemove} disabled={!canRemove}
+      <button type="button" onClick={(e) => { e.stopPropagation(); onRemove(); }} disabled={!canRemove}
         className="absolute top-1.5 right-1.5 z-10 p-1 rounded-full bg-white/80 text-slate-400 hover:bg-white hover:text-red-500 disabled:opacity-30 disabled:cursor-not-allowed transition-all shadow-sm" aria-label="Remove">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
       </button>
@@ -652,7 +652,7 @@ export default function InsertPdfWatermarkPage() {
               {file && <span className="text-xs text-slate-400">&middot; {formatFileSize(file.size)}</span>}
             </div>
             <div className="flex items-center gap-3">
-              <button type="button" onClick={() => setShowPreview(!showPreview)} className="xl:hidden text-xs text-accent-500 hover:text-accent-600 font-medium transition-colors">
+              <button type="button" onClick={() => setShowPreview(!showPreview)} className="lg:hidden text-xs text-accent-500 hover:text-accent-600 font-medium transition-colors">
                 {showPreview ? "Hide Preview" : "Show Preview"}
               </button>
               <button type="button" onClick={handleReset} className="text-xs text-slate-400 hover:text-slate-600 transition-colors">Change file</button>
@@ -667,9 +667,9 @@ export default function InsertPdfWatermarkPage() {
           )}
 
           {/* 3-column layout */}
-          <div className="flex flex-col xl:flex-row xl:gap-6">
+          <div className="flex flex-col lg:flex-row lg:gap-5">
             {/* Column 1: Thumbnails */}
-            <div className="flex-1 space-y-4 mb-6 xl:mb-0 min-w-0">
+            <div className="flex-1 space-y-4 mb-6 lg:mb-0 min-w-0">
               <div className="flex flex-wrap items-center gap-2 px-3 py-2.5 bg-slate-50 border border-slate-100 rounded-lg">
                 <button type="button" onClick={resetOrder} disabled={isDefaultOrder}
                   className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-slate-500 bg-white border border-slate-200 rounded-md hover:bg-red-50 hover:text-red-600 hover:border-red-200 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
@@ -684,7 +684,7 @@ export default function InsertPdfWatermarkPage() {
                 <span className="text-[10px] text-slate-400 ml-auto">{activePages.length} of {pageCount} pages</span>
               </div>
 
-              <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-2 2xl:grid-cols-3 gap-3">
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-2 xl:grid-cols-3 gap-3">
                 {activePages.map((pageIdx, posIdx) => (
                   <ActivePageThumb
                     key={`a-${pageIdx}-${posIdx}`}
@@ -710,7 +710,7 @@ export default function InsertPdfWatermarkPage() {
                     <h3 className="text-sm font-semibold text-slate-500">Removed Pages</h3>
                     <span className="text-[10px] text-slate-400">{removedPages.length}</span>
                   </div>
-                  <div className="grid grid-cols-3 sm:grid-cols-4 xl:grid-cols-3 gap-2">
+                  <div className="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-3 gap-2">
                     {removedPages.map((pi) => <RemovedPageThumb key={`r-${pi}`} pageIndex={pi} thumbnailUrl={thumbnails[pi]} onRestore={() => restorePage(pi)} />)}
                   </div>
                 </div>
@@ -718,8 +718,8 @@ export default function InsertPdfWatermarkPage() {
             </div>
 
             {/* Column 2: Watermark Options */}
-            <div className="xl:w-72 xl:shrink-0 mb-6 xl:mb-0">
-              <div className="xl:sticky xl:top-4 bg-white border border-slate-200 rounded-xl shadow-sm p-4 space-y-5">
+            <div className="lg:w-64 lg:shrink-0 mb-6 lg:mb-0">
+              <div className="lg:sticky lg:top-4 bg-white border border-slate-200 rounded-xl shadow-sm p-4 space-y-5">
                 <h3 className="text-sm font-semibold text-slate-900">Watermark Options</h3>
 
                 {/* Mode toggle */}
@@ -860,8 +860,8 @@ export default function InsertPdfWatermarkPage() {
             </div>
 
             {/* Column 3: Live Preview */}
-            <div className={`${showPreview ? "" : "hidden"} xl:block xl:w-96 xl:shrink-0`}>
-              <div className="xl:sticky xl:top-4 bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+            <div className={`${showPreview ? "" : "hidden"} lg:block lg:w-80 lg:shrink-0`}>
+              <div className="lg:sticky lg:top-4 bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
                 <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
                   <h3 className="text-sm font-semibold text-slate-900">Preview</h3>
                   <span className="text-xs text-slate-400">Page {previewPageIndex + 1}</span>
