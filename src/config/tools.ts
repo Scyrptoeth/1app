@@ -293,56 +293,44 @@ export interface ToolSection {
 
 export const SECTIONS: ToolSection[] = [
   {
+    label: "Excel",
+    toolIds: ["image-to-excel", "pdf-to-excel"],
+  },
+  {
+    label: "Image",
+    toolIds: ["image-to-excel", "pdf-to-image"],
+  },
+  {
+    label: "Image Utilities",
+    toolIds: ["compress-image", "image-watermark-remove"],
+  },
+  {
+    label: "PDF",
+    toolIds: ["pdf-to-excel", "pdf-to-image", "pdf-to-ppt", "pdf-to-word", "pptx-to-pdf", "word-to-pdf", "x-content-to-pdf"],
+  },
+  {
+    label: "PDF Utilities",
+    toolIds: ["compress-pdf", "pdf-lock", "pdf-merge", "pdf-watermark-remove", "rotate-pdf", "split-pdf"],
+  },
+  {
+    label: "PowerPoint",
+    toolIds: ["pptx-to-pdf"],
+  },
+  {
+    label: "QR Code",
+    toolIds: ["qr-code-to-link"],
+  },
+  {
     label: "Watermark",
     toolIds: ["image-watermark-remove", "pdf-watermark-remove"],
   },
   {
-    label: "Convert from PDF",
-    toolIds: ["pdf-to-image", "pdf-to-excel", "pdf-to-word", "pdf-to-ppt"],
+    label: "Word",
+    toolIds: ["word-to-pdf", "x-content-to-word"],
   },
   {
-    label: "Convert to Excel",
-    toolIds: ["image-to-excel", "pdf-to-excel"],
-  },
-  {
-    label: "Convert to Image",
-    toolIds: ["pdf-to-image"],
-  },
-  {
-    label: "Convert from Image",
-    toolIds: ["image-to-excel", "qr-code-to-link"],
-  },
-  {
-    label: "Convert from Word",
-    toolIds: ["word-to-pdf"],
-  },
-  {
-    label: "Convert from PowerPoint",
-    toolIds: ["pptx-to-pdf"],
-  },
-  {
-    label: "Extract from X",
+    label: "X Content",
     toolIds: ["x-content-to-pdf", "x-content-to-word"],
-  },
-  {
-    label: "Compress",
-    toolIds: ["compress-pdf", "compress-image"],
-  },
-  {
-    label: "Protect",
-    toolIds: ["pdf-lock"],
-  },
-  {
-    label: "Merge",
-    toolIds: ["pdf-merge"],
-  },
-  {
-    label: "Split",
-    toolIds: ["split-pdf"],
-  },
-  {
-    label: "Rotate",
-    toolIds: ["rotate-pdf"],
   },
 ];
 
