@@ -8,9 +8,10 @@ interface ToolPageLayoutProps {
   tool: ToolConfig;
   children: React.ReactNode;
   privacyMessage?: string;
+  contentMaxWidth?: string;
 }
 
-export default function ToolPageLayout({ tool, children, privacyMessage }: ToolPageLayoutProps) {
+export default function ToolPageLayout({ tool, children, privacyMessage, contentMaxWidth }: ToolPageLayoutProps) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const icons = LucideIcons as any;
   const IconComponent = icons[tool.icon] || LucideIcons.FileQuestion;
@@ -71,7 +72,7 @@ export default function ToolPageLayout({ tool, children, privacyMessage }: ToolP
       </section>
 
       {/* Tool Content */}
-      <section className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-12 sm:py-16">
+      <section className={`${contentMaxWidth || "max-w-4xl"} mx-auto px-4 sm:px-6 lg:px-8 py-12 sm:py-16`}>
         {children}
       </section>
     </div>

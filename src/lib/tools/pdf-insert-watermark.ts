@@ -4,7 +4,8 @@
  * Adds text or image watermark to PDF pages using pdf-lib.
  * - "over" layer: copyPages() (lossless) + draw watermark on top
  * - "below" layer: new page + watermark + embedPdf() original content on top
- * Supports 9-point positioning, mosaic pattern, rotation, and opacity.
+ * Supports 20 fonts (3 built-in + 17 Google Fonts), 9-point positioning,
+ * mosaic pattern, rotation, and opacity.
  */
 
 import { renderPageThumbnail, getPdfPageCount } from "./pdf-splitter";
@@ -12,6 +13,80 @@ import { getPageDimensions } from "./pdf-reorder";
 
 export { renderPageThumbnail, getPdfPageCount, getPageDimensions };
 export type { PageDimensions } from "./pdf-reorder";
+
+// ─── Font Registry ───────────────────────────────────────────────────
+
+export interface FontDef {
+  id: string;
+  name: string;
+  category: "sans-serif" | "serif" | "monospace" | "display";
+  isBuiltIn: boolean;
+  googleFamily?: string;
+  standardFonts?: {
+    regular: string;
+    bold: string;
+    italic: string;
+    boldItalic: string;
+  };
+}
+
+export const FONT_REGISTRY: FontDef[] = [
+  // Built-in PDF fonts (no file fetch needed)
+  {
+    id: "helvetica",
+    name: "Helvetica",
+    category: "sans-serif",
+    isBuiltIn: true,
+    standardFonts: {
+      regular: "Helvetica",
+      bold: "HelveticaBold",
+      italic: "HelveticaOblique",
+      boldItalic: "HelveticaBoldOblique",
+    },
+  },
+  {
+    id: "times-roman",
+    name: "Times Roman",
+    category: "serif",
+    isBuiltIn: true,
+    standardFonts: {
+      regular: "TimesRoman",
+      bold: "TimesRomanBold",
+      italic: "TimesRomanItalic",
+      boldItalic: "TimesRomanBoldItalic",
+    },
+  },
+  {
+    id: "courier",
+    name: "Courier",
+    category: "monospace",
+    isBuiltIn: true,
+    standardFonts: {
+      regular: "Courier",
+      bold: "CourierBold",
+      italic: "CourierOblique",
+      boldItalic: "CourierBoldOblique",
+    },
+  },
+  // Google Fonts — fetched on-demand via /api/fonts
+  { id: "inter", name: "Inter", category: "sans-serif", isBuiltIn: false, googleFamily: "Inter" },
+  { id: "dm-sans", name: "DM Sans", category: "sans-serif", isBuiltIn: false, googleFamily: "DM Sans" },
+  { id: "nunito", name: "Nunito", category: "sans-serif", isBuiltIn: false, googleFamily: "Nunito" },
+  { id: "open-sans", name: "Open Sans", category: "sans-serif", isBuiltIn: false, googleFamily: "Open Sans" },
+  { id: "roboto", name: "Roboto", category: "sans-serif", isBuiltIn: false, googleFamily: "Roboto" },
+  { id: "lato", name: "Lato", category: "sans-serif", isBuiltIn: false, googleFamily: "Lato" },
+  { id: "montserrat", name: "Montserrat", category: "sans-serif", isBuiltIn: false, googleFamily: "Montserrat" },
+  { id: "poppins", name: "Poppins", category: "sans-serif", isBuiltIn: false, googleFamily: "Poppins" },
+  { id: "raleway", name: "Raleway", category: "sans-serif", isBuiltIn: false, googleFamily: "Raleway" },
+  { id: "noto-sans", name: "Noto Sans", category: "sans-serif", isBuiltIn: false, googleFamily: "Noto Sans" },
+  { id: "pt-sans", name: "PT Sans", category: "sans-serif", isBuiltIn: false, googleFamily: "PT Sans" },
+  { id: "source-sans-3", name: "Source Sans 3", category: "sans-serif", isBuiltIn: false, googleFamily: "Source Sans 3" },
+  { id: "ubuntu", name: "Ubuntu", category: "sans-serif", isBuiltIn: false, googleFamily: "Ubuntu" },
+  { id: "comic-neue", name: "Comic Neue", category: "display", isBuiltIn: false, googleFamily: "Comic Neue" },
+  { id: "pt-serif", name: "PT Serif", category: "serif", isBuiltIn: false, googleFamily: "PT Serif" },
+  { id: "merriweather", name: "Merriweather", category: "serif", isBuiltIn: false, googleFamily: "Merriweather" },
+  { id: "playfair-display", name: "Playfair Display", category: "serif", isBuiltIn: false, googleFamily: "Playfair Display" },
+];
 
 // ─── Types ───────────────────────────────────────────────────────────
 
@@ -29,7 +104,7 @@ export type WatermarkPosition =
 export interface TextWatermarkConfig {
   mode: "text";
   text: string;
-  fontFamily: "Helvetica" | "Times-Roman" | "Courier";
+  fontId: string;
   fontSize: number;
   bold: boolean;
   italic: boolean;
@@ -64,6 +139,7 @@ export interface InsertWatermarkInput {
   fileName: string;
   pageOrder: number[];
   options: WatermarkOptions;
+  fontBytes?: ArrayBuffer;
   onProgress?: (update: ProcessingUpdate) => void;
 }
 
@@ -76,35 +152,25 @@ export interface InsertWatermarkResult {
   watermarkedPages: number;
 }
 
-// ─── Font Mapping ────────────────────────────────────────────────────
+// ─── Font Fetch (client-side) ────────────────────────────────────────
 
-function getStandardFontKey(
-  family: string,
-  bold: boolean,
-  italic: boolean
-): string {
-  const variants: Record<string, Record<string, string>> = {
-    Helvetica: {
-      "": "Helvetica",
-      b: "HelveticaBold",
-      i: "HelveticaOblique",
-      bi: "HelveticaBoldOblique",
-    },
-    "Times-Roman": {
-      "": "TimesRoman",
-      b: "TimesRomanBold",
-      i: "TimesRomanItalic",
-      bi: "TimesRomanBoldItalic",
-    },
-    Courier: {
-      "": "Courier",
-      b: "CourierBold",
-      i: "CourierOblique",
-      bi: "CourierBoldOblique",
-    },
-  };
-  const style = (bold ? "b" : "") + (italic ? "i" : "");
-  return variants[family]?.[style] || "Helvetica";
+const fontCache = new Map<string, ArrayBuffer>();
+
+export async function fetchFontBytes(
+  googleFamily: string,
+  bold: boolean
+): Promise<ArrayBuffer> {
+  const weight = bold ? "700" : "400";
+  const key = `${googleFamily}::${weight}`;
+  if (fontCache.has(key)) return fontCache.get(key)!;
+
+  const res = await fetch(
+    `/api/fonts?family=${encodeURIComponent(googleFamily)}&weight=${weight}`
+  );
+  if (!res.ok) throw new Error(`Failed to fetch font ${googleFamily}`);
+  const buf = await res.arrayBuffer();
+  fontCache.set(key, buf);
+  return buf;
 }
 
 // ─── Position Calculation ────────────────────────────────────────────
@@ -123,7 +189,6 @@ function calculatePosition(
   else if (position.includes("right")) x = pageWidth - margin - wmWidth;
   else x = (pageWidth - wmWidth) / 2;
 
-  // PDF y-axis: 0 = bottom, increases upward
   let y: number;
   if (position.startsWith("top")) y = pageHeight - margin - wmHeight;
   else if (position.startsWith("bottom")) y = margin;
@@ -131,8 +196,6 @@ function calculatePosition(
 
   return { x, y };
 }
-
-// ─── Mosaic Pattern ──────────────────────────────────────────────────
 
 function getMosaicPositions(
   pageWidth: number,
@@ -224,7 +287,8 @@ function drawWatermark(
 export async function insertWatermark(
   input: InsertWatermarkInput
 ): Promise<InsertWatermarkResult> {
-  const { pdfData, fileName, pageOrder, options, onProgress } = input;
+  const { pdfData, fileName, pageOrder, options, fontBytes, onProgress } =
+    input;
   const report = (stage: string, progress: number) =>
     onProgress?.({ stage, progress });
 
@@ -237,7 +301,6 @@ export async function insertWatermark(
   report("Preparing watermark...", 10);
   const newDoc = await PDFDocument.create();
 
-  // Embed font (text mode) or image (image mode)
   /* eslint-disable @typescript-eslint/no-explicit-any */
   let font: any = null;
   let image: any = null;
@@ -245,14 +308,29 @@ export async function insertWatermark(
 
   if (options.watermark.mode === "text") {
     const config = options.watermark;
-    const fontKey = getStandardFontKey(
-      config.fontFamily,
-      config.bold,
-      config.italic
-    );
-    font = await newDoc.embedFont(
-      StandardFonts[fontKey as keyof typeof StandardFonts]
-    );
+    const fontDef = FONT_REGISTRY.find((f) => f.id === config.fontId);
+
+    if (fontDef?.isBuiltIn && fontDef.standardFonts) {
+      const variant =
+        config.bold && config.italic
+          ? "boldItalic"
+          : config.bold
+            ? "bold"
+            : config.italic
+              ? "italic"
+              : "regular";
+      const sfKey = fontDef.standardFonts[variant];
+      font = await newDoc.embedFont(
+        StandardFonts[sfKey as keyof typeof StandardFonts]
+      );
+    } else if (fontBytes) {
+      // Register fontkit for custom font embedding
+      const fontkit = (await import("@pdf-lib/fontkit")).default;
+      newDoc.registerFontkit(fontkit);
+      font = await newDoc.embedFont(fontBytes);
+    } else {
+      font = await newDoc.embedFont(StandardFonts.Helvetica);
+    }
   } else {
     const config = options.watermark;
     image =
@@ -261,7 +339,6 @@ export async function insertWatermark(
         : await newDoc.embedJpg(config.imageData);
   }
 
-  // Process each page
   const totalPages = pageOrder.length;
   for (let i = 0; i < totalPages; i++) {
     const srcIdx = pageOrder[i];
@@ -271,12 +348,10 @@ export async function insertWatermark(
     );
 
     if (options.layer === "over") {
-      // Lossless copy + draw watermark on top
       const [copiedPage] = await newDoc.copyPages(srcDoc, [srcIdx]);
       newDoc.addPage(copiedPage);
       drawWatermark(copiedPage, options, font, image, rgb, degrees);
     } else {
-      // "below": create blank page, draw watermark, overlay original content
       const srcPage = srcDoc.getPage(srcIdx);
       const { width, height } = srcPage.getSize();
       const newPage = newDoc.addPage([width, height]);
