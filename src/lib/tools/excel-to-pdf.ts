@@ -43,6 +43,15 @@ async function getExcelJS() {
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
+let _JSZip: any = null;
+async function getJSZip() {
+  if (_JSZip) return _JSZip;
+  const mod = await import("jszip");
+  _JSZip = mod.default;
+  return _JSZip;
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 let _XLSX: any = null;
 async function getXLSX() {
   if (_XLSX) return _XLSX;
@@ -106,6 +115,21 @@ interface EmbeddedImage {
   brCol: number;       // bottom-right col (0-indexed)
 }
 
+interface ParsedChart {
+  type: "bar" | "line" | "pie" | "scatter" | "area" | "doughnut";
+  title: string;
+  categories: string[];
+  series: { name: string; values: number[]; color: string }[];
+}
+
+interface ChartOnSheet {
+  chart: ParsedChart;
+  tlRow: number;
+  tlCol: number;
+  brRow: number;
+  brCol: number;
+}
+
 interface SheetData {
   name: string;
   rows: CellData[][];
@@ -161,6 +185,12 @@ const PAGE = {
   DEFAULT_ROW_H: 15,
   EXCEL_CHAR_PT: 5.7, // 1 Excel character unit ≈ 5.7pt
 };
+
+// Default Excel chart series colors (Office theme accents)
+const CHART_COLORS = [
+  "#4472C4", "#ED7D31", "#A5A5A5", "#FFC000", "#5B9BD5", "#70AD47",
+  "#264478", "#9B4D1E", "#636363", "#997300", "#3A6EA5", "#4D8132",
+];
 
 // ---------------------------------------------------------------------------
 // Color helpers
@@ -446,6 +476,555 @@ function colToNum(letters: string): number {
     n = n * 26 + (letters.charCodeAt(i) - 64);
   }
   return n;
+}
+
+// ---------------------------------------------------------------------------
+// Chart extraction from xlsx (OpenXML)
+// ---------------------------------------------------------------------------
+
+// XML helper: get child element by local name
+function xmlChild(el: Element, localName: string): Element | null {
+  for (let i = 0; i < el.children.length; i++) {
+    const ch = el.children[i];
+    if (ch.localName === localName) return ch;
+  }
+  return null;
+}
+
+function xmlChildren(el: Element, localName: string): Element[] {
+  const result: Element[] = [];
+  for (let i = 0; i < el.children.length; i++) {
+    if (el.children[i].localName === localName) result.push(el.children[i]);
+  }
+  return result;
+}
+
+function xmlAttr(el: Element, name: string): string {
+  return el.getAttribute(name) || el.getAttribute(`val`) || "";
+}
+
+function xmlText(el: Element, path: string[]): string {
+  let cur: Element | null = el;
+  for (const p of path) {
+    if (!cur) return "";
+    cur = xmlChild(cur, p);
+  }
+  return cur?.textContent?.trim() || "";
+}
+
+function parseChartXml(xmlStr: string): ParsedChart | null {
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(xmlStr, "text/xml");
+  const chartSpace = doc.documentElement;
+  const chart = xmlChild(chartSpace, "chart");
+  if (!chart) return null;
+
+  // Title
+  let title = "";
+  const titleEl = xmlChild(chart, "title");
+  if (titleEl) {
+    const txBody = titleEl.querySelector("*|txBody, *|rich");
+    if (txBody) {
+      title = txBody.textContent?.trim() || "";
+    } else {
+      // Try strRef
+      title = xmlText(titleEl, ["tx", "strRef", "strCache", "pt"]);
+    }
+  }
+
+  // Plot area
+  const plotArea = xmlChild(chart, "plotArea");
+  if (!plotArea) return null;
+
+  // Detect chart type — first matching element in plotArea
+  type CType = ParsedChart["type"];
+  const typeMap: Record<string, CType> = {
+    barChart: "bar", bar3DChart: "bar",
+    lineChart: "line", line3DChart: "line",
+    pieChart: "pie", pie3DChart: "pie",
+    scatterChart: "scatter",
+    areaChart: "area", area3DChart: "area",
+    doughnutChart: "doughnut",
+    radarChart: "line",
+  };
+
+  let chartType: CType = "bar";
+  let chartEl: Element | null = null;
+
+  for (const [tag, type] of Object.entries(typeMap)) {
+    chartEl = xmlChild(plotArea, tag);
+    if (chartEl) {
+      chartType = type;
+      // Check bar direction
+      if (tag.startsWith("bar")) {
+        const dir = xmlChild(chartEl, "barDir");
+        if (dir?.getAttribute("val") === "bar") chartType = "bar";
+        else chartType = "bar"; // column = bar rendered vertically
+      }
+      break;
+    }
+  }
+
+  if (!chartEl) return null;
+
+  // Parse series
+  const serElements = xmlChildren(chartEl, "ser");
+  const series: ParsedChart["series"] = [];
+  let categories: string[] = [];
+
+  for (let si = 0; si < serElements.length; si++) {
+    const ser = serElements[si];
+
+    // Series name
+    let name = `Series ${si + 1}`;
+    const tx = xmlChild(ser, "tx");
+    if (tx) {
+      const strCache = tx.querySelector("*|strCache");
+      if (strCache) {
+        const pt = xmlChild(strCache, "pt");
+        if (pt) name = xmlChild(pt, "v")?.textContent || name;
+      }
+    }
+
+    // Categories (from first series only)
+    if (categories.length === 0) {
+      const cat = xmlChild(ser, "cat");
+      if (cat) {
+        const cache = cat.querySelector("*|strCache") || cat.querySelector("*|numCache");
+        if (cache) {
+          const pts = xmlChildren(cache, "pt");
+          categories = pts.map((pt) => xmlChild(pt, "v")?.textContent || "").filter(Boolean);
+        }
+      }
+    }
+
+    // Values
+    const val = xmlChild(ser, "val") || xmlChild(ser, "yVal");
+    const values: number[] = [];
+    if (val) {
+      const numCache = val.querySelector("*|numCache");
+      if (numCache) {
+        const pts = xmlChildren(numCache, "pt");
+        // Sort by idx attribute
+        const sorted = pts.slice().sort((a, b) => {
+          return parseInt(a.getAttribute("idx") || "0") - parseInt(b.getAttribute("idx") || "0");
+        });
+        for (const pt of sorted) {
+          const v = xmlChild(pt, "v")?.textContent;
+          values.push(v ? parseFloat(v) : 0);
+        }
+      }
+    }
+
+    // Color — look for solidFill in spPr
+    let color = CHART_COLORS[si % CHART_COLORS.length];
+    const spPr = xmlChild(ser, "spPr");
+    if (spPr) {
+      const fill = spPr.querySelector("*|solidFill *|srgbClr");
+      if (fill) {
+        const clr = fill.getAttribute("val");
+        if (clr) color = `#${clr}`;
+      }
+    }
+
+    series.push({ name, values, color });
+  }
+
+  // Ensure categories array length matches values
+  if (categories.length === 0 && series.length > 0) {
+    categories = series[0].values.map((_, i) => String(i + 1));
+  }
+
+  return { type: chartType, title, categories, series };
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function extractChartsFromXlsx(buf: ArrayBuffer): Promise<Map<number, ChartOnSheet[]>> {
+  const result = new Map<number, ChartOnSheet[]>();
+  let JSZip;
+  try {
+    JSZip = await getJSZip();
+  } catch {
+    return result;
+  }
+
+  let zip;
+  try {
+    zip = await JSZip.loadAsync(buf);
+  } catch {
+    return result;
+  }
+
+  // 1. Map sheet files → drawing files via worksheet rels
+  const sheetToDrawing = new Map<number, string>(); // sheetNum → drawingFile
+  for (let sn = 1; sn <= 100; sn++) {
+    const relsPath = `xl/worksheets/_rels/sheet${sn}.xml.rels`;
+    const relsFile = zip.file(relsPath);
+    if (!relsFile) continue;
+    const relsXml = await relsFile.async("text");
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(relsXml, "text/xml");
+    const rels = doc.querySelectorAll("Relationship");
+    for (let i = 0; i < rels.length; i++) {
+      const type = rels[i].getAttribute("Type") || "";
+      if (type.includes("/drawing")) {
+        const target = rels[i].getAttribute("Target") || "";
+        // target is like "../drawings/drawing13.xml"
+        const match = target.match(/drawing(\d+)\.xml/);
+        if (match) sheetToDrawing.set(sn, `drawing${match[1]}`);
+      }
+    }
+  }
+
+  // 2. For each drawing with charts, parse chart positions
+  for (const [sheetNum, drawingName] of sheetToDrawing) {
+    const drawingPath = `xl/drawings/${drawingName}.xml`;
+    const drawingFile = zip.file(drawingPath);
+    if (!drawingFile) continue;
+
+    // Parse drawing rels to map rId → chart filename
+    const drawRelsPath = `xl/drawings/_rels/${drawingName}.xml.rels`;
+    const drawRelsFile = zip.file(drawRelsPath);
+    if (!drawRelsFile) continue;
+
+    const relsXml = await drawRelsFile.async("text");
+    const relsDoc = new DOMParser().parseFromString(relsXml, "text/xml");
+    const ridToChart = new Map<string, string>();
+    const rels = relsDoc.querySelectorAll("Relationship");
+    for (let i = 0; i < rels.length; i++) {
+      const type = rels[i].getAttribute("Type") || "";
+      if (type.includes("/chart")) {
+        const rId = rels[i].getAttribute("Id") || "";
+        const target = rels[i].getAttribute("Target") || "";
+        ridToChart.set(rId, target.replace("../charts/", "").replace("../", ""));
+      }
+    }
+
+    if (ridToChart.size === 0) continue;
+
+    // Parse drawing XML for chart anchors
+    const drawXml = await drawingFile.async("text");
+    const drawDoc = new DOMParser().parseFromString(drawXml, "text/xml");
+
+    // Find twoCellAnchor elements containing graphicFrame with chart
+    const anchors = drawDoc.querySelectorAll("*|twoCellAnchor");
+    const charts: ChartOnSheet[] = [];
+
+    for (let a = 0; a < anchors.length; a++) {
+      const anchor = anchors[a];
+      // Look for chart reference
+      const graphicData = anchor.querySelector("*|graphicData");
+      if (!graphicData) continue;
+      const uri = graphicData.getAttribute("uri") || "";
+      if (!uri.includes("chart")) continue;
+
+      // Get rId from the chart element inside graphicData
+      const chartRef = graphicData.querySelector("*|chart");
+      if (!chartRef) continue;
+      const rId = chartRef.getAttribute("r:id") || chartRef.getAttributeNS(
+        "http://schemas.openxmlformats.org/officeDocument/2006/relationships", "id"
+      ) || "";
+      const chartFile = ridToChart.get(rId);
+      if (!chartFile) continue;
+
+      // Get position
+      const from = anchor.querySelector("*|from");
+      const to = anchor.querySelector("*|to");
+      if (!from || !to) continue;
+
+      const tlCol = parseInt(from.querySelector("*|col")?.textContent || "0");
+      const tlRow = parseInt(from.querySelector("*|row")?.textContent || "0");
+      const brCol = parseInt(to.querySelector("*|col")?.textContent || "0");
+      const brRow = parseInt(to.querySelector("*|row")?.textContent || "0");
+
+      // Parse chart XML
+      const chartPath = `xl/charts/${chartFile}`;
+      const chartZipFile = zip.file(chartPath);
+      if (!chartZipFile) continue;
+
+      const chartXml = await chartZipFile.async("text");
+      const parsed = parseChartXml(chartXml);
+      if (!parsed || parsed.series.length === 0) continue;
+
+      charts.push({ chart: parsed, tlRow, tlCol, brRow, brCol });
+    }
+
+    if (charts.length > 0) {
+      result.set(sheetNum, charts);
+    }
+  }
+
+  return result;
+}
+
+// ---------------------------------------------------------------------------
+// Canvas chart renderer
+// ---------------------------------------------------------------------------
+
+function renderChartToDataUrl(chart: ParsedChart, w: number, h: number): string {
+  const canvas = document.createElement("canvas");
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext("2d")!;
+
+  // Background
+  ctx.fillStyle = "#FFFFFF";
+  ctx.fillRect(0, 0, w, h);
+
+  // Layout
+  const titleH = chart.title ? 28 : 5;
+  const legendH = Math.min(30, chart.series.length * 15 + 10);
+  const pad = { top: 8 + titleH, right: 15, bottom: 30 + legendH, left: 65 };
+
+  // Title
+  if (chart.title) {
+    ctx.fillStyle = "#333333";
+    ctx.font = "bold 11px Arial, sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText(chart.title, w / 2, 18, w - 20);
+  }
+
+  const px = pad.left, py = pad.top;
+  const pw = w - pad.left - pad.right;
+  const ph = h - pad.top - pad.bottom;
+
+  if (chart.type === "pie" || chart.type === "doughnut") {
+    drawPieChart(ctx, chart, px, py, pw, ph);
+  } else {
+    drawAxisChart(ctx, chart, px, py, pw, ph);
+  }
+
+  // Legend
+  drawLegend(ctx, chart.series, 10, h - legendH + 5, w - 20, legendH);
+
+  return canvas.toDataURL("image/png");
+}
+
+function drawAxisChart(
+  ctx: CanvasRenderingContext2D,
+  chart: ParsedChart,
+  x: number, y: number, w: number, h: number
+) {
+  const { categories, series, type } = chart;
+  if (series.length === 0) return;
+
+  // Value range
+  let minV = 0, maxV = 0;
+  for (const s of series) for (const v of s.values) {
+    if (v > maxV) maxV = v;
+    if (v < minV) minV = v;
+  }
+  if (minV > 0) minV = 0;
+  const range = maxV - minV || 1;
+
+  // Y-axis gridlines + labels
+  const steps = 5;
+  ctx.textAlign = "right";
+  ctx.textBaseline = "middle";
+  for (let i = 0; i <= steps; i++) {
+    const yy = y + h - (i / steps) * h;
+    ctx.strokeStyle = "#E8E8E8";
+    ctx.lineWidth = 0.5;
+    ctx.beginPath();
+    ctx.moveTo(x, yy);
+    ctx.lineTo(x + w, yy);
+    ctx.stroke();
+
+    const val = minV + (i / steps) * range;
+    ctx.fillStyle = "#888";
+    ctx.font = "8px Arial, sans-serif";
+    ctx.fillText(fmtAxisVal(val), x - 4, yy);
+  }
+
+  // Axes
+  ctx.strokeStyle = "#CCC";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(x, y);
+  ctx.lineTo(x, y + h);
+  ctx.lineTo(x + w, y + h);
+  ctx.stroke();
+
+  const catCount = categories.length || 1;
+
+  if (type === "bar") {
+    // Bar / column chart
+    const catW = w / catCount;
+    const serCount = series.length;
+    const barW = (catW * 0.7) / serCount;
+    const off = catW * 0.15;
+
+    for (let c = 0; c < catCount; c++) {
+      for (let s = 0; s < serCount; s++) {
+        const val = series[s].values[c] ?? 0;
+        const barH = ((val - minV) / range) * h;
+        const bx = x + c * catW + off + s * barW;
+        const baseY = y + h - ((0 - minV) / range) * h;
+        const by = val >= 0 ? baseY - barH + ((0 - minV) / range) * h : baseY;
+        const bh = Math.abs(barH - ((0 - minV) / range) * h);
+
+        ctx.fillStyle = series[s].color;
+        ctx.fillRect(bx, y + h - ((Math.max(val, 0) - minV) / range) * h, barW - 1, (Math.abs(val) / range) * h);
+      }
+      // Category label
+      ctx.fillStyle = "#666";
+      ctx.font = "8px Arial, sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "top";
+      const label = categories[c] || "";
+      ctx.fillText(label.length > 10 ? label.slice(0, 10) + "…" : label, x + c * catW + catW / 2, y + h + 3);
+    }
+  } else if (type === "line" || type === "area") {
+    const catW = w / Math.max(catCount - 1, 1);
+
+    for (let s = 0; s < series.length; s++) {
+      const vals = series[s].values;
+      ctx.strokeStyle = series[s].color;
+      ctx.fillStyle = series[s].color;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+
+      for (let c = 0; c < vals.length; c++) {
+        const cx = x + c * catW;
+        const cy = y + h - ((vals[c] - minV) / range) * h;
+        if (c === 0) ctx.moveTo(cx, cy);
+        else ctx.lineTo(cx, cy);
+      }
+      ctx.stroke();
+
+      // Area fill
+      if (type === "area") {
+        ctx.lineTo(x + (vals.length - 1) * catW, y + h);
+        ctx.lineTo(x, y + h);
+        ctx.closePath();
+        ctx.globalAlpha = 0.2;
+        ctx.fill();
+        ctx.globalAlpha = 1.0;
+      }
+
+      // Markers
+      for (let c = 0; c < vals.length; c++) {
+        const cx = x + c * catW;
+        const cy = y + h - ((vals[c] - minV) / range) * h;
+        ctx.beginPath();
+        ctx.arc(cx, cy, 3, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    // X labels
+    for (let c = 0; c < catCount; c++) {
+      const cx = x + c * catW;
+      ctx.fillStyle = "#666";
+      ctx.font = "8px Arial, sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "top";
+      const label = categories[c] || "";
+      ctx.fillText(label.length > 10 ? label.slice(0, 10) + "…" : label, cx, y + h + 3);
+    }
+  } else if (type === "scatter") {
+    // Scatter: use first series values as X, second as Y (or index as X)
+    for (let s = 0; s < series.length; s++) {
+      ctx.fillStyle = series[s].color;
+      for (let c = 0; c < series[s].values.length; c++) {
+        const vx = x + (c / Math.max(series[s].values.length - 1, 1)) * w;
+        const vy = y + h - ((series[s].values[c] - minV) / range) * h;
+        ctx.beginPath();
+        ctx.arc(vx, vy, 4, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+  }
+}
+
+function drawPieChart(
+  ctx: CanvasRenderingContext2D,
+  chart: ParsedChart,
+  x: number, y: number, w: number, h: number
+) {
+  const values = chart.series[0]?.values || [];
+  const total = values.reduce((a, b) => a + Math.abs(b), 0) || 1;
+  const cx = x + w / 2;
+  const cy = y + h / 2;
+  const r = Math.min(w, h) / 2 - 5;
+  const innerR = chart.type === "doughnut" ? r * 0.5 : 0;
+
+  let startAngle = -Math.PI / 2;
+  for (let i = 0; i < values.length; i++) {
+    const slice = (Math.abs(values[i]) / total) * Math.PI * 2;
+    const color = chart.series[0]?.color
+      ? (i === 0 ? chart.series[0].color : CHART_COLORS[i % CHART_COLORS.length])
+      : CHART_COLORS[i % CHART_COLORS.length];
+
+    // If each value is a separate "series" in pie
+    const clr = chart.series.length > 1
+      ? chart.series[i]?.color || CHART_COLORS[i % CHART_COLORS.length]
+      : CHART_COLORS[i % CHART_COLORS.length];
+
+    ctx.fillStyle = clr;
+    ctx.beginPath();
+    ctx.moveTo(cx + innerR * Math.cos(startAngle), cy + innerR * Math.sin(startAngle));
+    ctx.arc(cx, cy, r, startAngle, startAngle + slice);
+    if (innerR > 0) {
+      ctx.arc(cx, cy, innerR, startAngle + slice, startAngle, true);
+    } else {
+      ctx.lineTo(cx, cy);
+    }
+    ctx.closePath();
+    ctx.fill();
+
+    // Label
+    const midAngle = startAngle + slice / 2;
+    const labelR = r * 0.7;
+    const lx = cx + labelR * Math.cos(midAngle);
+    const ly = cy + labelR * Math.sin(midAngle);
+    const pct = ((Math.abs(values[i]) / total) * 100).toFixed(0);
+    if (parseFloat(pct) >= 3) {
+      ctx.fillStyle = "#FFF";
+      ctx.font = "bold 9px Arial, sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(`${pct}%`, lx, ly);
+    }
+
+    startAngle += slice;
+  }
+}
+
+function drawLegend(
+  ctx: CanvasRenderingContext2D,
+  series: ParsedChart["series"],
+  x: number, y: number, w: number, _h: number
+) {
+  ctx.font = "8px Arial, sans-serif";
+  ctx.textAlign = "left";
+  ctx.textBaseline = "middle";
+  let cx = x;
+  for (let i = 0; i < series.length; i++) {
+    const label = series[i].name;
+    const boxW = 10;
+    const textW = ctx.measureText(label).width;
+    if (cx + boxW + textW + 15 > x + w) {
+      // Would overflow — skip remaining
+      break;
+    }
+    ctx.fillStyle = series[i].color;
+    ctx.fillRect(cx, y, boxW, boxW);
+    ctx.fillStyle = "#555";
+    ctx.fillText(label, cx + boxW + 3, y + boxW / 2);
+    cx += boxW + textW + 15;
+  }
+}
+
+function fmtAxisVal(v: number): string {
+  const abs = Math.abs(v);
+  if (abs >= 1e12) return (v / 1e12).toFixed(1) + "T";
+  if (abs >= 1e9) return (v / 1e9).toFixed(1) + "B";
+  if (abs >= 1e6) return (v / 1e6).toFixed(1) + "M";
+  if (abs >= 1e3) return (v / 1e3).toFixed(1) + "K";
+  if (abs === 0) return "0";
+  if (abs < 1) return v.toFixed(2);
+  return v.toFixed(0);
 }
 
 // ---------------------------------------------------------------------------
@@ -1048,6 +1627,15 @@ export async function convertExcelToPdf(
     const wsCount = wb.worksheets.length;
     if (wsCount === 0) throw new Error("No worksheets found in the Excel file.");
 
+    // Extract charts from the xlsx zip in parallel with sheet processing
+    onProgress({ progress: 12, status: "Extracting charts..." });
+    let chartMap = new Map<number, ChartOnSheet[]>();
+    try {
+      chartMap = await extractChartsFromXlsx(buf);
+    } catch {
+      // Chart extraction failed — continue without charts
+    }
+
     for (let i = 0; i < wsCount; i++) {
       const ws = wb.worksheets[i];
       const pct = 15 + Math.round((i / wsCount) * 35);
@@ -1057,7 +1645,30 @@ export async function convertExcelToPdf(
       });
 
       const data = extractSheet(ws, wb);
-      if (data) sheets.push(data);
+      if (data) {
+        // Inject chart images for this sheet (sheetNum is 1-indexed)
+        const sheetCharts = chartMap.get(i + 1);
+        if (sheetCharts && sheetCharts.length > 0) {
+          for (const sc of sheetCharts) {
+            try {
+              const chartW = Math.max(400, (sc.brCol - sc.tlCol) * 60);
+              const chartH = Math.max(300, (sc.brRow - sc.tlRow) * 20);
+              const dataUrl = renderChartToDataUrl(sc.chart, chartW, chartH);
+              data.images.push({
+                dataUrl,
+                format: "PNG",
+                tlRow: sc.tlRow,
+                tlCol: sc.tlCol,
+                brRow: sc.brRow,
+                brCol: sc.brCol,
+              });
+            } catch {
+              // Individual chart render failed — skip
+            }
+          }
+        }
+        sheets.push(data);
+      }
     }
   }
 
