@@ -90,6 +90,19 @@ export const tools: ToolConfig[] = [
     isAvailable: true,
   },
   {
+    id: "excel-to-pdf",
+    name: "Excel to PDF",
+    description:
+      "Convert Excel spreadsheets (.xlsx) into PDF files, preserving cell styles, colors, borders, merged cells, and number formatting.",
+    category: "transform",
+    icon: "FileOutput",
+    route: "/tools/excel-to-pdf",
+    accentColor: "violet",
+    inputFormats: [".xlsx", ".xls"],
+    outputFormats: [".pdf"],
+    isAvailable: true,
+  },
+  {
     id: "image-to-excel",
     name: "Image to Excel",
     description:
@@ -333,7 +346,7 @@ export interface ToolSection {
 export const SECTIONS: ToolSection[] = [
   {
     label: "Excel",
-    toolIds: ["image-to-excel", "pdf-to-excel"],
+    toolIds: ["excel-to-pdf", "image-to-excel", "pdf-to-excel"],
   },
   {
     label: "Image",
@@ -345,7 +358,7 @@ export const SECTIONS: ToolSection[] = [
   },
   {
     label: "PDF",
-    toolIds: ["pdf-to-excel", "pdf-to-image", "pdf-to-ppt", "pdf-to-word", "pptx-to-pdf", "word-to-pdf", "x-content-to-pdf"],
+    toolIds: ["excel-to-pdf", "pdf-to-excel", "pdf-to-image", "pdf-to-ppt", "pdf-to-word", "pptx-to-pdf", "word-to-pdf", "x-content-to-pdf"],
   },
   {
     label: "PDF Utilities",
