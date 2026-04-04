@@ -29,12 +29,9 @@ export const PAGE_SIZES: PageSize[] = [
   { name: "Fit to Image", width: 0, height: 0 },
 ];
 
-export type MarginOption = "none" | "small" | "big";
-
 export interface ConvertOptions {
   pageSize: PageSize;
   globalOrientation: "portrait" | "landscape";
-  margin: MarginOption;
   mergeAll: boolean;
 }
 
@@ -52,12 +49,6 @@ export interface ImageToPdfResult {
 }
 
 // ─── Constants ──────────────────────────────────────────────────────
-
-const MARGIN_MM: Record<MarginOption, number> = {
-  none: 0,
-  small: 10,
-  big: 20,
-};
 
 const PX_TO_MM = 25.4 / 72;
 
@@ -159,7 +150,6 @@ async function buildPdfFromImages(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
 ): Promise<{ blob: Blob; pageCount: number }> {
   const JsPDF = await getJsPDF();
-  const margin = MARGIN_MM[options.margin];
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let doc: any = null;
 
@@ -202,8 +192,8 @@ async function buildPdfFromImages(
     let pageH: number;
 
     if (options.pageSize.name === "Fit to Image") {
-      pageW = imgW * PX_TO_MM + margin * 2;
-      pageH = imgH * PX_TO_MM + margin * 2;
+      pageW = imgW * PX_TO_MM;
+      pageH = imgH * PX_TO_MM;
     } else {
       pageW = options.pageSize.width;
       pageH = options.pageSize.height;
@@ -212,11 +202,7 @@ async function buildPdfFromImages(
       }
     }
 
-    // Available area after margins
-    const availW = pageW - margin * 2;
-    const availH = pageH - margin * 2;
-
-    // Scale image to fit (contain) — never upscale beyond page
+    // Scale image to fit (contain)
     const imgWMm = imgW * PX_TO_MM;
     const imgHMm = imgH * PX_TO_MM;
     let displayW: number;
@@ -226,14 +212,14 @@ async function buildPdfFromImages(
       displayW = imgWMm;
       displayH = imgHMm;
     } else {
-      const scale = Math.min(availW / imgWMm, availH / imgHMm);
+      const scale = Math.min(pageW / imgWMm, pageH / imgHMm);
       displayW = imgWMm * scale;
       displayH = imgHMm * scale;
     }
 
-    // Center in available area
-    const x = margin + (availW - displayW) / 2;
-    const y = margin + (availH - displayH) / 2;
+    // Center image on page
+    const x = (pageW - displayW) / 2;
+    const y = (pageH - displayH) / 2;
 
     if (i === 0) {
       doc = new JsPDF({

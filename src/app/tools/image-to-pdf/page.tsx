@@ -4,7 +4,6 @@ import { useState, useCallback, useRef } from "react";
 import ToolPageLayout from "@/components/ToolPageLayout";
 import FileUploader from "@/components/FileUploader";
 import ProcessingView from "@/components/ProcessingView";
-import DownloadView from "@/components/DownloadView";
 import { getToolById } from "@/config/tools";
 import {
   convertImagesToPdf,
@@ -12,7 +11,6 @@ import {
   PAGE_SIZES,
   type ImageItem,
   type PageSize,
-  type MarginOption,
   type ConvertOptions,
   type ProcessingUpdate,
   type ImageToPdfResult,
@@ -41,6 +39,35 @@ function getRotationTransform(degrees: number): string {
   return `rotate(${norm}deg)`;
 }
 
+function computePageAspectRatio(
+  pageSize: PageSize,
+  orientation: "portrait" | "landscape",
+  imgW: number,
+  imgH: number,
+  rotation: number,
+): number {
+  if (pageSize.name === "Fit to Image") {
+    const rot = normalizeAngle(rotation);
+    const effectiveW = rot === 90 || rot === 270 ? imgH : imgW;
+    const effectiveH = rot === 90 || rot === 270 ? imgW : imgH;
+    return effectiveW / effectiveH;
+  }
+  let w = pageSize.width;
+  let h = pageSize.height;
+  if (orientation === "landscape") [w, h] = [h, w];
+  return w / h;
+}
+
+// Container inner area is ~3:4 ratio (0.75). If page AR >= 0.75, width-constrained. Else height-constrained.
+const CONTAINER_AR = 3 / 4;
+
+function getPageMockStyle(pageAR: number): React.CSSProperties {
+  if (pageAR >= CONTAINER_AR) {
+    return { width: "100%", aspectRatio: String(pageAR) };
+  }
+  return { height: "100%", aspectRatio: String(pageAR) };
+}
+
 let nextId = 0;
 function generateId(): string {
   return `img-${Date.now()}-${nextId++}`;
@@ -51,6 +78,8 @@ function generateId(): string {
 interface ImageThumbProps {
   item: ImageItem;
   index: number;
+  pageAspectRatio: number;
+  pageSizeLabel: string;
   isFirst: boolean;
   isLast: boolean;
   canMoveUp: boolean;
@@ -71,6 +100,8 @@ interface ImageThumbProps {
 function ImageThumb({
   item,
   index,
+  pageAspectRatio,
+  pageSizeLabel,
   isFirst,
   isLast,
   canMoveUp,
@@ -88,6 +119,7 @@ function ImageThumb({
   onDrop,
 }: ImageThumbProps) {
   const transform = getRotationTransform(item.rotation);
+  const mockStyle = getPageMockStyle(pageAspectRatio);
 
   return (
     <div
@@ -116,14 +148,25 @@ function ImageThumb({
         </svg>
       </button>
 
-      {/* Thumbnail */}
-      <div className="relative w-full aspect-[3/4] bg-slate-50 rounded-t-md overflow-hidden flex items-center justify-center">
-        <img
-          src={item.thumbnailUrl}
-          alt={item.file.name}
-          className="w-full h-full object-contain transition-transform duration-200"
-          style={{ transform: transform || undefined }}
-        />
+      {/* Thumbnail — page mock-up */}
+      <div className="relative w-full aspect-[3/4] bg-slate-200/40 rounded-t-md overflow-hidden flex items-center justify-center p-2.5">
+        {/* White page with correct aspect ratio */}
+        <div
+          className="relative bg-white shadow-md rounded-sm overflow-hidden flex items-center justify-center transition-all duration-200"
+          style={mockStyle}
+        >
+          <img
+            src={item.thumbnailUrl}
+            alt={item.file.name}
+            className="max-w-full max-h-full object-contain transition-transform duration-200"
+            style={{ transform: transform || undefined }}
+          />
+        </div>
+
+        {/* Page size label — bottom right */}
+        <div className="absolute bottom-1.5 right-1.5 z-10 px-1.5 py-0.5 rounded bg-slate-700/60 text-white text-[8px] font-semibold tracking-wide">
+          {pageSizeLabel}
+        </div>
 
         {/* Arrow controls — center overlay (visible on hover) */}
         <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
@@ -267,11 +310,9 @@ function RemovedImageThumb({ item, onRestore }: RemovedImageThumbProps) {
 interface SettingsPanelProps {
   globalOrientation: "portrait" | "landscape";
   pageSize: PageSize;
-  margin: MarginOption;
   mergeAll: boolean;
   onOrientationChange: (v: "portrait" | "landscape") => void;
   onPageSizeChange: (v: PageSize) => void;
-  onMarginChange: (v: MarginOption) => void;
   onMergeAllChange: (v: boolean) => void;
   onAddImages: () => void;
 }
@@ -279,11 +320,9 @@ interface SettingsPanelProps {
 function SettingsPanel({
   globalOrientation,
   pageSize,
-  margin,
   mergeAll,
   onOrientationChange,
   onPageSizeChange,
-  onMarginChange,
   onMergeAllChange,
   onAddImages,
 }: SettingsPanelProps) {
@@ -349,45 +388,6 @@ function SettingsPanel({
         </select>
       </div>
 
-      {/* Margin */}
-      <div>
-        <label className="block text-xs font-medium text-slate-600 mb-2">Margin</label>
-        <div className="grid grid-cols-3 gap-2">
-          {([
-            { value: "none" as MarginOption, label: "No margin", icon: "none" },
-            { value: "small" as MarginOption, label: "Small", icon: "small" },
-            { value: "big" as MarginOption, label: "Big", icon: "big" },
-          ]).map((opt) => (
-            <button
-              key={opt.value}
-              type="button"
-              onClick={() => onMarginChange(opt.value)}
-              className={`flex flex-col items-center gap-1.5 p-2.5 rounded-lg border-2 transition-all ${
-                margin === opt.value
-                  ? "border-accent-400 bg-accent-50/50"
-                  : "border-slate-200 hover:border-slate-300"
-              }`}
-            >
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" className={margin === opt.value ? "text-accent-500" : "text-slate-400"}>
-                <rect x="2" y="2" width="20" height="20" rx="1" stroke="currentColor" strokeWidth="1" strokeDasharray={opt.value === "none" ? "0" : "2 2"} />
-                {opt.value === "none" && (
-                  <rect x="2" y="2" width="20" height="20" rx="1" fill="currentColor" fillOpacity="0.15" />
-                )}
-                {opt.value === "small" && (
-                  <rect x="4" y="4" width="16" height="16" rx="1" fill="currentColor" fillOpacity="0.15" />
-                )}
-                {opt.value === "big" && (
-                  <rect x="6" y="6" width="12" height="12" rx="1" fill="currentColor" fillOpacity="0.15" />
-                )}
-              </svg>
-              <span className={`text-[10px] font-medium ${margin === opt.value ? "text-accent-600" : "text-slate-500"}`}>
-                {opt.label}
-              </span>
-            </button>
-          ))}
-        </div>
-      </div>
-
       {/* Merge checkbox */}
       <label className="flex items-center gap-2.5 cursor-pointer">
         <input
@@ -424,7 +424,6 @@ export default function ImageToPdfPage() {
   const [images, setImages] = useState<ImageItem[]>([]);
   const [globalOrientation, setGlobalOrientation] = useState<"portrait" | "landscape">("portrait");
   const [pageSize, setPageSize] = useState<PageSize>(PAGE_SIZES[0]); // A4
-  const [margin, setMargin] = useState<MarginOption>("none");
   const [mergeAll, setMergeAll] = useState(true);
   const [progress, setProgress] = useState<ProcessingUpdate>({ stage: "", progress: 0 });
   const [result, setResult] = useState<ImageToPdfResult | null>(null);
@@ -599,7 +598,6 @@ export default function ImageToPdfPage() {
       const options: ConvertOptions = {
         pageSize,
         globalOrientation,
-        margin,
         mergeAll,
       };
 
@@ -616,7 +614,7 @@ export default function ImageToPdfPage() {
       setStage("configure");
       alert("Failed to convert images to PDF. Please try again.");
     }
-  }, [activeImages, pageSize, globalOrientation, margin, mergeAll]);
+  }, [activeImages, pageSize, globalOrientation, mergeAll]);
 
   const handleDownload = useCallback(() => {
     if (!result) return;
@@ -637,7 +635,6 @@ export default function ImageToPdfPage() {
     setImages([]);
     setGlobalOrientation("portrait");
     setPageSize(PAGE_SIZES[0]);
-    setMargin("none");
     setMergeAll(true);
     setProgress({ stage: "", progress: 0 });
     setResult(null);
@@ -715,11 +712,17 @@ export default function ImageToPdfPage() {
             {/* Thumbnail grid */}
             <div className="flex-1 min-w-0">
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                {activeImages.map((item, posIdx) => (
+                {activeImages.map((item, posIdx) => {
+                  const effectiveOrientation = item.orientation !== "auto" ? item.orientation : globalOrientation;
+                  const pageAR = computePageAspectRatio(pageSize, effectiveOrientation, item.width, item.height, item.rotation);
+                  const label = pageSize.name === "Fit to Image" ? "Fit" : pageSize.name;
+                  return (
                   <ImageThumb
                     key={item.id}
                     item={item}
                     index={posIdx}
+                    pageAspectRatio={pageAR}
+                    pageSizeLabel={`${label} · ${effectiveOrientation === "landscape" ? "L" : "P"}`}
                     isFirst={posIdx === 0}
                     isLast={posIdx === activeImages.length - 1}
                     canMoveUp={posIdx >= GRID_COLS}
@@ -736,7 +739,8 @@ export default function ImageToPdfPage() {
                     onDragOver={onDragOverFactory()}
                     onDrop={onDropFactory(posIdx)}
                   />
-                ))}
+                  );
+                })}
               </div>
             </div>
 
@@ -746,11 +750,9 @@ export default function ImageToPdfPage() {
                 <SettingsPanel
                   globalOrientation={globalOrientation}
                   pageSize={pageSize}
-                  margin={margin}
                   mergeAll={mergeAll}
                   onOrientationChange={setGlobalOrientation}
                   onPageSizeChange={setPageSize}
-                  onMarginChange={setMargin}
                   onMergeAllChange={setMergeAll}
                   onAddImages={handleAddImages}
                 />
@@ -789,7 +791,7 @@ export default function ImageToPdfPage() {
                 )}
               </div>
               <div className="text-xs text-slate-400">
-                {pageSize.name} · {globalOrientation} · {margin === "none" ? "no margin" : margin + " margin"}
+                {pageSize.name} · {globalOrientation}
               </div>
             </div>
 
@@ -826,12 +828,58 @@ export default function ImageToPdfPage() {
       {/* Done */}
       {stage === "done" && result && (
         <>
-          <DownloadView
-            fileName={result.fileName}
-            fileSize={formatFileSize(result.totalSize)}
-            onDownload={handleDownload}
-            onReset={handleReset}
-          />
+          <div className="w-full max-w-lg mx-auto text-center">
+            {/* Success icon */}
+            <div className="w-16 h-16 mx-auto mb-5 rounded-2xl bg-emerald-50 flex items-center justify-center">
+              <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-emerald-500">
+                <polyline points="20 6 9 17 4 12" />
+              </svg>
+            </div>
+
+            <h3 className="text-xl font-bold text-slate-900 mb-1">Conversion complete!</h3>
+            <p className="text-sm text-slate-500 mb-6">Your PDF is ready to download.</p>
+
+            {/* File info card */}
+            <div className="flex items-center gap-4 p-4 bg-slate-50 rounded-xl mb-6">
+              <div className="w-10 h-10 rounded-lg bg-white border border-slate-200 flex items-center justify-center shrink-0">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-slate-400">
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                  <polyline points="14 2 14 8 20 8" />
+                </svg>
+              </div>
+              <div className="text-left min-w-0">
+                <p className="text-sm font-medium text-slate-900 truncate">{result.fileName}</p>
+                <p className="text-xs text-slate-500">{formatFileSize(result.totalSize)}</p>
+              </div>
+            </div>
+
+            {/* 3 action buttons */}
+            <div className="flex flex-col sm:flex-row items-center gap-3">
+              <button
+                onClick={handleDownload}
+                className="w-full sm:w-auto flex-1 flex items-center justify-center gap-2 px-6 py-3 bg-accent-500 text-white font-semibold rounded-xl hover:bg-accent-600 active:bg-accent-700 transition-colors shadow-md shadow-accent-500/25"
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                  <polyline points="7 10 12 15 17 10" />
+                  <line x1="12" y1="15" x2="12" y2="3" />
+                </svg>
+                Download
+              </button>
+              <button
+                onClick={() => setStage("configure")}
+                className="w-full sm:w-auto px-5 py-3 text-slate-600 font-medium rounded-xl border border-slate-200 hover:bg-slate-50 transition-colors"
+              >
+                Back to Edit
+              </button>
+              <button
+                onClick={handleReset}
+                className="w-full sm:w-auto px-5 py-3 text-slate-600 font-medium rounded-xl border border-slate-200 hover:bg-slate-50 transition-colors"
+              >
+                Process Another
+              </button>
+            </div>
+          </div>
 
           <div className="mt-6 flex items-center justify-center gap-6 text-sm text-slate-500">
             <div className="flex items-center gap-1.5">
@@ -889,7 +937,7 @@ export default function ImageToPdfPage() {
             {
               step: "2",
               title: "Configure",
-              desc: "Set page size, orientation, and margins. Reorder, rotate, or remove images.",
+              desc: "Set page size and orientation. Reorder, rotate, or remove images.",
             },
             {
               step: "3",
