@@ -389,6 +389,19 @@ export const tools: ToolConfig[] = [
     isAvailable: true,
   },
   {
+    id: "remove-and-change-background",
+    name: "Remove & Change Background",
+    description:
+      "Remove image background using AI and optionally replace it with a solid color or custom image. 100% client-side.",
+    category: "compress",
+    icon: "Sparkles",
+    route: "/tools/remove-and-change-background",
+    accentColor: "amber",
+    inputFormats: [".jpg", ".jpeg", ".png"],
+    outputFormats: [".png"],
+    isAvailable: true,
+  },
+  {
     id: "rotate-image",
     name: "Rotate Image",
     description:
@@ -419,7 +432,7 @@ export const SECTIONS: ToolSection[] = [
   },
   {
     label: "Image Utilities",
-    toolIds: ["compress-image", "crop-image", "image-watermark-remove", "rotate-image"],
+    toolIds: ["compress-image", "crop-image", "image-watermark-remove", "remove-and-change-background", "rotate-image"],
   },
   {
     label: "PDF",
