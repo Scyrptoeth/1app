@@ -184,8 +184,13 @@ export interface CropEditorProps {
   naturalHeight: number;
   showRotation?: boolean;
   onCrop: (cropArea: CropArea, rotation: 0 | 90 | 180 | 270) => void;
-  onCancel?: () => void;
   actionLabel?: string;
+  /** Navigate to rotate editor (applies crop first). Only shown when provided. */
+  onNavigateRotate?: (cropArea: CropArea, rotation: 0 | 90 | 180 | 270) => void;
+  /** Direct download (applies crop first). Only shown when provided. */
+  onDownload?: (cropArea: CropArea, rotation: 0 | 90 | 180 | 270) => void;
+  /** Disables all action buttons while processing. */
+  isProcessing?: boolean;
 }
 
 export default function CropEditor({
@@ -194,8 +199,10 @@ export default function CropEditor({
   naturalHeight,
   showRotation = true,
   onCrop,
-  onCancel,
   actionLabel = "Crop IMAGE",
+  onNavigateRotate,
+  onDownload,
+  isProcessing = false,
 }: CropEditorProps) {
   const [rotation, setRotation] = useState<0 | 90 | 180 | 270>(0);
   const [cropArea, setCropArea] = useState<CropArea>({
@@ -206,6 +213,13 @@ export default function CropEditor({
   });
   const [aspectRatio, setAspectRatio] = useState("free");
   const [scale, setScale] = useState(1);
+
+  // Reset crop state when image dimensions change (e.g. after crop is applied)
+  useEffect(() => {
+    setCropArea({ x: 0, y: 0, width: naturalWidth, height: naturalHeight });
+    setAspectRatio("free");
+    setRotation(0);
+  }, [naturalWidth, naturalHeight]);
 
   const editorRef = useRef<HTMLDivElement>(null);
   const interactionRef = useRef<{
@@ -637,21 +651,37 @@ export default function CropEditor({
           <div className="space-y-3 pt-2">
             <button
               onClick={() => onCrop(cropArea, rotation)}
-              className="w-full py-3 bg-accent-500 text-white font-semibold rounded-xl hover:bg-accent-600 active:bg-accent-700 transition-colors shadow-md shadow-accent-500/25 text-sm"
+              disabled={isProcessing}
+              className={`w-full py-3 font-semibold rounded-xl transition-colors text-sm ${
+                isProcessing
+                  ? "bg-slate-300 text-slate-500 cursor-not-allowed"
+                  : "bg-accent-500 text-white hover:bg-accent-600 active:bg-accent-700 shadow-md shadow-accent-500/25"
+              }`}
             >
-              {actionLabel}
+              {isProcessing ? "Processing..." : actionLabel}
             </button>
-            {onCancel && (
+            {onNavigateRotate && (
               <button
-                onClick={onCancel}
-                className="w-full py-2.5 text-accent-600 font-medium border border-accent-200 rounded-xl hover:bg-accent-50 transition-colors text-sm"
+                onClick={() => onNavigateRotate(cropArea, rotation)}
+                disabled={isProcessing}
+                className="w-full py-2.5 text-accent-600 font-medium border border-accent-200 rounded-xl hover:bg-accent-50 transition-colors text-sm disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                Back
+                Rotate Image
+              </button>
+            )}
+            {onDownload && (
+              <button
+                onClick={() => onDownload(cropArea, rotation)}
+                disabled={isProcessing}
+                className="w-full py-2.5 text-accent-600 font-medium border border-accent-200 rounded-xl hover:bg-accent-50 transition-colors text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Download
               </button>
             )}
             <button
               onClick={handleResetAll}
-              className="w-full py-2.5 text-slate-600 font-medium border border-slate-200 rounded-xl hover:bg-slate-50 transition-colors text-sm"
+              disabled={isProcessing}
+              className="w-full py-2.5 text-slate-600 font-medium border border-slate-200 rounded-xl hover:bg-slate-50 transition-colors text-sm disabled:opacity-50 disabled:cursor-not-allowed"
             >
               Reset All
             </button>
