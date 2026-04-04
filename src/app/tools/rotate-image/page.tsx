@@ -620,39 +620,14 @@ export default function RotateImagePage() {
               Flip V
             </button>
 
-            {/* Reset All */}
-            <button
-              onClick={handleResetAll}
-              disabled={!hasTransform}
-              className={`flex items-center gap-1.5 px-3 py-2 text-sm font-medium border rounded-lg transition-colors ${
-                hasTransform
-                  ? "border-slate-200 hover:bg-slate-50 text-slate-700"
-                  : "border-slate-100 text-slate-300 cursor-not-allowed"
-              }`}
-            >
-              <svg
-                width="16"
-                height="16"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
-                <path d="M3 3v5h5" />
-              </svg>
-              Reset All
-            </button>
           </div>
 
-          {/* Actions */}
-          <div className="mt-8 flex flex-col sm:flex-row items-center justify-center gap-3 max-w-md mx-auto">
+          {/* Actions — 3 equal-width buttons */}
+          <div className="mt-8 flex flex-col sm:flex-row items-center justify-center gap-3 max-w-xl mx-auto">
             <button
               onClick={handleDownload}
               disabled={!hasTransform}
-              className={`w-full sm:w-auto flex-1 flex items-center justify-center gap-2 px-6 py-3 font-semibold rounded-xl transition-colors text-sm ${
+              className={`w-full sm:w-auto flex-1 flex items-center justify-center gap-2 px-4 py-3 font-semibold rounded-xl transition-colors text-sm ${
                 hasTransform
                   ? "bg-accent-500 text-white hover:bg-accent-600 active:bg-accent-700 shadow-md shadow-accent-500/25"
                   : "bg-slate-200 text-slate-400 cursor-not-allowed"
@@ -677,7 +652,7 @@ export default function RotateImagePage() {
             <button
               onClick={handleEnterCropMode}
               disabled={cropLoading}
-              className="w-full sm:w-auto flex-1 flex items-center justify-center gap-2 px-6 py-3 text-accent-600 font-semibold rounded-xl border border-accent-200 hover:bg-accent-50 transition-colors text-sm"
+              className="w-full sm:w-auto flex-1 flex items-center justify-center gap-2 px-4 py-3 text-accent-600 font-semibold rounded-xl border border-accent-200 hover:bg-accent-50 transition-colors text-sm"
             >
               <svg
                 width="18"
@@ -694,6 +669,30 @@ export default function RotateImagePage() {
                 <rect x="7" y="6" width="10" height="12" rx="1" />
               </svg>
               {cropLoading ? "Preparing..." : "Crop Image"}
+            </button>
+            <button
+              onClick={handleResetAll}
+              disabled={!hasTransform}
+              className={`w-full sm:w-auto flex-1 flex items-center justify-center gap-2 px-4 py-3 font-semibold rounded-xl transition-colors text-sm ${
+                hasTransform
+                  ? "text-slate-600 border border-slate-200 hover:bg-slate-50"
+                  : "text-slate-300 border border-slate-100 cursor-not-allowed"
+              }`}
+            >
+              <svg
+                width="18"
+                height="18"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+                <path d="M3 3v5h5" />
+              </svg>
+              Reset All
             </button>
           </div>
         </div>
