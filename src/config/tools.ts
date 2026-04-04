@@ -388,6 +388,19 @@ export const tools: ToolConfig[] = [
     outputFormats: [".pdf"],
     isAvailable: true,
   },
+  {
+    id: "rotate-image",
+    name: "Rotate Image",
+    description:
+      "Rotate, flip, and crop images with precision. Supports 90° rotation, horizontal/vertical flip, and integrated cropping.",
+    category: "compress",
+    icon: "RotateCw",
+    route: "/tools/rotate-image",
+    accentColor: "amber",
+    inputFormats: [".jpg", ".jpeg", ".png"],
+    outputFormats: [".jpg", ".jpeg", ".png"],
+    isAvailable: true,
+  },
 ];
 
 export interface ToolSection {
@@ -406,7 +419,7 @@ export const SECTIONS: ToolSection[] = [
   },
   {
     label: "Image Utilities",
-    toolIds: ["compress-image", "crop-image", "image-watermark-remove"],
+    toolIds: ["compress-image", "crop-image", "image-watermark-remove", "rotate-image"],
   },
   {
     label: "PDF",
