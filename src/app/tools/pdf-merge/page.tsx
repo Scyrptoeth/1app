@@ -153,18 +153,34 @@ function FileCard({
   );
 }
 
+function normalizeAngle(a: number): number {
+  return ((a % 360) + 360) % 360;
+}
+
+function getRotationTransform(deg: number): string {
+  const n = normalizeAngle(deg);
+  if (n === 0) return "";
+  if (n === 90) return "rotate(90deg) scale(0.75)";
+  if (n === 180) return "rotate(180deg)";
+  if (n === 270) return "rotate(270deg) scale(0.75)";
+  return `rotate(${n}deg)`;
+}
+
 // ─── Page Thumbnail Card (Active Pages Only) ──────────────────────
 
 interface PageThumbProps {
   page: PageInfo;
   /** 0-based display index among active pages */
   displayIndex: number;
+  rotation: number;
   isFirst: boolean;
   isLast: boolean;
   canMoveUp: boolean;
   canMoveDown: boolean;
   canRemove: boolean;
   onRemove: () => void;
+  onRotateLeft: () => void;
+  onRotateRight: () => void;
   onMoveLeft: () => void;
   onMoveRight: () => void;
   onMoveUp: () => void;
@@ -177,12 +193,15 @@ interface PageThumbProps {
 function PageThumb({
   page,
   displayIndex,
+  rotation,
   isFirst,
   isLast,
   canMoveUp,
   canMoveDown,
   canRemove,
   onRemove,
+  onRotateLeft,
+  onRotateRight,
   onMoveLeft,
   onMoveRight,
   onMoveUp,
@@ -191,6 +210,7 @@ function PageThumb({
   onDragOver,
   onDrop,
 }: PageThumbProps) {
+  const transform = getRotationTransform(rotation);
   const observerRef = useRef<HTMLDivElement>(null);
   const [visible, setVisible] = useState(false);
 
@@ -225,7 +245,8 @@ function PageThumb({
           <img
             src={page.thumbnailUrl}
             alt={page.pageLabel}
-            className="w-full h-full object-contain"
+            className="w-full h-full object-contain transition-transform duration-200"
+            style={{ transform: transform || undefined }}
           />
         ) : (
           <div className="w-full h-full flex items-center justify-center text-slate-300">
@@ -306,11 +327,21 @@ function PageThumb({
         </button>
       </div>
 
-      {/* Info bar */}
+      {/* Info bar + rotation controls */}
       <div className="px-2 py-1.5 border-t border-slate-100">
-        <p className="text-[10px] font-medium text-slate-700 truncate">
-          Page {page.pageIndex + 1}
-        </p>
+        <div className="flex items-center justify-between">
+          <p className="text-[10px] font-medium text-slate-700 truncate">
+            Page {page.pageIndex + 1}{rotation !== 0 && <span className="text-slate-400"> · {normalizeAngle(rotation)}°</span>}
+          </p>
+          <div className="flex items-center gap-0.5 shrink-0">
+            <button type="button" onClick={(e) => { e.stopPropagation(); onRotateLeft(); }} className="p-0.5 rounded text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors" aria-label="Rotate left" title="Rotate left 90°">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M1 4v6h6" /><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" /></svg>
+            </button>
+            <button type="button" onClick={(e) => { e.stopPropagation(); onRotateRight(); }} className="p-0.5 rounded text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors" aria-label="Rotate right" title="Rotate right 90°">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M23 4v6h-6" /><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" /></svg>
+            </button>
+          </div>
+        </div>
         <span className={`inline-block mt-0.5 px-1.5 py-0.5 text-[9px] font-medium rounded-full ${getFileColor(page.fileIndex)}`}>
           {page.fileName.length > 20 ? page.fileName.slice(0, 18) + "..." : page.fileName}
         </span>
@@ -391,6 +422,7 @@ export default function PdfMergePage() {
   const [loadingPages, setLoadingPages] = useState(false);
   const [progress, setProgress] = useState<ProcessingUpdate>({ progress: 0, status: "" });
   const [result, setResult] = useState<MergePdfResult | null>(null);
+  const [rotations, setRotations] = useState<Map<string, number>>(new Map());
 
   // File thumbnails (first page of each file)
   const [fileThumbnails, setFileThumbnails] = useState<Record<number, string>>({});
@@ -616,6 +648,7 @@ export default function PdfMergePage() {
       const mergeResult = await mergePdfs({
         files,
         pageOrder: finalPages,
+        rotations: rotations.size > 0 ? rotations : undefined,
         onProgress: (update) => setProgress(update),
       });
       setResult(mergeResult);
@@ -653,6 +686,18 @@ export default function PdfMergePage() {
     setStage("configure");
     setProgress({ progress: 0, status: "" });
     setResult(null);
+  }, []);
+
+  // ─── Rotate page ──────────────────────────────────────────────
+
+  const rotatePage = useCallback((fileIndex: number, pageIndex: number, delta: number) => {
+    const key = `${fileIndex}-${pageIndex}`;
+    setRotations(prev => {
+      const next = new Map(prev);
+      const cur = next.get(key) || 0;
+      next.set(key, normalizeAngle(cur + delta));
+      return next;
+    });
   }, []);
 
   // ─── Drag handlers (shared) ────────────────────────────────────
@@ -797,12 +842,15 @@ export default function PdfMergePage() {
                       key={`page-${page.fileIndex}-${page.pageIndex}-${fullIdx}`}
                       page={page}
                       displayIndex={activeIdx}
+                      rotation={rotations.get(`${page.fileIndex}-${page.pageIndex}`) || 0}
                       isFirst={activeIdx === 0}
                       isLast={activeIdx === activePages.length - 1}
                       canMoveUp={activeIdx >= 3}
                       canMoveDown={activeIdx + 3 <= activePages.length - 1}
                       canRemove={includedPageCount > 1}
                       onRemove={() => removePage(fullIdx)}
+                      onRotateLeft={() => rotatePage(page.fileIndex, page.pageIndex, -90)}
+                      onRotateRight={() => rotatePage(page.fileIndex, page.pageIndex, 90)}
                       onMoveLeft={() => moveActivePage(activeIdx, activeIdx - 1)}
                       onMoveRight={() => moveActivePage(activeIdx, activeIdx + 1)}
                       onMoveUp={() => moveActivePage(activeIdx, Math.max(0, activeIdx - 3))}

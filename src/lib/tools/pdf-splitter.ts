@@ -1,4 +1,4 @@
-import { PDFDocument } from "pdf-lib";
+import { PDFDocument, degrees } from "pdf-lib";
 
 export interface ProcessingUpdate {
   progress: number;
@@ -26,6 +26,7 @@ export interface SplitPdfResult {
 export interface SplitPdfOptions {
   file: File;
   groups: SplitGroup[];
+  rotations?: Map<number, number>;
   onProgress?: (update: ProcessingUpdate) => void;
 }
 
@@ -82,7 +83,7 @@ export async function getPdfPageCount(file: File): Promise<number> {
 export async function splitPdf(
   options: SplitPdfOptions
 ): Promise<SplitPdfResult> {
-  const { file, groups, onProgress } = options;
+  const { file, groups, rotations, onProgress } = options;
 
   const report = (progress: number, status: string) => {
     onProgress?.({ progress, status });
@@ -124,6 +125,10 @@ export async function splitPdf(
 
     for (const pageIndex of group.pageIndices) {
       const [copiedPage] = await newDoc.copyPages(sourceDoc, [pageIndex]);
+      const rotation = rotations?.get(pageIndex) || 0;
+      if (rotation !== 0) {
+        copiedPage.setRotation(degrees(rotation));
+      }
       newDoc.addPage(copiedPage);
       processedPages++;
 

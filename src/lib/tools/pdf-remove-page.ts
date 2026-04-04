@@ -54,11 +54,12 @@ export async function getPageDimensions(file: File): Promise<PageDimensions[]> {
 export async function removePages(
   file: File,
   pageOrder: number[],
-  onProgress: (update: ProcessingUpdate) => void
+  onProgress: (update: ProcessingUpdate) => void,
+  rotations?: Map<number, number>
 ): Promise<RemovePageResult> {
   onProgress({ progress: 10, status: "Loading PDF..." });
 
-  const { PDFDocument } = await import("pdf-lib");
+  const { PDFDocument, degrees } = await import("pdf-lib");
 
   const arrayBuffer = await file.arrayBuffer();
   const srcDoc = await PDFDocument.load(arrayBuffer, { ignoreEncryption: true });
@@ -74,6 +75,10 @@ export async function removePages(
   for (let i = 0; i < pageOrder.length; i++) {
     const srcIndex = pageOrder[i];
     const [copiedPage] = await newDoc.copyPages(srcDoc, [srcIndex]);
+    const rotation = rotations?.get(srcIndex) || 0;
+    if (rotation !== 0) {
+      copiedPage.setRotation(degrees(rotation));
+    }
     newDoc.addPage(copiedPage);
 
     onProgress({

@@ -47,11 +47,25 @@ function nextGroupId(): string {
 // Grid columns constant for up/down arrow movement
 const GRID_COLS = 3;
 
+function normalizeAngle(a: number): number {
+  return ((a % 360) + 360) % 360;
+}
+
+function getRotationTransform(deg: number): string {
+  const n = normalizeAngle(deg);
+  if (n === 0) return "";
+  if (n === 90) return "rotate(90deg) scale(0.75)";
+  if (n === 180) return "rotate(180deg)";
+  if (n === 270) return "rotate(270deg) scale(0.75)";
+  return `rotate(${n}deg)`;
+}
+
 // ─── Page Thumbnail in a Group ─────────────────────────────────────
 
 interface PageThumbInGroupProps {
   pageIndex: number; // 0-based original page index
   thumbnailUrl?: string;
+  rotation: number;
   canRemove: boolean;
   isFirst: boolean;
   isLast: boolean;
@@ -62,6 +76,8 @@ interface PageThumbInGroupProps {
   onMoveUp: () => void;
   onMoveDown: () => void;
   onRemove: () => void;
+  onRotateLeft: () => void;
+  onRotateRight: () => void;
   onDragStart: (e: React.DragEvent) => void;
   onDragOver: (e: React.DragEvent) => void;
   onDrop: (e: React.DragEvent) => void;
@@ -70,6 +86,7 @@ interface PageThumbInGroupProps {
 function PageThumbInGroup({
   pageIndex,
   thumbnailUrl,
+  rotation,
   canRemove,
   isFirst,
   isLast,
@@ -80,10 +97,13 @@ function PageThumbInGroup({
   onMoveUp,
   onMoveDown,
   onRemove,
+  onRotateLeft,
+  onRotateRight,
   onDragStart,
   onDragOver,
   onDrop,
 }: PageThumbInGroupProps) {
+  const transform = getRotationTransform(rotation);
   const observerRef = useRef<HTMLDivElement>(null);
   const [visible, setVisible] = useState(false);
 
@@ -118,7 +138,8 @@ function PageThumbInGroup({
           <img
             src={thumbnailUrl}
             alt={`Page ${pageIndex + 1}`}
-            className="w-full h-full object-contain"
+            className="w-full h-full object-contain transition-transform duration-200"
+            style={{ transform: transform || undefined }}
           />
         ) : (
           <div className="w-full h-full flex items-center justify-center text-slate-300">
@@ -199,11 +220,19 @@ function PageThumbInGroup({
         </button>
       </div>
 
-      {/* Page number label */}
-      <div className="px-2 py-1.5 border-t border-slate-100 text-center">
+      {/* Page number + rotation controls */}
+      <div className="flex items-center justify-between px-2 py-1.5 border-t border-slate-100">
         <p className="text-[10px] font-medium text-slate-600">
-          Page {pageIndex + 1}
+          Page {pageIndex + 1}{rotation !== 0 && <span className="text-slate-400"> · {normalizeAngle(rotation)}°</span>}
         </p>
+        <div className="flex items-center gap-0.5 shrink-0">
+          <button type="button" onClick={(e) => { e.stopPropagation(); onRotateLeft(); }} className="p-0.5 rounded text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors" aria-label="Rotate left" title="Rotate left 90°">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M1 4v6h6" /><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" /></svg>
+          </button>
+          <button type="button" onClick={(e) => { e.stopPropagation(); onRotateRight(); }} className="p-0.5 rounded text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors" aria-label="Rotate right" title="Rotate right 90°">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M23 4v6h-6" /><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" /></svg>
+          </button>
+        </div>
       </div>
 
       {/* Order badge */}
@@ -281,6 +310,7 @@ export default function SplitPdfPage() {
   const [result, setResult] = useState<SplitPdfResult | null>(null);
   const [loadingThumbnails, setLoadingThumbnails] = useState(false);
   const [removedPages, setRemovedPages] = useState<number[]>([]);
+  const [rotations, setRotations] = useState<Map<number, number>>(new Map());
 
   const dragDataRef = useRef<{ pageIndex: number; fromGroupId: string } | null>(null);
 
@@ -405,6 +435,17 @@ export default function SplitPdfPage() {
     []
   );
 
+  // ─── Rotate ────────────────────────────────────────────────────
+
+  const rotatePage = useCallback((pageIdx: number, delta: number) => {
+    setRotations(prev => {
+      const next = new Map(prev);
+      const cur = next.get(pageIdx) || 0;
+      next.set(pageIdx, normalizeAngle(cur + delta));
+      return next;
+    });
+  }, []);
+
   // ─── Remove / Restore pages ─────────────────────────────────────
 
   const removePageFromGroup = useCallback((groupId: string, posIdx: number) => {
@@ -525,6 +566,7 @@ export default function SplitPdfPage() {
       const splitResult = await splitPdf({
         file,
         groups,
+        rotations: rotations.size > 0 ? rotations : undefined,
         onProgress: (update) => setProgress(update),
       });
       setResult(splitResult);
@@ -692,6 +734,7 @@ export default function SplitPdfPage() {
                             key={`${group.id}-${pageIdx}`}
                             pageIndex={pageIdx}
                             thumbnailUrl={thumbnails[pageIdx]}
+                            rotation={rotations.get(pageIdx) || 0}
                             canRemove={totalActivePages > 1}
                             isFirst={posIdx === 0}
                             isLast={posIdx === group.pageIndices.length - 1}
@@ -713,6 +756,8 @@ export default function SplitPdfPage() {
                                 movePageWithinGroup(group.id, posIdx, Math.min(group.pageIndices.length - 1, posIdx + GRID_COLS));
                             }}
                             onRemove={() => removePageFromGroup(group.id, posIdx)}
+                            onRotateLeft={() => rotatePage(pageIdx, -90)}
+                            onRotateRight={() => rotatePage(pageIdx, 90)}
                             onDragStart={onPageDragStart(pageIdx, group.id)}
                             onDragOver={onPageDragOverInGroup()}
                             onDrop={onPageDropInGroup(group.id, posIdx)}

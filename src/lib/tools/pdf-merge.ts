@@ -1,4 +1,4 @@
-import { PDFDocument } from "pdf-lib";
+import { PDFDocument, degrees } from "pdf-lib";
 
 export interface ProcessingUpdate {
   progress: number;
@@ -19,6 +19,7 @@ export interface PageInfo {
 export interface MergePdfOptions {
   files: File[];
   pageOrder: PageInfo[];
+  rotations?: Map<string, number>;
   onProgress?: (update: ProcessingUpdate) => void;
 }
 
@@ -107,7 +108,7 @@ export async function renderThumbnail(
 export async function mergePdfs(
   options: MergePdfOptions
 ): Promise<MergePdfResult> {
-  const { files, pageOrder, onProgress } = options;
+  const { files, pageOrder, rotations, onProgress } = options;
 
   const report = (progress: number, status: string) => {
     onProgress?.({ progress, status });
@@ -151,6 +152,11 @@ export async function mergePdfs(
     const [copiedPage] = await mergedDoc.copyPages(sourceDoc, [
       pageInfo.pageIndex,
     ]);
+    const rotationKey = `${pageInfo.fileIndex}-${pageInfo.pageIndex}`;
+    const rotation = rotations?.get(rotationKey) || 0;
+    if (rotation !== 0) {
+      copiedPage.setRotation(degrees(rotation));
+    }
     mergedDoc.addPage(copiedPage);
 
     report(

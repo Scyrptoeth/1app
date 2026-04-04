@@ -30,12 +30,26 @@ function formatDimensions(dims: PageDimensions): string {
   return `${Math.round(dims.width)} × ${Math.round(dims.height)} pts`;
 }
 
+function normalizeAngle(a: number): number {
+  return ((a % 360) + 360) % 360;
+}
+
+function getRotationTransform(deg: number): string {
+  const n = normalizeAngle(deg);
+  if (n === 0) return "";
+  if (n === 90) return "rotate(90deg) scale(0.75)";
+  if (n === 180) return "rotate(180deg)";
+  if (n === 270) return "rotate(270deg) scale(0.75)";
+  return `rotate(${n}deg)`;
+}
+
 // ─── Active Page Thumbnail ─────────────────────────────────────────
 
 interface ActivePageThumbProps {
   pageIndex: number;
   thumbnailUrl?: string;
   dimensions?: PageDimensions;
+  rotation: number;
   isFirst: boolean;
   isLast: boolean;
   canMoveUp: boolean;
@@ -46,6 +60,8 @@ interface ActivePageThumbProps {
   onMoveUp: () => void;
   onMoveDown: () => void;
   onRemove: () => void;
+  onRotateLeft: () => void;
+  onRotateRight: () => void;
   onDragStart: (e: React.DragEvent) => void;
   onDragOver: (e: React.DragEvent) => void;
   onDrop: (e: React.DragEvent) => void;
@@ -55,6 +71,7 @@ function ActivePageThumb({
   pageIndex,
   thumbnailUrl,
   dimensions,
+  rotation,
   isFirst,
   isLast,
   canMoveUp,
@@ -65,10 +82,13 @@ function ActivePageThumb({
   onMoveUp,
   onMoveDown,
   onRemove,
+  onRotateLeft,
+  onRotateRight,
   onDragStart,
   onDragOver,
   onDrop,
 }: ActivePageThumbProps) {
+  const transform = getRotationTransform(rotation);
   const observerRef = useRef<HTMLDivElement>(null);
   const [visible, setVisible] = useState(false);
 
@@ -122,7 +142,8 @@ function ActivePageThumb({
           <img
             src={thumbnailUrl}
             alt={`Page ${pageIndex + 1}`}
-            className="w-full h-full object-contain"
+            className="w-full h-full object-contain transition-transform duration-200"
+            style={{ transform: transform || undefined }}
           />
         ) : (
           <div className="text-slate-300">
@@ -186,16 +207,26 @@ function ActivePageThumb({
         </div>
       </div>
 
-      {/* Info bar */}
-      <div className="px-2 py-1.5 border-t border-slate-100">
-        <p className="text-[10px] font-medium text-slate-600">
-          Page {pageIndex + 1}
-        </p>
-        {dimensions && (
-          <p className="text-[9px] text-slate-400">
-            {formatDimensions(dimensions)}
+      {/* Info bar + rotation controls */}
+      <div className="flex items-center justify-between px-2 py-1.5 border-t border-slate-100">
+        <div className="min-w-0">
+          <p className="text-[10px] font-medium text-slate-600">
+            Page {pageIndex + 1}
           </p>
-        )}
+          {dimensions && (
+            <p className="text-[9px] text-slate-400">
+              {formatDimensions(dimensions)}{rotation !== 0 && ` · ${normalizeAngle(rotation)}°`}
+            </p>
+          )}
+        </div>
+        <div className="flex items-center gap-0.5 shrink-0 ml-1">
+          <button type="button" onClick={(e) => { e.stopPropagation(); onRotateLeft(); }} className="p-1 rounded text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors" aria-label="Rotate left" title="Rotate left 90°">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M1 4v6h6" /><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" /></svg>
+          </button>
+          <button type="button" onClick={(e) => { e.stopPropagation(); onRotateRight(); }} className="p-1 rounded text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors" aria-label="Rotate right" title="Rotate right 90°">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M23 4v6h-6" /><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" /></svg>
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -265,6 +296,7 @@ export default function RemovePagePdfPage() {
   const [dimensions, setDimensions] = useState<PageDimensions[]>([]);
   const [activePages, setActivePages] = useState<number[]>([]);
   const [removedPages, setRemovedPages] = useState<number[]>([]);
+  const [rotations, setRotations] = useState<Map<number, number>>(new Map());
   const [progress, setProgress] = useState<ProcessingUpdate>({ progress: 0, status: "" });
   const [result, setResult] = useState<RemovePageResult | null>(null);
   const [loadingThumbnails, setLoadingThumbnails] = useState(false);
@@ -273,7 +305,9 @@ export default function RemovePagePdfPage() {
 
   // ─── Computed ──────────────────────────────────────────────────
 
+  const hasRotations = rotations.size > 0 && Array.from(rotations.values()).some(v => v !== 0);
   const hasRemovedPages = removedPages.length > 0;
+  const hasChanges = hasRemovedPages || hasRotations;
 
   // ─── File handling ─────────────────────────────────────────────
 
@@ -363,11 +397,23 @@ export default function RemovePagePdfPage() {
     dragIndexRef.current = -1;
   }, [movePage]);
 
+  // ─── Rotate ────────────────────────────────────────────────────
+
+  const rotatePage = useCallback((pageIdx: number, delta: number) => {
+    setRotations(prev => {
+      const next = new Map(prev);
+      const cur = next.get(pageIdx) || 0;
+      next.set(pageIdx, normalizeAngle(cur + delta));
+      return next;
+    });
+  }, []);
+
   // ─── Reset ─────────────────────────────────────────────────────
 
   const resetAll = useCallback(() => {
     setActivePages(Array.from({ length: pageCount }, (_, i) => i));
     setRemovedPages([]);
+    setRotations(new Map());
   }, [pageCount]);
 
   // ─── Process & Download ────────────────────────────────────────
@@ -377,7 +423,7 @@ export default function RemovePagePdfPage() {
     setStage("processing");
 
     try {
-      const processResult = await removePages(file, activePages, (update) => setProgress(update));
+      const processResult = await removePages(file, activePages, (update) => setProgress(update), rotations);
       setResult(processResult);
       setStage("done");
     } catch (err) {
@@ -385,7 +431,7 @@ export default function RemovePagePdfPage() {
       setStage("configure");
       alert("Failed to process PDF. The file may be corrupted or encrypted.");
     }
-  }, [file, activePages]);
+  }, [file, activePages, rotations]);
 
   const handleDownload = useCallback(() => {
     if (!result) return;
@@ -406,6 +452,7 @@ export default function RemovePagePdfPage() {
     setDimensions([]);
     setActivePages([]);
     setRemovedPages([]);
+    setRotations(new Map());
     setProgress({ progress: 0, status: "" });
     setResult(null);
   }, []);
@@ -495,6 +542,7 @@ export default function RemovePagePdfPage() {
                 pageIndex={pageIdx}
                 thumbnailUrl={thumbnails[pageIdx]}
                 dimensions={dimensions[pageIdx]}
+                rotation={rotations.get(pageIdx) || 0}
                 isFirst={posIdx === 0}
                 isLast={posIdx === activePages.length - 1}
                 canMoveUp={posIdx >= GRID_COLS}
@@ -505,6 +553,8 @@ export default function RemovePagePdfPage() {
                 onMoveUp={() => { if (posIdx >= GRID_COLS) movePage(posIdx, Math.max(0, posIdx - GRID_COLS)); }}
                 onMoveDown={() => { if (posIdx + GRID_COLS <= activePages.length - 1) movePage(posIdx, Math.min(activePages.length - 1, posIdx + GRID_COLS)); }}
                 onRemove={() => removePage(posIdx)}
+                onRotateLeft={() => rotatePage(pageIdx, -90)}
+                onRotateRight={() => rotatePage(pageIdx, 90)}
                 onDragStart={onDragStartFactory(posIdx)}
                 onDragOver={onDragOverFactory()}
                 onDrop={onDropFactory(posIdx)}
@@ -557,12 +607,12 @@ export default function RemovePagePdfPage() {
               <button
                 type="button"
                 onClick={handleProcess}
-                disabled={activePages.length === 0 || !hasRemovedPages}
+                disabled={activePages.length === 0 || !hasChanges}
                 className="flex-1 px-4 py-2.5 text-sm font-medium text-white bg-slate-900 hover:bg-slate-800 rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 {hasRemovedPages
                   ? `Remove ${removedPages.length} Page${removedPages.length !== 1 ? "s" : ""} & Download`
-                  : "Remove Pages & Download"}
+                  : "Download PDF"}
               </button>
             </div>
 
@@ -593,6 +643,13 @@ export default function RemovePagePdfPage() {
             onDownload={handleDownload}
             onReset={handleReset}
           />
+
+          <div className="mt-4 flex justify-center">
+            <button type="button" onClick={() => setStage("configure")}
+              className="px-5 py-2 text-sm font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors">
+              Back to Edit
+            </button>
+          </div>
 
           <div className="mt-6 flex items-center justify-center gap-6 text-sm text-slate-500">
             <div className="flex items-center gap-1.5">
