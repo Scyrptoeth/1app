@@ -738,13 +738,15 @@ export default function RotateImagePage() {
             Your image is ready to download.
           </p>
 
-          {/* Preview */}
-          <div className="mb-6 rounded-xl overflow-hidden border border-slate-100 shadow-sm">
-            <img
-              src={doneData.previewUrl}
-              alt="Result"
-              className="w-full max-h-72 object-contain bg-[repeating-conic-gradient(#f1f5f9_0%_25%,#fff_0%_50%)] bg-[length:16px_16px]"
-            />
+          {/* Preview — tight wrap, no empty space on sides */}
+          <div className="mb-6 flex justify-center">
+            <div className="rounded-xl overflow-hidden border border-slate-100 shadow-sm inline-block">
+              <img
+                src={doneData.previewUrl}
+                alt="Result"
+                className="block max-w-full max-h-80 bg-[repeating-conic-gradient(#f1f5f9_0%_25%,#fff_0%_50%)] bg-[length:16px_16px]"
+              />
+            </div>
           </div>
 
           {/* Stats */}
