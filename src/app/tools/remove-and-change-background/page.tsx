@@ -12,6 +12,7 @@ import {
   removeImageBackground,
   addColorBackground,
   addImageBackground,
+  type BgPosition,
 } from "@/lib/tools/remove-and-change-background";
 
 // ---------------------------------------------------------------------------
@@ -76,6 +77,8 @@ export default function RemoveAndChangeBackgroundPage() {
   const [bgMode, setBgMode] = useState<BgMode>("transparent");
   const [bgColor, setBgColor] = useState("#FFFFFF");
   const [bgImageFile, setBgImageFile] = useState<File | null>(null);
+  const [bgScale, setBgScale] = useState(100);
+  const [bgPosition, setBgPosition] = useState<BgPosition>("center");
   const [compositeUrl, setCompositeUrl] = useState("");
   const [compositeBlob, setCompositeBlob] = useState<Blob | null>(null);
   const [compositing, setCompositing] = useState(false);
@@ -199,6 +202,8 @@ export default function RemoveAndChangeBackgroundPage() {
       if (!bgFile || !foregroundBlob) return;
       setBgImageFile(bgFile);
       setBgMode("image");
+      setBgScale(100);
+      setBgPosition("center");
       setCompositing(true);
       try {
         if (compositeUrl) URL.revokeObjectURL(compositeUrl);
@@ -206,7 +211,8 @@ export default function RemoveAndChangeBackgroundPage() {
           foregroundBlob,
           bgFile,
           imageDims.width,
-          imageDims.height
+          imageDims.height,
+          { scale: 100, position: "center" }
         );
         setCompositeUrl(result.previewUrl);
         setCompositeBlob(result.blob);
@@ -219,10 +225,44 @@ export default function RemoveAndChangeBackgroundPage() {
     [foregroundBlob, imageDims, compositeUrl]
   );
 
+  // ---- Recomposite image background on scale/position change (debounced) ----
+  const recompositeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    if (bgMode !== "image" || !bgImageFile || !foregroundBlob) return;
+
+    if (recompositeTimer.current) clearTimeout(recompositeTimer.current);
+    recompositeTimer.current = setTimeout(async () => {
+      setCompositing(true);
+      try {
+        if (compositeUrl) URL.revokeObjectURL(compositeUrl);
+        const result = await addImageBackground(
+          foregroundBlob,
+          bgImageFile,
+          imageDims.width,
+          imageDims.height,
+          { scale: bgScale, position: bgPosition }
+        );
+        setCompositeUrl(result.previewUrl);
+        setCompositeBlob(result.blob);
+      } catch (err) {
+        console.error("Recomposite failed:", err);
+      }
+      setCompositing(false);
+    }, 150);
+
+    return () => {
+      if (recompositeTimer.current) clearTimeout(recompositeTimer.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bgScale, bgPosition]);
+
   // ---- Set transparent ----
   const handleSetTransparent = useCallback(() => {
     setBgMode("transparent");
     setBgImageFile(null);
+    setBgScale(100);
+    setBgPosition("center");
     if (compositeUrl) {
       URL.revokeObjectURL(compositeUrl);
       setCompositeUrl("");
@@ -548,6 +588,8 @@ export default function RemoveAndChangeBackgroundPage() {
     setBgMode("transparent");
     setBgColor("#FFFFFF");
     setBgImageFile(null);
+    setBgScale(100);
+    setBgPosition("center");
     setCompositeUrl("");
     setCompositeBlob(null);
     setRotation(0);
@@ -607,6 +649,8 @@ export default function RemoveAndChangeBackgroundPage() {
     setBgMode("transparent");
     setBgColor("#FFFFFF");
     setBgImageFile(null);
+    setBgScale(100);
+    setBgPosition("center");
     setCompositeUrl("");
     setCompositeBlob(null);
     setCompositing(false);
@@ -843,6 +887,77 @@ export default function RemoveAndChangeBackgroundPage() {
                             : "Upload background image"}
                         </span>
                       </button>
+
+                      {/* Scale & Position controls (shown when image bg is active) */}
+                      {bgMode === "image" && bgImageFile && (
+                        <div className="mt-3 space-y-3">
+                          {/* Scale slider */}
+                          <div>
+                            <div className="flex items-center justify-between mb-1.5">
+                              <p className="text-xs text-slate-500">Scale</p>
+                              <span className="text-xs font-medium text-slate-700">
+                                {bgScale}%
+                              </span>
+                            </div>
+                            <input
+                              type="range"
+                              min={50}
+                              max={300}
+                              step={5}
+                              value={bgScale}
+                              onChange={(e) =>
+                                setBgScale(parseInt(e.target.value))
+                              }
+                              className="w-full h-1.5 bg-slate-200 rounded-full appearance-none cursor-pointer accent-blue-500"
+                            />
+                            <div className="flex justify-between text-[10px] text-slate-400 mt-0.5">
+                              <span>50%</span>
+                              <span>300%</span>
+                            </div>
+                          </div>
+
+                          {/* 9-point position grid */}
+                          <div>
+                            <p className="text-xs text-slate-500 mb-1.5">
+                              Position
+                            </p>
+                            <div className="grid grid-cols-3 gap-1 w-24 mx-auto">
+                              {(
+                                [
+                                  "top-left",
+                                  "top-center",
+                                  "top-right",
+                                  "center-left",
+                                  "center",
+                                  "center-right",
+                                  "bottom-left",
+                                  "bottom-center",
+                                  "bottom-right",
+                                ] as BgPosition[]
+                              ).map((pos) => (
+                                <button
+                                  key={pos}
+                                  onClick={() => setBgPosition(pos)}
+                                  title={pos}
+                                  className={`w-7 h-7 rounded border-2 transition-all flex items-center justify-center ${
+                                    bgPosition === pos
+                                      ? "border-blue-500 bg-blue-500"
+                                      : "border-slate-300 bg-white hover:border-slate-400"
+                                  }`}
+                                >
+                                  <span
+                                    className={`w-2 h-2 rounded-full ${
+                                      bgPosition === pos
+                                        ? "bg-white"
+                                        : "bg-slate-300"
+                                    }`}
+                                  />
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   </div>
 

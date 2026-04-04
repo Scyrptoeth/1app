@@ -25,6 +25,28 @@ export interface CompositeResult {
   processedSize: number;
 }
 
+/**
+ * 9-point position grid for background image placement.
+ * Maps to anchor points on the canvas.
+ */
+export type BgPosition =
+  | "top-left"
+  | "top-center"
+  | "top-right"
+  | "center-left"
+  | "center"
+  | "center-right"
+  | "bottom-left"
+  | "bottom-center"
+  | "bottom-right";
+
+export interface ImageBgOptions {
+  /** Scale percentage: 50–300. 100 = cover (default). */
+  scale: number;
+  /** Anchor position on the canvas. Default: "center". */
+  position: BgPosition;
+}
+
 function loadImage(src: string | Blob): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const url = src instanceof Blob ? URL.createObjectURL(src) : src;
@@ -165,15 +187,81 @@ export async function addColorBackground(
 }
 
 /**
+ * Compute the drawn position and size for a background image given
+ * canvas dimensions, bg natural dimensions, scale %, and anchor position.
+ */
+function computeBgDrawParams(
+  canvasW: number,
+  canvasH: number,
+  bgNatW: number,
+  bgNatH: number,
+  scale: number,
+  position: BgPosition
+): { dx: number; dy: number; dw: number; dh: number } {
+  // At scale 100%, the background covers the canvas (object-fit: cover).
+  const canvasRatio = canvasW / canvasH;
+  const bgRatio = bgNatW / bgNatH;
+
+  let baseW: number;
+  let baseH: number;
+  if (bgRatio > canvasRatio) {
+    // bg is wider than canvas ratio — match height, overflow width
+    baseH = canvasH;
+    baseW = (bgNatW / bgNatH) * canvasH;
+  } else {
+    // bg is taller — match width, overflow height
+    baseW = canvasW;
+    baseH = (bgNatH / bgNatW) * canvasW;
+  }
+
+  // Apply user scale
+  const factor = scale / 100;
+  const dw = baseW * factor;
+  const dh = baseH * factor;
+
+  // Anchor position mapping — determines which point of the drawn bg
+  // is anchored to which point of the canvas.
+  let anchorX: number; // 0 = left, 0.5 = center, 1 = right
+  let anchorY: number; // 0 = top, 0.5 = center, 1 = bottom
+  switch (position) {
+    case "top-left":
+      anchorX = 0; anchorY = 0; break;
+    case "top-center":
+      anchorX = 0.5; anchorY = 0; break;
+    case "top-right":
+      anchorX = 1; anchorY = 0; break;
+    case "center-left":
+      anchorX = 0; anchorY = 0.5; break;
+    case "center":
+      anchorX = 0.5; anchorY = 0.5; break;
+    case "center-right":
+      anchorX = 1; anchorY = 0.5; break;
+    case "bottom-left":
+      anchorX = 0; anchorY = 1; break;
+    case "bottom-center":
+      anchorX = 0.5; anchorY = 1; break;
+    case "bottom-right":
+      anchorX = 1; anchorY = 1; break;
+  }
+
+  // dx/dy: top-left corner of the drawn bg image
+  const dx = anchorX * canvasW - anchorX * dw;
+  const dy = anchorY * canvasH - anchorY * dh;
+
+  return { dx, dy, dw, dh };
+}
+
+/**
  * Composite foreground (bg-removed) onto a custom image background.
- * Background is scaled/cropped to cover the entire canvas (object-fit: cover logic).
+ * Scale and position control how the background image is placed.
  * Output: PNG at original dimensions, quality 1.0.
  */
 export async function addImageBackground(
   foregroundBlob: Blob,
   backgroundFile: File,
   originalWidth: number,
-  originalHeight: number
+  originalHeight: number,
+  options: ImageBgOptions = { scale: 100, position: "center" }
 ): Promise<CompositeResult> {
   const [fg, bg] = await Promise.all([
     loadImage(foregroundBlob),
@@ -187,28 +275,17 @@ export async function addImageBackground(
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = "high";
 
-  // Draw background with "cover" logic
-  const bgW = bg.naturalWidth;
-  const bgH = bg.naturalHeight;
-  const targetRatio = originalWidth / originalHeight;
-  const bgRatio = bgW / bgH;
+  // Compute bg draw params
+  const { dx, dy, dw, dh } = computeBgDrawParams(
+    originalWidth,
+    originalHeight,
+    bg.naturalWidth,
+    bg.naturalHeight,
+    options.scale,
+    options.position
+  );
 
-  let sx: number, sy: number, sw: number, sh: number;
-  if (bgRatio > targetRatio) {
-    // Background is wider — crop sides
-    sh = bgH;
-    sw = bgH * targetRatio;
-    sx = (bgW - sw) / 2;
-    sy = 0;
-  } else {
-    // Background is taller — crop top/bottom
-    sw = bgW;
-    sh = bgW / targetRatio;
-    sx = 0;
-    sy = (bgH - sh) / 2;
-  }
-
-  ctx.drawImage(bg, sx, sy, sw, sh, 0, 0, originalWidth, originalHeight);
+  ctx.drawImage(bg, dx, dy, dw, dh);
 
   // Draw foreground on top
   ctx.drawImage(fg, 0, 0, originalWidth, originalHeight);
