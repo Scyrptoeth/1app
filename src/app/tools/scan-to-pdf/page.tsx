@@ -571,15 +571,44 @@ export default function ScanToPdfPage() {
     toastTimerRef.current = setTimeout(() => setToastMessage(null), 1500);
 
     const video = videoRef.current;
-    const settings = streamRef.current.getVideoTracks()[0]?.getSettings();
-    const w = settings?.width || video.videoWidth;
-    const h = settings?.height || video.videoHeight;
+    const rawW = video.videoWidth;
+    const rawH = video.videoHeight;
+
+    // ─── WYSIWYG capture: crop to match viewfinder's object-cover ───
+    // Camera sensors report landscape dimensions (e.g. 1920×1080) even when
+    // the phone is portrait. The viewfinder displays a portrait crop via
+    // CSS object-cover. We replicate that exact crop here so the captured
+    // image matches what the user sees — portrait capture → portrait image.
+    const isPortrait = window.matchMedia("(orientation: portrait)").matches;
+    const streamIsLandscape = rawW > rawH;
+    const needsCrop = isPortrait === streamIsLandscape;
+
+    let captureW: number;
+    let captureH: number;
+    let sx = 0;
+    let sy = 0;
+
+    if (needsCrop && streamIsLandscape) {
+      // Portrait device + landscape stream → crop sides to portrait
+      // Visible width = rawH × (rawH / rawW) — replicates object-cover math
+      captureH = rawH;
+      captureW = Math.round((rawH * rawH) / rawW);
+      sx = Math.round((rawW - captureW) / 2);
+    } else if (needsCrop && !streamIsLandscape) {
+      // Landscape device + portrait stream → crop top/bottom to landscape
+      captureW = rawW;
+      captureH = Math.round((rawW * rawW) / rawH);
+      sy = Math.round((rawH - captureH) / 2);
+    } else {
+      captureW = rawW;
+      captureH = rawH;
+    }
 
     const canvas = document.createElement("canvas");
-    canvas.width = w;
-    canvas.height = h;
+    canvas.width = captureW;
+    canvas.height = captureH;
     const ctx = canvas.getContext("2d")!;
-    ctx.drawImage(video, 0, 0, w, h);
+    ctx.drawImage(video, sx, sy, captureW, captureH, 0, 0, captureW, captureH);
 
     const blob = await new Promise<Blob>((resolve, reject) => {
       canvas.toBlob(
@@ -591,15 +620,14 @@ export default function ScanToPdfPage() {
     const thumbnailUrl = URL.createObjectURL(blob);
     const id = generateId();
 
-    // Add with original as placeholder for enhanced
     const newScan: ScanItem = {
       id,
       blob,
       thumbnailUrl,
       enhancedBlob: blob,
       enhancedThumbnailUrl: thumbnailUrl,
-      width: w,
-      height: h,
+      width: captureW,
+      height: captureH,
       rotation: 0,
       removed: false,
       orientation: "auto",
