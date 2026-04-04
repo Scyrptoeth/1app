@@ -207,6 +207,19 @@ export const tools: ToolConfig[] = [
     isAvailable: true,
   },
   {
+    id: "link-to-qr-code",
+    name: "Link to QR Code",
+    description:
+      "Generate customizable QR codes from any URL or text. Choose frame styles, colors, and download as high-quality PNG.",
+    category: "convert",
+    icon: "QrCode",
+    route: "/tools/link-to-qr-code",
+    accentColor: "blue",
+    inputFormats: ["URL"],
+    outputFormats: [".png"],
+    isAvailable: true,
+  },
+  {
     id: "qr-code-to-link",
     name: "QR Code to Link",
     description:
@@ -383,7 +396,7 @@ export const SECTIONS: ToolSection[] = [
   },
   {
     label: "QR Code",
-    toolIds: ["qr-code-to-link"],
+    toolIds: ["link-to-qr-code", "qr-code-to-link"],
   },
   {
     label: "Watermark",
