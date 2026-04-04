@@ -8,10 +8,12 @@ import {
   generateQrCode,
   generatePreview,
   getContrastWarning,
+  hasTextArea,
   FRAME_TYPES,
   FRAME_LABELS,
+  QR_FONT_REGISTRY,
   type FrameType,
-  type QrGenerateOptions,
+  type QrFontDef,
   type QrGenerateResult,
   type ProcessingUpdate,
 } from "@/lib/tools/link-to-qr-code";
@@ -23,6 +25,14 @@ function formatFileSize(bytes: number): string {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
+
+// Group fonts by category for <optgroup>
+const FONT_GROUPS: { label: string; fonts: QrFontDef[] }[] = [
+  { label: "Sans-serif", fonts: QR_FONT_REGISTRY.filter((f) => f.category === "sans-serif") },
+  { label: "Serif", fonts: QR_FONT_REGISTRY.filter((f) => f.category === "serif") },
+  { label: "Monospace", fonts: QR_FONT_REGISTRY.filter((f) => f.category === "monospace") },
+  { label: "Display", fonts: QR_FONT_REGISTRY.filter((f) => f.category === "display") },
+];
 
 // Mini QR icon for frame thumbnails
 function FramePreviewIcon({ frame, dotColor, bgColor }: { frame: FrameType; dotColor: string; bgColor: string }) {
@@ -36,15 +46,10 @@ function FramePreviewIcon({ frame, dotColor, bgColor }: { frame: FrameType; dotC
   return (
     <div className="w-full aspect-square flex items-center justify-center p-1">
       <svg viewBox="0 0 60 72" className="w-full h-full">
-        {/* Background */}
         <rect x="0" y="0" width="60" height={hasText ? "72" : "60"} fill={bgColor} rx={isRounded || isShadow ? "4" : "0"} />
-
-        {/* Shadow */}
         {isShadow && (
           <rect x="3" y="3" width="54" height="54" fill="rgba(0,0,0,0.1)" rx="4" />
         )}
-
-        {/* Border */}
         {frame !== "none" && !isBanner && (
           <rect
             x="2" y="2"
@@ -55,8 +60,6 @@ function FramePreviewIcon({ frame, dotColor, bgColor }: { frame: FrameType; dotC
             rx={isRounded || isShadow ? "4" : "0"}
           />
         )}
-
-        {/* QR dots pattern (simplified) */}
         {[
           [14, 14, 10, 10], [36, 14, 10, 10], [14, 36, 10, 10],
           [26, 26, 8, 8], [36, 36, 10, 10],
@@ -65,8 +68,6 @@ function FramePreviewIcon({ frame, dotColor, bgColor }: { frame: FrameType; dotC
         ].map(([x, y, w, h], i) => (
           <rect key={i} x={x} y={y} width={w} height={h} fill={dotColor} />
         ))}
-
-        {/* Text area */}
         {hasText && !isBadge && !isBanner && (
           <text x="30" y="64" textAnchor="middle" fill={dotColor} fontSize="8" fontWeight="bold">Scan me!</text>
         )}
@@ -135,6 +136,11 @@ export default function LinkToQrCodePage() {
   const [bgColor, setBgColor] = useState("#FFFFFF");
   const [transparentBg, setTransparentBg] = useState(false);
   const [frameType, setFrameType] = useState<FrameType>("none");
+  const [frameText, setFrameText] = useState("Scan me!");
+  const [fontId, setFontId] = useState("helvetica");
+  const [fontSize, setFontSize] = useState(40);
+  const [fontLoading, setFontLoading] = useState(false);
+  const [fontVersion, setFontVersion] = useState(0);
   const [progress, setProgress] = useState<ProcessingUpdate>({ progress: 0, status: "" });
   const [result, setResult] = useState<QrGenerateResult | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
@@ -142,6 +148,57 @@ export default function LinkToQrCodePage() {
 
   const previewTimerRef = useRef<ReturnType<typeof setTimeout>>(null);
   const prevPreviewUrlRef = useRef<string | null>(null);
+
+  const showTextControls = hasTextArea(frameType);
+  const currentFont = QR_FONT_REGISTRY.find((f) => f.id === fontId);
+  const canvasFamily = currentFont?.canvasFamily || "sans-serif";
+
+  // Load Google Font for Canvas rendering
+  const loadGoogleFont = useCallback(async (def: QrFontDef) => {
+    if (!def.googleFamily) return;
+    // Check if already loaded
+    if (document.fonts.check(`16px "${def.name}"`)) return;
+    // Inject CSS link
+    const link = document.createElement("link");
+    link.rel = "stylesheet";
+    link.href = `https://fonts.googleapis.com/css2?family=${encodeURIComponent(def.googleFamily)}:wght@400;700&display=swap`;
+    document.head.appendChild(link);
+    // Wait for font to be available
+    try {
+      await document.fonts.load(`bold 40px "${def.name}"`);
+    } catch {
+      // fallback will be used
+    }
+  }, []);
+
+  const handleFontChange = useCallback(async (newFontId: string) => {
+    setFontId(newFontId);
+    const def = QR_FONT_REGISTRY.find((f) => f.id === newFontId);
+    if (!def?.googleFamily) {
+      setFontVersion((v) => v + 1);
+      return;
+    }
+    setFontLoading(true);
+    try {
+      await loadGoogleFont(def);
+    } catch {
+      // fallback used
+    }
+    setFontLoading(false);
+    setFontVersion((v) => v + 1);
+  }, [loadGoogleFont]);
+
+  // Build full options object
+  const buildOptions = useCallback(() => ({
+    url,
+    dotColor: dotColor.length === 7 ? dotColor : "#000000",
+    bgColor: bgColor.length === 7 ? bgColor : "#FFFFFF",
+    transparentBg,
+    frameType,
+    frameText: frameText || "Scan me!",
+    frameFontFamily: canvasFamily,
+    frameFontSize: fontSize,
+  }), [url, dotColor, bgColor, transparentBg, frameType, frameText, canvasFamily, fontSize]);
 
   // Update live preview with debounce
   useEffect(() => {
@@ -158,13 +215,8 @@ export default function LinkToQrCodePage() {
 
     previewTimerRef.current = setTimeout(async () => {
       try {
-        const newUrl = await generatePreview({
-          url,
-          dotColor: dotColor.length === 7 ? dotColor : "#000000",
-          bgColor: bgColor.length === 7 ? bgColor : "#FFFFFF",
-          transparentBg,
-          frameType,
-        });
+        const opts = buildOptions();
+        const newUrl = await generatePreview(opts);
         if (prevPreviewUrlRef.current) {
           URL.revokeObjectURL(prevPreviewUrlRef.current);
         }
@@ -178,7 +230,8 @@ export default function LinkToQrCodePage() {
     return () => {
       if (previewTimerRef.current) clearTimeout(previewTimerRef.current);
     };
-  }, [url, dotColor, bgColor, transparentBg, frameType]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [url, dotColor, bgColor, transparentBg, frameType, frameText, canvasFamily, fontSize, fontVersion]);
 
   // Update contrast warning
   useEffect(() => {
@@ -196,16 +249,8 @@ export default function LinkToQrCodePage() {
     setProgress({ progress: 0, status: "" });
 
     try {
-      const genResult = await generateQrCode(
-        {
-          url: url.trim(),
-          dotColor: dotColor.length === 7 ? dotColor : "#000000",
-          bgColor: bgColor.length === 7 ? bgColor : "#FFFFFF",
-          transparentBg,
-          frameType,
-        },
-        (update) => setProgress(update)
-      );
+      const opts = buildOptions();
+      const genResult = await generateQrCode(opts, (update) => setProgress(update));
       setResult(genResult);
       setStage("done");
     } catch (err) {
@@ -213,7 +258,7 @@ export default function LinkToQrCodePage() {
       setStage("input");
       alert("Failed to generate QR code. Please try again.");
     }
-  }, [url, dotColor, bgColor, transparentBg, frameType]);
+  }, [url, buildOptions]);
 
   const handleDownload = useCallback(() => {
     if (!result) return;
@@ -225,7 +270,6 @@ export default function LinkToQrCodePage() {
 
   const handleBackToEdit = useCallback(() => {
     setStage("input");
-    // Keep all settings — don't reset
   }, []);
 
   const handleReset = useCallback(() => {
@@ -235,6 +279,9 @@ export default function LinkToQrCodePage() {
     setBgColor("#FFFFFF");
     setTransparentBg(false);
     setFrameType("none");
+    setFrameText("Scan me!");
+    setFontId("helvetica");
+    setFontSize(40);
     setResult(null);
     setProgress({ progress: 0, status: "" });
     if (prevPreviewUrlRef.current) {
@@ -321,6 +368,92 @@ export default function LinkToQrCodePage() {
                     </button>
                   ))}
                 </div>
+
+                {/* Frame text controls — only shown for text-bearing frames */}
+                {showTextControls && (
+                  <div className="mt-4 p-4 bg-slate-50 rounded-xl border border-slate-100 space-y-4">
+                    <p className="text-xs font-semibold text-slate-700 uppercase tracking-wide">Frame Text Settings</p>
+
+                    {/* Text input */}
+                    <div>
+                      <label className="block text-xs font-medium text-slate-600 mb-1.5">Text</label>
+                      <input
+                        type="text"
+                        value={frameText}
+                        onChange={(e) => setFrameText(e.target.value)}
+                        placeholder="Scan me!"
+                        maxLength={40}
+                        className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-accent-500/20 focus:border-accent-500"
+                      />
+                    </div>
+
+                    {/* Font family + size row */}
+                    <div className="flex items-end gap-3">
+                      <div className="flex-1">
+                        <label className="block text-xs font-medium text-slate-600 mb-1.5">Font Family</label>
+                        <div className="relative">
+                          <select
+                            value={fontId}
+                            onChange={(e) => handleFontChange(e.target.value)}
+                            disabled={fontLoading}
+                            className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-accent-500/20 focus:border-accent-500 appearance-none pr-8 disabled:opacity-60"
+                          >
+                            {FONT_GROUPS.map((group) => (
+                              <optgroup key={group.label} label={group.label}>
+                                {group.fonts.map((f) => (
+                                  <option key={f.id} value={f.id}>{f.name}</option>
+                                ))}
+                              </optgroup>
+                            ))}
+                          </select>
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none">
+                            <polyline points="6 9 12 15 18 9" />
+                          </svg>
+                          {fontLoading && (
+                            <div className="absolute right-8 top-1/2 -translate-y-1/2">
+                              <svg className="animate-spin w-4 h-4 text-accent-500" viewBox="0 0 24 24" fill="none">
+                                <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2" opacity="0.25" />
+                                <path d="M4 12a8 8 0 018-8" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                              </svg>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="w-24">
+                        <label className="block text-xs font-medium text-slate-600 mb-1.5">Size</label>
+                        <div className="flex items-center gap-1.5">
+                          <input
+                            type="number"
+                            value={fontSize}
+                            onChange={(e) => {
+                              const v = Math.max(16, Math.min(72, Number(e.target.value) || 16));
+                              setFontSize(v);
+                            }}
+                            min={16}
+                            max={72}
+                            className="w-full px-2.5 py-2 text-sm text-center font-mono border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-accent-500/20 focus:border-accent-500"
+                          />
+                          <span className="text-xs text-slate-400 shrink-0">pt</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Font size slider */}
+                    <input
+                      type="range"
+                      value={fontSize}
+                      onChange={(e) => setFontSize(Number(e.target.value))}
+                      min={16}
+                      max={72}
+                      className="w-full h-1.5 bg-slate-200 rounded-full appearance-none cursor-pointer accent-accent-500"
+                    />
+                    <div className="flex justify-between text-[10px] text-slate-400 -mt-2">
+                      <span>16pt</span>
+                      <span>72pt</span>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -407,7 +540,7 @@ export default function LinkToQrCodePage() {
                 <img
                   src={previewUrl}
                   alt="QR Code preview"
-                  className="w-4/5 h-4/5 object-contain"
+                  className="w-[90%] h-[90%] object-contain"
                 />
               ) : (
                 <div className="text-center px-4">
@@ -543,7 +676,7 @@ export default function LinkToQrCodePage() {
             {
               step: "2",
               title: "Customize",
-              desc: "Choose a frame style, dot color, and background color.",
+              desc: "Choose a frame style, text, font, colors, and preview in real-time.",
             },
             {
               step: "3",

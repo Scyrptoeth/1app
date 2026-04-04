@@ -3,6 +3,7 @@
  *
  * Convert URL/text into a customizable QR code PNG image.
  * Uses qr-code-styling for QR generation + Canvas 2D for frame rendering.
+ * Supports 20 fonts (3 system + 17 Google Fonts) for frame text.
  *
  * 100% client-side — no data sent to server.
  */
@@ -13,6 +14,43 @@ export interface ProcessingUpdate {
 }
 
 export type OnProgress = (update: ProcessingUpdate) => void;
+
+// ─── Font Registry ───────────────────────────────────────────────────
+
+export interface QrFontDef {
+  id: string;
+  name: string;
+  category: "sans-serif" | "serif" | "monospace" | "display";
+  canvasFamily: string;
+  googleFamily?: string;
+}
+
+export const QR_FONT_REGISTRY: QrFontDef[] = [
+  // System fonts (no fetch needed)
+  { id: "helvetica", name: "Helvetica", category: "sans-serif", canvasFamily: "Helvetica, Arial, sans-serif" },
+  { id: "times-roman", name: "Times Roman", category: "serif", canvasFamily: "'Times New Roman', Times, serif" },
+  { id: "courier", name: "Courier", category: "monospace", canvasFamily: "'Courier New', Courier, monospace" },
+  // Google Fonts — loaded on-demand via CSS <link>
+  { id: "inter", name: "Inter", category: "sans-serif", canvasFamily: "'Inter', sans-serif", googleFamily: "Inter" },
+  { id: "dm-sans", name: "DM Sans", category: "sans-serif", canvasFamily: "'DM Sans', sans-serif", googleFamily: "DM Sans" },
+  { id: "nunito", name: "Nunito", category: "sans-serif", canvasFamily: "'Nunito', sans-serif", googleFamily: "Nunito" },
+  { id: "open-sans", name: "Open Sans", category: "sans-serif", canvasFamily: "'Open Sans', sans-serif", googleFamily: "Open Sans" },
+  { id: "roboto", name: "Roboto", category: "sans-serif", canvasFamily: "'Roboto', sans-serif", googleFamily: "Roboto" },
+  { id: "lato", name: "Lato", category: "sans-serif", canvasFamily: "'Lato', sans-serif", googleFamily: "Lato" },
+  { id: "montserrat", name: "Montserrat", category: "sans-serif", canvasFamily: "'Montserrat', sans-serif", googleFamily: "Montserrat" },
+  { id: "poppins", name: "Poppins", category: "sans-serif", canvasFamily: "'Poppins', sans-serif", googleFamily: "Poppins" },
+  { id: "raleway", name: "Raleway", category: "sans-serif", canvasFamily: "'Raleway', sans-serif", googleFamily: "Raleway" },
+  { id: "noto-sans", name: "Noto Sans", category: "sans-serif", canvasFamily: "'Noto Sans', sans-serif", googleFamily: "Noto Sans" },
+  { id: "pt-sans", name: "PT Sans", category: "sans-serif", canvasFamily: "'PT Sans', sans-serif", googleFamily: "PT Sans" },
+  { id: "source-sans-3", name: "Source Sans 3", category: "sans-serif", canvasFamily: "'Source Sans 3', sans-serif", googleFamily: "Source Sans 3" },
+  { id: "ubuntu", name: "Ubuntu", category: "sans-serif", canvasFamily: "'Ubuntu', sans-serif", googleFamily: "Ubuntu" },
+  { id: "comic-neue", name: "Comic Neue", category: "display", canvasFamily: "'Comic Neue', cursive", googleFamily: "Comic Neue" },
+  { id: "pt-serif", name: "PT Serif", category: "serif", canvasFamily: "'PT Serif', serif", googleFamily: "PT Serif" },
+  { id: "merriweather", name: "Merriweather", category: "serif", canvasFamily: "'Merriweather', serif", googleFamily: "Merriweather" },
+  { id: "playfair-display", name: "Playfair Display", category: "serif", canvasFamily: "'Playfair Display', serif", googleFamily: "Playfair Display" },
+];
+
+// ─── Frame Types ────────────────────────────────────────────────────
 
 export const FRAME_TYPES = [
   "none",
@@ -42,12 +80,27 @@ export const FRAME_LABELS: Record<FrameType, string> = {
   banner: "Banner",
 };
 
+export function hasTextArea(frameType: FrameType): boolean {
+  return [
+    "simple-text",
+    "rounded-text",
+    "bold-text",
+    "badge",
+    "banner",
+  ].includes(frameType);
+}
+
+// ─── Options & Result ───────────────────────────────────────────────
+
 export interface QrGenerateOptions {
   url: string;
   dotColor: string;
   bgColor: string;
   transparentBg: boolean;
   frameType: FrameType;
+  frameText: string;
+  frameFontFamily: string;
+  frameFontSize: number;
 }
 
 export interface QrGenerateResult {
@@ -56,13 +109,25 @@ export interface QrGenerateResult {
   fileSize: number;
 }
 
+// ─── Constants ──────────────────────────────────────────────────────
+
 const QR_SIZE = 1024;
 const QR_MARGIN = 40;
 const FRAME_PADDING = 60;
-const TEXT_AREA_HEIGHT = 80;
+const DEFAULT_FONT_SIZE = 40;
+
+function getTextAreaHeight(fontSize: number): number {
+  return Math.max(80, fontSize * 2.2);
+}
+
+// ─── Preview (with frame) ───────────────────────────────────────────
+
+const PREVIEW_QR = 320;
+const PREVIEW_MARGIN = 12;
+const PREVIEW_PAD = 20;
 
 /**
- * Generate a live preview (lower resolution, no frame) for real-time updates.
+ * Generate a live preview with frame at preview resolution.
  */
 export async function generatePreview(
   options: QrGenerateOptions
@@ -70,10 +135,10 @@ export async function generatePreview(
   const QRCodeStyling = (await import("qr-code-styling")).default;
 
   const qrCode = new QRCodeStyling({
-    width: 256,
-    height: 256,
+    width: PREVIEW_QR,
+    height: PREVIEW_QR,
     data: options.url || " ",
-    margin: 10,
+    margin: PREVIEW_MARGIN,
     dotsOptions: {
       color: options.dotColor,
       type: "square",
@@ -88,22 +153,72 @@ export async function generatePreview(
 
   const blob = await qrCode.getRawData("png");
   if (!blob) throw new Error("Failed to generate QR preview");
-  return URL.createObjectURL(blob);
+
+  // No frame → return bare QR
+  if (options.frameType === "none") {
+    return URL.createObjectURL(blob);
+  }
+
+  // Composite QR + frame on Canvas
+  const qrImg = await createImageBitmap(blob);
+  const fontSize = options.frameFontSize || DEFAULT_FONT_SIZE;
+  const scale = PREVIEW_QR / QR_SIZE;
+  const scaledPad = PREVIEW_PAD;
+  const addText = hasTextArea(options.frameType);
+  const scaledTextH = addText ? getTextAreaHeight(fontSize) * scale : 0;
+  const totalW = PREVIEW_QR + scaledPad;
+  const totalH = PREVIEW_QR + scaledPad + scaledTextH;
+
+  const canvas = document.createElement("canvas");
+  canvas.width = totalW;
+  canvas.height = totalH;
+  const ctx = canvas.getContext("2d")!;
+
+  // Background
+  if (options.transparentBg) {
+    ctx.clearRect(0, 0, totalW, totalH);
+  } else {
+    ctx.fillStyle = options.bgColor;
+    ctx.fillRect(0, 0, totalW, totalH);
+  }
+
+  // Draw frame (shadow behind, others on top)
+  if (options.frameType === "shadow") {
+    drawFrame(ctx, options, totalW, totalH, scale);
+  }
+
+  // Draw QR centered
+  ctx.drawImage(qrImg, scaledPad / 2, scaledPad / 2, PREVIEW_QR, PREVIEW_QR);
+
+  if (options.frameType !== "shadow") {
+    drawFrame(ctx, options, totalW, totalH, scale);
+  }
+
+  const finalBlob = await new Promise<Blob>((resolve, reject) => {
+    canvas.toBlob(
+      (b) => (b ? resolve(b) : reject(new Error("Preview export failed"))),
+      "image/png"
+    );
+  });
+
+  return URL.createObjectURL(finalBlob);
 }
 
-/**
- * Draw a frame around the QR code on a canvas.
- */
+// ─── Frame Drawing ──────────────────────────────────────────────────
+
 function drawFrame(
   ctx: CanvasRenderingContext2D,
-  frameType: FrameType,
+  options: QrGenerateOptions,
   totalWidth: number,
   totalHeight: number,
-  dotColor: string,
-  bgColor: string,
-  transparentBg: boolean
+  scale: number = 1,
 ): void {
-  const pad = FRAME_PADDING;
+  const { frameType, dotColor, bgColor, transparentBg, frameText, frameFontFamily, frameFontSize } = options;
+  const pad = FRAME_PADDING * scale;
+  const fontSize = (frameFontSize || DEFAULT_FONT_SIZE) * scale;
+  const textH = getTextAreaHeight(frameFontSize || DEFAULT_FONT_SIZE) * scale;
+  const fontStyle = `bold ${fontSize}px ${frameFontFamily || "sans-serif"}`;
+  const text = frameText || "Scan me!";
 
   switch (frameType) {
     case "none":
@@ -111,137 +226,125 @@ function drawFrame(
 
     case "simple": {
       ctx.strokeStyle = dotColor;
-      ctx.lineWidth = 4;
+      ctx.lineWidth = 4 * scale;
       ctx.strokeRect(pad / 2, pad / 2, totalWidth - pad, totalHeight - pad);
       break;
     }
 
     case "simple-text": {
-      const innerH = totalHeight - TEXT_AREA_HEIGHT;
+      const innerH = totalHeight - textH;
       ctx.strokeStyle = dotColor;
-      ctx.lineWidth = 4;
+      ctx.lineWidth = 4 * scale;
       ctx.strokeRect(pad / 2, pad / 2, totalWidth - pad, innerH - pad / 2);
-      // Text
       ctx.fillStyle = dotColor;
-      ctx.font = "bold 32px sans-serif";
+      ctx.font = fontStyle;
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
-      ctx.fillText("Scan me!", totalWidth / 2, innerH + TEXT_AREA_HEIGHT / 2 - pad / 4);
+      ctx.fillText(text, totalWidth / 2, innerH + textH / 2 - pad / 4, totalWidth - pad);
       break;
     }
 
     case "rounded": {
-      const r = 24;
+      const r = 24 * scale;
       ctx.strokeStyle = dotColor;
-      ctx.lineWidth = 4;
+      ctx.lineWidth = 4 * scale;
       roundRect(ctx, pad / 2, pad / 2, totalWidth - pad, totalHeight - pad, r);
       ctx.stroke();
       break;
     }
 
     case "rounded-text": {
-      const r = 24;
-      const innerH = totalHeight - TEXT_AREA_HEIGHT;
+      const r = 24 * scale;
+      const innerH = totalHeight - textH;
       ctx.strokeStyle = dotColor;
-      ctx.lineWidth = 4;
+      ctx.lineWidth = 4 * scale;
       roundRect(ctx, pad / 2, pad / 2, totalWidth - pad, innerH - pad / 2, r);
       ctx.stroke();
-      // Text
       ctx.fillStyle = dotColor;
-      ctx.font = "bold 32px sans-serif";
+      ctx.font = fontStyle;
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
-      ctx.fillText("Scan me!", totalWidth / 2, innerH + TEXT_AREA_HEIGHT / 2 - pad / 4);
+      ctx.fillText(text, totalWidth / 2, innerH + textH / 2 - pad / 4, totalWidth - pad);
       break;
     }
 
     case "bold": {
       ctx.strokeStyle = dotColor;
-      ctx.lineWidth = 8;
+      ctx.lineWidth = 8 * scale;
       ctx.strokeRect(pad / 2, pad / 2, totalWidth - pad, totalHeight - pad);
       break;
     }
 
     case "bold-text": {
-      const innerH = totalHeight - TEXT_AREA_HEIGHT;
+      const innerH = totalHeight - textH;
       ctx.strokeStyle = dotColor;
-      ctx.lineWidth = 8;
+      ctx.lineWidth = 8 * scale;
       ctx.strokeRect(pad / 2, pad / 2, totalWidth - pad, innerH - pad / 2);
-      // Text
       ctx.fillStyle = dotColor;
-      ctx.font = "bold 36px sans-serif";
+      ctx.font = fontStyle;
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
-      ctx.fillText("Scan me!", totalWidth / 2, innerH + TEXT_AREA_HEIGHT / 2 - pad / 4);
+      ctx.fillText(text, totalWidth / 2, innerH + textH / 2 - pad / 4, totalWidth - pad);
       break;
     }
 
     case "shadow": {
-      // Drop shadow effect
       ctx.shadowColor = "rgba(0,0,0,0.2)";
-      ctx.shadowBlur = 20;
-      ctx.shadowOffsetX = 4;
-      ctx.shadowOffsetY = 4;
+      ctx.shadowBlur = 20 * scale;
+      ctx.shadowOffsetX = 4 * scale;
+      ctx.shadowOffsetY = 4 * scale;
       ctx.fillStyle = transparentBg ? "#ffffff" : bgColor;
-      const r = 16;
+      const r = 16 * scale;
       roundRect(ctx, pad / 2, pad / 2, totalWidth - pad, totalHeight - pad, r);
       ctx.fill();
-      // Reset shadow
       ctx.shadowColor = "transparent";
       ctx.shadowBlur = 0;
       ctx.shadowOffsetX = 0;
       ctx.shadowOffsetY = 0;
-      // Border
       ctx.strokeStyle = dotColor;
-      ctx.lineWidth = 2;
+      ctx.lineWidth = 2 * scale;
       roundRect(ctx, pad / 2, pad / 2, totalWidth - pad, totalHeight - pad, r);
       ctx.stroke();
       break;
     }
 
     case "badge": {
-      // Pill-shaped badge below QR
-      const innerH = totalHeight - TEXT_AREA_HEIGHT;
-      const r = 16;
+      const innerH = totalHeight - textH;
+      const r = 16 * scale;
       ctx.strokeStyle = dotColor;
-      ctx.lineWidth = 3;
+      ctx.lineWidth = 3 * scale;
       roundRect(ctx, pad / 2, pad / 2, totalWidth - pad, innerH - pad / 2, r);
       ctx.stroke();
-      // Badge pill
-      const pillW = 200;
-      const pillH = 44;
+      // Badge pill — sized to fit text
+      const pillH = Math.max(44 * scale, fontSize * 1.4);
+      const pillW = Math.max(200 * scale, fontSize * text.length * 0.65 + 40 * scale);
       const pillX = (totalWidth - pillW) / 2;
-      const pillY = innerH + (TEXT_AREA_HEIGHT - pillH) / 2 - pad / 4;
+      const pillY = innerH + (textH - pillH) / 2 - pad / 4;
       ctx.fillStyle = dotColor;
       roundRect(ctx, pillX, pillY, pillW, pillH, pillH / 2);
       ctx.fill();
-      // Badge text
       ctx.fillStyle = transparentBg ? "#ffffff" : bgColor;
-      ctx.font = "bold 22px sans-serif";
+      ctx.font = fontStyle;
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
-      ctx.fillText("SCAN ME", totalWidth / 2, pillY + pillH / 2);
+      ctx.fillText(text, totalWidth / 2, pillY + pillH / 2, pillW - 20 * scale);
       break;
     }
 
     case "banner": {
-      // Full-width colored banner below QR
-      const innerH = totalHeight - TEXT_AREA_HEIGHT;
-      // Border around QR area
+      const innerH = totalHeight - textH;
       ctx.strokeStyle = dotColor;
-      ctx.lineWidth = 3;
+      ctx.lineWidth = 3 * scale;
       ctx.strokeRect(pad / 2, pad / 2, totalWidth - pad, innerH - pad / 2);
-      // Banner rect
       const bannerY = innerH - pad / 4;
-      const bannerH = TEXT_AREA_HEIGHT + pad / 4;
+      const bannerH = textH + pad / 4;
       ctx.fillStyle = dotColor;
       ctx.fillRect(pad / 2, bannerY, totalWidth - pad, bannerH);
-      // Banner text
       ctx.fillStyle = transparentBg ? "#ffffff" : bgColor;
-      ctx.font = "bold 30px sans-serif";
+      ctx.font = fontStyle;
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
-      ctx.fillText("Scan me!", totalWidth / 2, bannerY + bannerH / 2);
+      ctx.fillText(text, totalWidth / 2, bannerY + bannerH / 2, totalWidth - pad * 2);
       break;
     }
   }
@@ -268,19 +371,8 @@ function roundRect(
   ctx.closePath();
 }
 
-function hasTextArea(frameType: FrameType): boolean {
-  return [
-    "simple-text",
-    "rounded-text",
-    "bold-text",
-    "badge",
-    "banner",
-  ].includes(frameType);
-}
+// ─── Contrast Check ─────────────────────────────────────────────────
 
-/**
- * Check if dot/bg color contrast is too low for reliable scanning.
- */
 export function getContrastWarning(dotColor: string, bgColor: string): string | null {
   const lum1 = relativeLuminance(dotColor);
   const lum2 = relativeLuminance(bgColor);
@@ -299,9 +391,8 @@ function relativeLuminance(hex: string): number {
   return 0.2126 * toLinear(r) + 0.7152 * toLinear(g) + 0.0722 * toLinear(b);
 }
 
-/**
- * Main entry point: generate a high-quality QR code PNG with frame and color customization.
- */
+// ─── Main Generation ────────────────────────────────────────────────
+
 export async function generateQrCode(
   options: QrGenerateOptions,
   onProgress: OnProgress
@@ -336,7 +427,7 @@ export async function generateQrCode(
 
   onProgress({ progress: 55, status: "Applying frame..." });
 
-  // If no frame, return QR as-is
+  // No frame → return QR as-is
   if (options.frameType === "none") {
     const url = URL.createObjectURL(qrBlob);
     onProgress({ progress: 100, status: "Complete!" });
@@ -346,15 +437,15 @@ export async function generateQrCode(
   // Draw frame around QR on a larger canvas
   const qrImg = await createImageBitmap(qrBlob);
   const addText = hasTextArea(options.frameType);
+  const textH = addText ? getTextAreaHeight(options.frameFontSize || DEFAULT_FONT_SIZE) : 0;
   const totalWidth = QR_SIZE + FRAME_PADDING;
-  const totalHeight = QR_SIZE + FRAME_PADDING + (addText ? TEXT_AREA_HEIGHT : 0);
+  const totalHeight = QR_SIZE + FRAME_PADDING + textH;
 
   const canvas = document.createElement("canvas");
   canvas.width = totalWidth;
   canvas.height = totalHeight;
   const ctx = canvas.getContext("2d")!;
 
-  // Fill background
   if (options.transparentBg) {
     ctx.clearRect(0, 0, totalWidth, totalHeight);
   } else {
@@ -364,19 +455,16 @@ export async function generateQrCode(
 
   onProgress({ progress: 70, status: "Drawing frame..." });
 
-  // Draw frame (behind QR for shadow, around for borders)
   if (options.frameType === "shadow") {
-    drawFrame(ctx, options.frameType, totalWidth, totalHeight, options.dotColor, options.bgColor, options.transparentBg);
+    drawFrame(ctx, options, totalWidth, totalHeight);
   }
 
-  // Draw QR code centered
   const qrX = FRAME_PADDING / 2;
   const qrY = FRAME_PADDING / 2;
   ctx.drawImage(qrImg, qrX, qrY, QR_SIZE, QR_SIZE);
 
-  // Draw frame (on top for borders)
   if (options.frameType !== "shadow") {
-    drawFrame(ctx, options.frameType, totalWidth, totalHeight, options.dotColor, options.bgColor, options.transparentBg);
+    drawFrame(ctx, options, totalWidth, totalHeight);
   }
 
   onProgress({ progress: 90, status: "Exporting PNG..." });
