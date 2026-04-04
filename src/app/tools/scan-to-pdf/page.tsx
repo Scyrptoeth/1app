@@ -488,11 +488,19 @@ export default function ScanToPdfPage() {
         videoRef.current.srcObject = stream;
         await videoRef.current.play();
 
-        // Set viewfinder aspect ratio from actual stream dimensions
+        // Set viewfinder aspect ratio to match the DISPLAYED orientation.
+        // Camera sensors report intrinsic (landscape) dimensions via videoWidth/Height
+        // even when the browser auto-rotates the rendered video to portrait.
+        // Detect the mismatch and swap so the container matches what the user sees.
         const vw = videoRef.current.videoWidth;
         const vh = videoRef.current.videoHeight;
         if (vw && vh) {
-          setViewfinderAspect(`${vw}/${vh}`);
+          const streamIsLandscape = vw > vh;
+          // Swap when device and stream orientations conflict:
+          // portrait device + landscape stream → swap to portrait container
+          // landscape device + portrait stream → swap to landscape container
+          const needsSwap = isPortrait === streamIsLandscape;
+          setViewfinderAspect(needsSwap ? `${vh}/${vw}` : `${vw}/${vh}`);
         }
       }
 
