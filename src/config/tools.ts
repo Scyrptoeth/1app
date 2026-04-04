@@ -103,6 +103,19 @@ export const tools: ToolConfig[] = [
     isAvailable: true,
   },
   {
+    id: "image-to-pdf",
+    name: "Image to PDF",
+    description:
+      "Convert one or more images (JPG, JPEG, PNG) into a single PDF file. Reorder, rotate, and customize page settings before download.",
+    category: "transform",
+    icon: "FileImage",
+    route: "/tools/image-to-pdf",
+    accentColor: "violet",
+    inputFormats: [".jpg", ".jpeg", ".png"],
+    outputFormats: [".pdf"],
+    isAvailable: true,
+  },
+  {
     id: "image-to-excel",
     name: "Image to Excel",
     description:
@@ -350,7 +363,7 @@ export const SECTIONS: ToolSection[] = [
   },
   {
     label: "Image",
-    toolIds: ["image-to-excel", "pdf-to-image"],
+    toolIds: ["image-to-excel", "image-to-pdf", "pdf-to-image"],
   },
   {
     label: "Image Utilities",
@@ -358,7 +371,7 @@ export const SECTIONS: ToolSection[] = [
   },
   {
     label: "PDF",
-    toolIds: ["excel-to-pdf", "pdf-to-excel", "pdf-to-image", "pdf-to-ppt", "pdf-to-word", "pptx-to-pdf", "word-to-pdf", "x-content-to-pdf"],
+    toolIds: ["excel-to-pdf", "image-to-pdf", "pdf-to-excel", "pdf-to-image", "pdf-to-ppt", "pdf-to-word", "pptx-to-pdf", "word-to-pdf", "x-content-to-pdf"],
   },
   {
     label: "PDF Utilities",
