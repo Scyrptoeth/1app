@@ -285,6 +285,19 @@ export const tools: ToolConfig[] = [
     isAvailable: true,
   },
   {
+    id: "crop-image",
+    name: "Crop Image",
+    description:
+      "Crop, resize, and rotate images with precision. Supports free-form and preset aspect ratios.",
+    category: "compress",
+    icon: "Crop",
+    route: "/tools/crop-image",
+    accentColor: "amber",
+    inputFormats: [".jpg", ".jpeg", ".png"],
+    outputFormats: [".jpg", ".jpeg", ".png"],
+    isAvailable: true,
+  },
+  {
     id: "pdf-lock",
     name: "Lock PDF",
     description:
@@ -393,7 +406,7 @@ export const SECTIONS: ToolSection[] = [
   },
   {
     label: "Image Utilities",
-    toolIds: ["compress-image", "image-watermark-remove"],
+    toolIds: ["compress-image", "crop-image", "image-watermark-remove"],
   },
   {
     label: "PDF",
