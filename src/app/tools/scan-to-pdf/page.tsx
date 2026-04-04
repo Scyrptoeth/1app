@@ -437,6 +437,7 @@ export default function ScanToPdfPage() {
   const [showFlash, setShowFlash] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [viewfinderAspect, setViewfinderAspect] = useState("3/4");
+  const [previewIndex, setPreviewIndex] = useState<number | null>(null);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -860,6 +861,7 @@ export default function ScanToPdfPage() {
     setStage("capture");
     setScans([]);
     setInputMode("camera");
+    setPreviewIndex(null);
     setGlobalOrientation("portrait");
     setPageSize(PAGE_SIZES[0]);
     setMergeAll(true);
@@ -896,122 +898,308 @@ export default function ScanToPdfPage() {
           </div>
 
           {inputMode === "camera" && !cameraError ? (
-            <>
-              {/* Camera viewfinder — aspect ratio adapts to actual stream */}
-              <div
-                className="relative bg-black rounded-2xl overflow-hidden"
-                style={{ aspectRatio: viewfinderAspect }}
-              >
-                <video
-                  ref={videoRef}
-                  autoPlay
-                  playsInline
-                  muted
-                  className="w-full h-full object-cover"
-                />
+            (() => {
+              // Clamp previewIndex to valid range after removals
+              const clampedIdx = previewIndex !== null
+                ? Math.min(previewIndex, activeScans.length - 1)
+                : null;
+              const previewScan = clampedIdx !== null && clampedIdx >= 0
+                ? activeScans[clampedIdx]
+                : null;
+              const isPreview = previewScan !== null;
 
-                {!cameraReady && (
-                  <div className="absolute inset-0 flex items-center justify-center bg-slate-900">
-                    <div className="text-center">
-                      <div className="w-8 h-8 border-2 border-white/30 border-t-white rounded-full animate-spin mx-auto mb-3" />
-                      <p className="text-sm text-white/70">Starting camera...</p>
+              return (
+                <>
+                  {/* Camera viewfinder / Image preview */}
+                  <div
+                    className={`relative rounded-2xl overflow-hidden ${isPreview ? "bg-slate-900" : "bg-black"}`}
+                    style={{ aspectRatio: viewfinderAspect }}
+                  >
+                    {/* Video — hidden during preview */}
+                    <video
+                      ref={videoRef}
+                      autoPlay
+                      playsInline
+                      muted
+                      className={`w-full h-full object-cover ${isPreview ? "hidden" : ""}`}
+                    />
+
+                    {/* Image preview */}
+                    {isPreview && (
+                      <>
+                        <div className="absolute inset-0 flex items-center justify-center p-3">
+                          <img
+                            src={previewScan.enhancedThumbnailUrl}
+                            alt={`Scan ${clampedIdx! + 1}`}
+                            className="max-w-full max-h-full object-contain transition-transform duration-200"
+                            style={{ transform: getRotationTransform(previewScan.rotation) || undefined }}
+                          />
+                        </div>
+
+                        {/* Preview counter */}
+                        <div className="absolute top-3 left-3 px-2.5 py-1 rounded-full bg-black/50 backdrop-blur-sm text-white text-xs font-medium">
+                          {clampedIdx! + 1} / {activeScans.length}
+                        </div>
+
+                        {/* Close preview */}
+                        <button
+                          type="button"
+                          onClick={() => setPreviewIndex(null)}
+                          className="absolute top-3 right-3 p-2 rounded-full bg-black/50 backdrop-blur-sm text-white hover:bg-black/70 transition-colors"
+                          aria-label="Close preview"
+                        >
+                          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                            <line x1="18" y1="6" x2="6" y2="18" />
+                            <line x1="6" y1="6" x2="18" y2="18" />
+                          </svg>
+                        </button>
+
+                        {/* Dimensions info */}
+                        <div className="absolute bottom-3 left-3 px-2.5 py-1 rounded-full bg-black/50 backdrop-blur-sm text-white text-[10px] font-medium">
+                          {previewScan.width} × {previewScan.height}
+                          {previewScan.rotation !== 0 && ` · ${previewScan.rotation}°`}
+                        </div>
+                      </>
+                    )}
+
+                    {/* Camera overlays — only when camera active */}
+                    {!isPreview && (
+                      <>
+                        {!cameraReady && (
+                          <div className="absolute inset-0 flex items-center justify-center bg-slate-900">
+                            <div className="text-center">
+                              <div className="w-8 h-8 border-2 border-white/30 border-t-white rounded-full animate-spin mx-auto mb-3" />
+                              <p className="text-sm text-white/70">Starting camera...</p>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Capture count */}
+                        <div className="absolute top-3 left-3 px-2.5 py-1 rounded-full bg-black/50 backdrop-blur-sm text-white text-xs font-medium">
+                          {activeScans.length}/{MAX_CAPTURES} captures
+                        </div>
+
+                        {/* Switch camera */}
+                        {hasMultipleCameras && (
+                          <button
+                            type="button"
+                            onClick={switchCamera}
+                            className="absolute top-3 right-3 p-2 rounded-full bg-black/50 backdrop-blur-sm text-white hover:bg-black/70 transition-colors"
+                            aria-label="Switch camera"
+                          >
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                              <path d="M11 19H4a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h5" />
+                              <path d="M13 5h7a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-5" />
+                              <polyline points="16 3 19 6 16 9" />
+                              <polyline points="8 21 5 18 8 15" />
+                            </svg>
+                          </button>
+                        )}
+
+                        {/* Enhancing indicator */}
+                        {enhancingCount > 0 && (
+                          <div className="absolute bottom-3 left-3 px-2.5 py-1 rounded-full bg-amber-500/80 backdrop-blur-sm text-white text-xs font-medium animate-pulse">
+                            Enhancing {enhancingCount}...
+                          </div>
+                        )}
+                      </>
+                    )}
+
+                    {/* Capture flash effect */}
+                    <div
+                      className={`absolute inset-0 bg-white z-30 pointer-events-none transition-opacity duration-200 ${
+                        showFlash ? "opacity-70" : "opacity-0"
+                      }`}
+                    />
+
+                    {/* Toast notification */}
+                    <div
+                      className={`absolute top-12 left-1/2 -translate-x-1/2 z-30 px-4 py-2 rounded-full bg-black/70 backdrop-blur-sm text-white text-sm font-medium pointer-events-none transition-all duration-300 ${
+                        toastMessage
+                          ? "opacity-100 translate-y-0"
+                          : "opacity-0 -translate-y-2"
+                      }`}
+                    >
+                      {toastMessage || ""}
                     </div>
                   </div>
-                )}
 
-                {/* Capture count */}
-                <div className="absolute top-3 left-3 px-2.5 py-1 rounded-full bg-black/50 backdrop-blur-sm text-white text-xs font-medium">
-                  {scans.length}/{MAX_CAPTURES} captures
-                </div>
+                  {/* Capture button — only when camera active */}
+                  {!isPreview && (
+                    <div className="flex justify-center">
+                      <button
+                        type="button"
+                        onClick={captureFrame}
+                        disabled={!cameraReady || activeScans.length + removedScans.length >= MAX_CAPTURES}
+                        className="w-16 h-16 rounded-full bg-white border-4 border-slate-300 hover:border-accent-400 active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed transition-all shadow-lg flex items-center justify-center"
+                        aria-label="Take picture"
+                      >
+                        <div className="w-12 h-12 rounded-full bg-accent-500 hover:bg-accent-600 transition-colors" />
+                      </button>
+                    </div>
+                  )}
 
-                {/* Switch camera button */}
-                {hasMultipleCameras && (
-                  <button
-                    type="button"
-                    onClick={switchCamera}
-                    className="absolute top-3 right-3 p-2 rounded-full bg-black/50 backdrop-blur-sm text-white hover:bg-black/70 transition-colors"
-                    aria-label="Switch camera"
-                  >
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <path d="M11 19H4a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h5" />
-                      <path d="M13 5h7a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-5" />
-                      <polyline points="16 3 19 6 16 9" />
-                      <polyline points="8 21 5 18 8 15" />
-                    </svg>
-                  </button>
-                )}
+                  {/* Preview controls — rotate + delete */}
+                  {isPreview && (
+                    <div className="flex items-center justify-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setPreviewIndex(null)}
+                        className="flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-slate-600 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors"
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
+                          <circle cx="12" cy="13" r="4" />
+                        </svg>
+                        Camera
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => rotateScan(previewScan.id, -90)}
+                        className="p-2 text-slate-500 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 hover:text-slate-700 transition-colors"
+                        aria-label="Rotate left"
+                        title="Rotate left 90°"
+                      >
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M1 4v6h6" />
+                          <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
+                        </svg>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => rotateScan(previewScan.id, 90)}
+                        className="p-2 text-slate-500 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 hover:text-slate-700 transition-colors"
+                        aria-label="Rotate right"
+                        title="Rotate right 90°"
+                      >
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M23 4v6h-6" />
+                          <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+                        </svg>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (activeScans.length <= 1) return;
+                          removeScan(previewScan.id);
+                          // If removed the last visible item, clamp
+                          if (clampedIdx! >= activeScans.length - 1) {
+                            setPreviewIndex(Math.max(0, activeScans.length - 2));
+                          }
+                        }}
+                        disabled={activeScans.length <= 1}
+                        className="p-2 text-slate-500 bg-white border border-slate-200 rounded-lg hover:bg-red-50 hover:text-red-500 hover:border-red-200 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                        aria-label="Delete scan"
+                        title="Delete"
+                      >
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <polyline points="3 6 5 6 21 6" />
+                          <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                        </svg>
+                      </button>
+                    </div>
+                  )}
 
-                {/* Enhancing indicator */}
-                {enhancingCount > 0 && (
-                  <div className="absolute bottom-3 left-3 px-2.5 py-1 rounded-full bg-amber-500/80 backdrop-blur-sm text-white text-xs font-medium animate-pulse">
-                    Enhancing {enhancingCount}...
-                  </div>
-                )}
+                  {/* Thumbnail strip — active scans */}
+                  {activeScans.length > 0 && (
+                    <div className="flex gap-2 overflow-x-auto pb-2 -mx-2 px-2">
+                      {activeScans.map((scan, i) => (
+                        <div
+                          key={scan.id}
+                          onClick={() => setPreviewIndex(i)}
+                          className={`relative shrink-0 w-16 h-20 rounded-md overflow-hidden cursor-pointer transition-all ${
+                            isPreview && clampedIdx === i
+                              ? "border-2 border-accent-500 ring-2 ring-accent-200"
+                              : "border border-slate-200 hover:border-slate-300"
+                          }`}
+                        >
+                          <img
+                            src={scan.enhancedThumbnailUrl}
+                            alt={`Scan ${i + 1}`}
+                            className="w-full h-full object-cover"
+                          />
+                          <div className="absolute bottom-0.5 right-0.5 px-1 py-0.5 rounded bg-black/50 text-white text-[8px] font-bold">
+                            {i + 1}
+                          </div>
+                          {/* Remove button on thumbnail */}
+                          {activeScans.length > 1 && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                removeScan(scan.id);
+                                if (isPreview && clampedIdx !== null && clampedIdx >= activeScans.length - 1) {
+                                  setPreviewIndex(Math.max(0, activeScans.length - 2));
+                                }
+                              }}
+                              className="absolute top-0.5 left-0.5 p-0.5 rounded-full bg-black/50 text-white/80 hover:bg-red-500 hover:text-white transition-colors"
+                              aria-label="Remove scan"
+                            >
+                              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
+                                <line x1="18" y1="6" x2="6" y2="18" />
+                                <line x1="6" y1="6" x2="18" y2="18" />
+                              </svg>
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
 
-                {/* Capture flash effect */}
-                <div
-                  className={`absolute inset-0 bg-white z-30 pointer-events-none transition-opacity duration-200 ${
-                    showFlash ? "opacity-70" : "opacity-0"
-                  }`}
-                />
-
-                {/* Toast notification */}
-                <div
-                  className={`absolute top-12 left-1/2 -translate-x-1/2 z-30 px-4 py-2 rounded-full bg-black/70 backdrop-blur-sm text-white text-sm font-medium pointer-events-none transition-all duration-300 ${
-                    toastMessage
-                      ? "opacity-100 translate-y-0"
-                      : "opacity-0 -translate-y-2"
-                  }`}
-                >
-                  {toastMessage || ""}
-                </div>
-              </div>
-
-              {/* Capture button */}
-              <div className="flex justify-center">
-                <button
-                  type="button"
-                  onClick={captureFrame}
-                  disabled={!cameraReady || scans.length >= MAX_CAPTURES}
-                  className="w-16 h-16 rounded-full bg-white border-4 border-slate-300 hover:border-accent-400 active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed transition-all shadow-lg flex items-center justify-center"
-                  aria-label="Take picture"
-                >
-                  <div className="w-12 h-12 rounded-full bg-accent-500 hover:bg-accent-600 transition-colors" />
-                </button>
-              </div>
-
-              {/* Thumbnail strip */}
-              {scans.length > 0 && (
-                <div className="flex gap-2 overflow-x-auto pb-2 -mx-2 px-2">
-                  {scans.map((scan, i) => (
-                    <div key={scan.id} className="relative shrink-0 w-16 h-20 rounded-md overflow-hidden border border-slate-200">
-                      <img
-                        src={scan.enhancedThumbnailUrl}
-                        alt={`Scan ${i + 1}`}
-                        className="w-full h-full object-cover"
-                      />
-                      <div className="absolute bottom-0.5 right-0.5 px-1 py-0.5 rounded bg-black/50 text-white text-[8px] font-bold">
-                        {i + 1}
+                  {/* Removed scans — restore strip */}
+                  {removedScans.length > 0 && (
+                    <div>
+                      <p className="text-[10px] text-slate-400 mb-1.5">
+                        Removed · {removedScans.length} scan{removedScans.length !== 1 ? "s" : ""}
+                      </p>
+                      <div className="flex gap-2 overflow-x-auto pb-2 -mx-2 px-2">
+                        {removedScans.map((scan, i) => (
+                          <div
+                            key={scan.id}
+                            className="relative shrink-0 w-14 h-18 rounded-md overflow-hidden border-2 border-dashed border-slate-200 opacity-50 hover:opacity-70 transition-all"
+                          >
+                            <img
+                              src={scan.enhancedThumbnailUrl}
+                              alt={`Removed scan ${i + 1}`}
+                              className="w-full h-full object-cover"
+                            />
+                            {/* Restore button */}
+                            <button
+                              type="button"
+                              onClick={() => restoreScan(scan.id)}
+                              className="absolute inset-0 flex items-center justify-center bg-black/20"
+                              aria-label="Restore scan"
+                            >
+                              <div className="p-1 rounded-full bg-white/90 text-emerald-500">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                                  <line x1="12" y1="5" x2="12" y2="19" />
+                                  <line x1="5" y1="12" x2="19" y2="12" />
+                                </svg>
+                              </div>
+                            </button>
+                          </div>
+                        ))}
                       </div>
                     </div>
-                  ))}
-                </div>
-              )}
+                  )}
 
-              {/* Continue button */}
-              {scans.length > 0 && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    stopCamera();
-                    setStage("configure");
-                  }}
-                  className="w-full py-3 text-sm font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-xl transition-colors"
-                >
-                  Continue to Edit ({scans.length} scan{scans.length !== 1 ? "s" : ""})
-                </button>
-              )}
-            </>
+                  {/* Continue button */}
+                  {activeScans.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        stopCamera();
+                        setPreviewIndex(null);
+                        setStage("configure");
+                      }}
+                      className="w-full py-3 text-sm font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-xl transition-colors"
+                    >
+                      Continue to Edit ({activeScans.length} scan{activeScans.length !== 1 ? "s" : ""})
+                    </button>
+                  )}
+                </>
+              );
+            })()
           ) : (
             /* File upload fallback */
             <FileUploader
