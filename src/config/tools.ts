@@ -402,6 +402,19 @@ export const tools: ToolConfig[] = [
     isAvailable: true,
   },
   {
+    id: "resize-image",
+    name: "Resize Image",
+    description:
+      "Resize photos to standard formal sizes (2\u00d73, 3\u00d74, 4\u00d76 cm) for documents, passports, and visas. 300 DPI print quality.",
+    category: "compress",
+    icon: "Maximize2",
+    route: "/tools/resize-image",
+    accentColor: "amber",
+    inputFormats: [".jpg", ".jpeg", ".png"],
+    outputFormats: [".jpg"],
+    isAvailable: true,
+  },
+  {
     id: "rotate-image",
     name: "Rotate Image",
     description:
@@ -432,7 +445,7 @@ export const SECTIONS: ToolSection[] = [
   },
   {
     label: "Image Utilities",
-    toolIds: ["compress-image", "crop-image", "image-watermark-remove", "remove-and-change-background", "rotate-image"],
+    toolIds: ["compress-image", "crop-image", "image-watermark-remove", "remove-and-change-background", "resize-image", "rotate-image"],
   },
   {
     label: "PDF",
