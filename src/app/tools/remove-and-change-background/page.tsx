@@ -901,7 +901,7 @@ export default function RemoveAndChangeBackgroundPage() {
                             </div>
                             <input
                               type="range"
-                              min={50}
+                              min={10}
                               max={300}
                               step={5}
                               value={bgScale}
@@ -911,7 +911,7 @@ export default function RemoveAndChangeBackgroundPage() {
                               className="w-full h-1.5 bg-slate-200 rounded-full appearance-none cursor-pointer accent-blue-500"
                             />
                             <div className="flex justify-between text-[10px] text-slate-400 mt-0.5">
-                              <span>50%</span>
+                              <span>10%</span>
                               <span>300%</span>
                             </div>
                           </div>
