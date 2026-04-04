@@ -362,6 +362,19 @@ export const tools: ToolConfig[] = [
     outputFormats: [".pdf"],
     isAvailable: true,
   },
+  {
+    id: "scan-to-pdf",
+    name: "Scan to PDF",
+    description:
+      "Scan documents using your camera and convert them into high-quality PDF files. Auto-enhance for optimal readability.",
+    category: "transform",
+    icon: "ScanLine",
+    route: "/tools/scan-to-pdf",
+    accentColor: "violet",
+    inputFormats: ["Camera"],
+    outputFormats: [".pdf"],
+    isAvailable: true,
+  },
 ];
 
 export interface ToolSection {
@@ -384,7 +397,7 @@ export const SECTIONS: ToolSection[] = [
   },
   {
     label: "PDF",
-    toolIds: ["excel-to-pdf", "image-to-pdf", "pdf-to-excel", "pdf-to-image", "pdf-to-ppt", "pdf-to-word", "pptx-to-pdf", "word-to-pdf", "x-content-to-pdf"],
+    toolIds: ["excel-to-pdf", "image-to-pdf", "pdf-to-excel", "pdf-to-image", "pdf-to-ppt", "pdf-to-word", "pptx-to-pdf", "scan-to-pdf", "word-to-pdf", "x-content-to-pdf"],
   },
   {
     label: "PDF Utilities",
@@ -397,6 +410,10 @@ export const SECTIONS: ToolSection[] = [
   {
     label: "QR Code",
     toolIds: ["link-to-qr-code", "qr-code-to-link"],
+  },
+  {
+    label: "Scan",
+    toolIds: ["scan-to-pdf"],
   },
   {
     label: "Watermark",
