@@ -469,6 +469,14 @@ export default function CropImagePage() {
     URL.revokeObjectURL(a.href);
   }, [result, file]);
 
+  // ---- Back to editor (keep file, reset result) ----
+  const handleBackToEdit = useCallback(() => {
+    if (result?.previewUrl) URL.revokeObjectURL(result.previewUrl);
+    setResult(null);
+    setProgress({ progress: 0, stage: "" });
+    setStage("editor");
+  }, [result]);
+
   // ---- Reset (back to upload) ----
   const handleReset = useCallback(() => {
     if (result?.previewUrl) URL.revokeObjectURL(result.previewUrl);
@@ -857,11 +865,11 @@ export default function CropImagePage() {
             </p>
           </div>
 
-          {/* Actions */}
-          <div className="flex flex-col sm:flex-row items-center gap-3">
+          {/* Actions — 3 buttons, same size, 1 row */}
+          <div className="flex flex-col sm:flex-row gap-3">
             <button
               onClick={handleDownload}
-              className="w-full sm:w-auto flex-1 flex items-center justify-center gap-2 px-6 py-3 bg-accent-500 text-white font-semibold rounded-xl hover:bg-accent-600 active:bg-accent-700 transition-colors shadow-md shadow-accent-500/25"
+              className="flex-1 flex items-center justify-center gap-2 px-4 py-3 bg-accent-500 text-white font-semibold rounded-xl hover:bg-accent-600 active:bg-accent-700 transition-colors shadow-md shadow-accent-500/25 text-sm"
             >
               <svg
                 width="18"
@@ -877,11 +885,17 @@ export default function CropImagePage() {
                 <polyline points="7 10 12 15 17 10" />
                 <line x1="12" y1="15" x2="12" y2="3" />
               </svg>
-              Download Cropped Image
+              Download
+            </button>
+            <button
+              onClick={handleBackToEdit}
+              className="flex-1 px-4 py-3 text-accent-600 font-semibold rounded-xl border border-accent-200 hover:bg-accent-50 transition-colors text-sm"
+            >
+              Back to Edit
             </button>
             <button
               onClick={handleReset}
-              className="w-full sm:w-auto px-6 py-3 text-slate-600 font-medium rounded-xl border border-slate-200 hover:bg-slate-50 transition-colors"
+              className="flex-1 px-4 py-3 text-slate-600 font-semibold rounded-xl border border-slate-200 hover:bg-slate-50 transition-colors text-sm"
             >
               Crop Another Image
             </button>
