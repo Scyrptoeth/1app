@@ -23,6 +23,24 @@ const nextConfig = {
       },
     ],
   },
+  async headers() {
+    return [
+      {
+        // Enable SharedArrayBuffer for ONNX multi-threaded inference
+        source: "/tools/remove-and-change-background",
+        headers: [
+          {
+            key: "Cross-Origin-Opener-Policy",
+            value: "same-origin",
+          },
+          {
+            key: "Cross-Origin-Embedder-Policy",
+            value: "credentialless",
+          },
+        ],
+      },
+    ];
+  },
 };
 
 module.exports = nextConfig;
