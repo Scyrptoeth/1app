@@ -338,8 +338,8 @@ export default function RotateImagePage() {
     [transformedFile, transformedSize, transformedUrl, imageUrl, file, isFullCrop]
   );
 
-  // ---- Download from crop view: apply crop, trigger download, update image ----
-  const handleCropAndDownload = useCallback(
+  // ---- Process from crop view: apply crop, go to done stage ----
+  const handleCropAndProcess = useCallback(
     async (cropArea: CropArea, cropRotation: 0 | 90 | 180 | 270) => {
       if (!transformedFile || !file) return;
 
@@ -351,53 +351,41 @@ export default function RotateImagePage() {
           transformedSize.height
         );
 
-        let downloadBlob: Blob;
-        let newW: number;
-        let newH: number;
+        let finalBlob: Blob;
+        let finalW: number;
+        let finalH: number;
 
         if (noActualCrop) {
-          downloadBlob = transformedFile;
-          newW = transformedSize.width;
-          newH = transformedSize.height;
+          finalBlob = transformedFile;
+          finalW = transformedSize.width;
+          finalH = transformedSize.height;
         } else {
           const res = await cropImage(transformedFile, {
             cropArea,
             rotation: cropRotation,
           });
-          downloadBlob = res.blob;
-          newW = res.croppedWidth;
-          newH = res.croppedHeight;
-
-          // Update crop view with cropped image
-          if (transformedUrl && transformedUrl !== imageUrl) {
-            URL.revokeObjectURL(transformedUrl);
-          }
-          const ext = file.name.split(".").pop()?.toLowerCase() || "jpg";
-          const newFile = new File([res.blob], `cropped.${ext}`, {
-            type: res.blob.type,
-          });
-          setTransformedFile(newFile);
-          setTransformedUrl(res.previewUrl);
-          setTransformedSize({ width: newW, height: newH });
+          finalBlob = res.blob;
+          finalW = res.croppedWidth;
+          finalH = res.croppedHeight;
         }
 
-        // Trigger download
-        const baseName = file.name.replace(/\.[^.]+$/, "");
-        const ext = getOutputExtension(file.name);
-        const a = document.createElement("a");
-        a.href = URL.createObjectURL(downloadBlob);
-        a.download = `${baseName}-edited.${ext}`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(a.href);
+        const previewUrl = URL.createObjectURL(finalBlob);
+        setDoneData({
+          blob: finalBlob,
+          previewUrl,
+          originalSize: file.size,
+          processedSize: finalBlob.size,
+          newWidth: finalW,
+          newHeight: finalH,
+        });
+        setStage("done");
       } catch (err) {
-        console.error("Download failed:", err);
-        alert("Failed to process the image for download.");
+        console.error("Process failed:", err);
+        alert("Failed to process the image.");
       }
       setCropLoading(false);
     },
-    [transformedFile, transformedSize, transformedUrl, imageUrl, file, isFullCrop]
+    [transformedFile, transformedSize, file, isFullCrop]
   );
 
   // ---- Download result ----
@@ -708,7 +696,8 @@ export default function RotateImagePage() {
           onCrop={handleCropPreview}
           actionLabel="Crop"
           onNavigateRotate={handleApplyAndRotate}
-          onDownload={handleCropAndDownload}
+          onDownload={handleCropAndProcess}
+          downloadLabel="Process"
           isProcessing={cropLoading}
         />
       )}
