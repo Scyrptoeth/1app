@@ -413,8 +413,8 @@ export default function RemoveAndChangeBackgroundPage() {
     [cropFile, cropDims, cropUrl, foregroundUrl, compositeUrl]
   );
 
-  // ---- Crop: download directly ----
-  const handleCropAndDownload = useCallback(
+  // ---- Crop: apply and go to done stage ----
+  const handleCropAndProcess = useCallback(
     async (cropArea: CropArea, cropRotation: 0 | 90 | 180 | 270) => {
       if (!cropFile || !file) return;
       setCropLoading(true);
@@ -425,27 +425,37 @@ export default function RemoveAndChangeBackgroundPage() {
           cropArea.width === cropDims.width &&
           cropArea.height === cropDims.height;
 
-        let downloadBlob: Blob;
+        let finalBlob: Blob;
+        let finalW: number;
+        let finalH: number;
+
         if (isFullCrop && cropRotation === 0) {
-          downloadBlob = cropFile;
+          finalBlob = cropFile;
+          finalW = cropDims.width;
+          finalH = cropDims.height;
         } else {
           const result = await cropImage(cropFile, {
             cropArea,
             rotation: cropRotation,
           });
-          downloadBlob = result.blob;
+          finalBlob = result.blob;
+          finalW = result.croppedWidth;
+          finalH = result.croppedHeight;
         }
 
-        const baseName = file.name.replace(/\.[^.]+$/, "");
-        const a = document.createElement("a");
-        a.href = URL.createObjectURL(downloadBlob);
-        a.download = `${baseName}-no-bg.png`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(a.href);
+        const resultUrl = URL.createObjectURL(finalBlob);
+        setDoneData({
+          blob: finalBlob,
+          previewUrl: resultUrl,
+          originalSize: file.size,
+          processedSize: finalBlob.size,
+          width: finalW,
+          height: finalH,
+        });
+        setStage("done");
       } catch (err) {
-        console.error("Download failed:", err);
+        console.error("Process failed:", err);
+        alert("Failed to process the image.");
       }
       setCropLoading(false);
     },
@@ -977,7 +987,9 @@ export default function RemoveAndChangeBackgroundPage() {
           onCrop={handleCropApply}
           actionLabel="Crop"
           onNavigateRotate={handleCropAndReturn}
-          onDownload={handleCropAndDownload}
+          navigateLabel="Back to Background & Rotate"
+          onDownload={handleCropAndProcess}
+          downloadLabel="Process"
           isProcessing={cropLoading}
         />
       )}
@@ -1018,13 +1030,15 @@ export default function RemoveAndChangeBackgroundPage() {
             Your image is ready to download.
           </p>
 
-          {/* Preview */}
-          <div className="mb-6 rounded-xl overflow-hidden border border-slate-100 shadow-sm">
-            <img
-              src={doneData.previewUrl}
-              alt="Result"
-              className="w-full max-h-72 object-contain bg-[repeating-conic-gradient(#f1f5f9_0%_25%,#fff_0%_50%)] bg-[length:16px_16px]"
-            />
+          {/* Preview — tight wrap, no empty space on sides */}
+          <div className="mb-6 flex justify-center">
+            <div className="rounded-xl overflow-hidden border border-slate-100 shadow-sm inline-block">
+              <img
+                src={doneData.previewUrl}
+                alt="Result"
+                className="block max-w-full max-h-80 bg-[repeating-conic-gradient(#f1f5f9_0%_25%,#fff_0%_50%)] bg-[length:16px_16px]"
+              />
+            </div>
           </div>
 
           {/* Stats */}

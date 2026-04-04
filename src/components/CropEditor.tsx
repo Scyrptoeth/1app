@@ -187,8 +187,12 @@ export interface CropEditorProps {
   actionLabel?: string;
   /** Navigate to rotate editor (applies crop first). Only shown when provided. */
   onNavigateRotate?: (cropArea: CropArea, rotation: 0 | 90 | 180 | 270) => void;
+  /** Label for the navigate button. Defaults to "Rotate Image". */
+  navigateLabel?: string;
   /** Direct download (applies crop first). Only shown when provided. */
   onDownload?: (cropArea: CropArea, rotation: 0 | 90 | 180 | 270) => void;
+  /** Label for the download button. Defaults to "Download". */
+  downloadLabel?: string;
   /** Disables all action buttons while processing. */
   isProcessing?: boolean;
 }
@@ -201,7 +205,9 @@ export default function CropEditor({
   onCrop,
   actionLabel = "Crop IMAGE",
   onNavigateRotate,
+  navigateLabel = "Rotate Image",
   onDownload,
+  downloadLabel = "Download",
   isProcessing = false,
 }: CropEditorProps) {
   const [rotation, setRotation] = useState<0 | 90 | 180 | 270>(0);
@@ -666,7 +672,7 @@ export default function CropEditor({
                 disabled={isProcessing}
                 className="w-full py-2.5 text-accent-600 font-medium border border-accent-200 rounded-xl hover:bg-accent-50 transition-colors text-sm disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                Rotate Image
+                {navigateLabel}
               </button>
             )}
             {onDownload && (
@@ -675,7 +681,7 @@ export default function CropEditor({
                 disabled={isProcessing}
                 className="w-full py-2.5 text-accent-600 font-medium border border-accent-200 rounded-xl hover:bg-accent-50 transition-colors text-sm disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                Download
+                {downloadLabel}
               </button>
             )}
             <button
