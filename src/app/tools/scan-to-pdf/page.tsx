@@ -434,10 +434,15 @@ export default function ScanToPdfPage() {
   const [progress, setProgress] = useState<ProcessingUpdate>({ stage: "", progress: 0 });
   const [result, setResult] = useState<ImageToPdfResult | null>(null);
   const [enhancingCount, setEnhancingCount] = useState(0);
+  const [showFlash, setShowFlash] = useState(false);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [viewfinderAspect, setViewfinderAspect] = useState("3/4");
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const dragIndexRef = useRef<number>(-1);
+  const flashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // ─── Computed ────────────────────────────────────────────────
 
@@ -465,11 +470,14 @@ export default function ScanToPdfPage() {
         return;
       }
 
+      // Match constraints to device orientation so the stream is portrait when phone is upright
+      const isPortrait = window.matchMedia("(orientation: portrait)").matches;
+
       const stream = await navigator.mediaDevices.getUserMedia({
         video: {
           facingMode: { ideal: facing },
-          width: { ideal: 3840 },
-          height: { ideal: 2160 },
+          width: { ideal: isPortrait ? 2160 : 3840 },
+          height: { ideal: isPortrait ? 3840 : 2160 },
         },
         audio: false,
       });
@@ -479,6 +487,13 @@ export default function ScanToPdfPage() {
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
         await videoRef.current.play();
+
+        // Set viewfinder aspect ratio from actual stream dimensions
+        const vw = videoRef.current.videoWidth;
+        const vh = videoRef.current.videoHeight;
+        if (vw && vh) {
+          setViewfinderAspect(`${vw}/${vh}`);
+        }
       }
 
       setCameraReady(true);
@@ -506,9 +521,25 @@ export default function ScanToPdfPage() {
     };
   }, [stage, inputMode, facingMode, startCamera, stopCamera]);
 
+  // Restart camera when device orientation changes (portrait ↔ landscape)
+  useEffect(() => {
+    if (stage !== "capture" || inputMode !== "camera") return;
+
+    const mql = window.matchMedia("(orientation: portrait)");
+    const handleOrientationChange = () => {
+      startCamera(facingMode);
+    };
+    mql.addEventListener("change", handleOrientationChange);
+    return () => mql.removeEventListener("change", handleOrientationChange);
+  }, [stage, inputMode, facingMode, startCamera]);
+
   // Cleanup on unmount
   useEffect(() => {
-    return () => stopCamera();
+    return () => {
+      stopCamera();
+      if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
+      if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    };
   }, [stopCamera]);
 
   // ─── Capture ─────────────────────────────────────────────────
@@ -516,6 +547,20 @@ export default function ScanToPdfPage() {
   const captureFrame = useCallback(async () => {
     if (!videoRef.current || !streamRef.current) return;
     if (scans.length >= MAX_CAPTURES) return;
+
+    // ─── Triple capture feedback ───
+    // 1. Haptic vibration (Android; graceful no-op on iOS/desktop)
+    navigator.vibrate?.(50);
+
+    // 2. White flash on viewfinder
+    setShowFlash(true);
+    if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
+    flashTimerRef.current = setTimeout(() => setShowFlash(false), 200);
+
+    // 3. Toast notification
+    setToastMessage("Picture taken!");
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = setTimeout(() => setToastMessage(null), 1500);
 
     const video = videoRef.current;
     const settings = streamRef.current.getVideoTracks()[0]?.getSettings();
@@ -816,8 +861,11 @@ export default function ScanToPdfPage() {
 
           {inputMode === "camera" && !cameraError ? (
             <>
-              {/* Camera viewfinder */}
-              <div className="relative bg-black rounded-2xl overflow-hidden aspect-[4/3]">
+              {/* Camera viewfinder — aspect ratio adapts to actual stream */}
+              <div
+                className="relative bg-black rounded-2xl overflow-hidden"
+                style={{ aspectRatio: viewfinderAspect }}
+              >
                 <video
                   ref={videoRef}
                   autoPlay
@@ -863,6 +911,24 @@ export default function ScanToPdfPage() {
                     Enhancing {enhancingCount}...
                   </div>
                 )}
+
+                {/* Capture flash effect */}
+                <div
+                  className={`absolute inset-0 bg-white z-30 pointer-events-none transition-opacity duration-200 ${
+                    showFlash ? "opacity-70" : "opacity-0"
+                  }`}
+                />
+
+                {/* Toast notification */}
+                <div
+                  className={`absolute top-12 left-1/2 -translate-x-1/2 z-30 px-4 py-2 rounded-full bg-black/70 backdrop-blur-sm text-white text-sm font-medium pointer-events-none transition-all duration-300 ${
+                    toastMessage
+                      ? "opacity-100 translate-y-0"
+                      : "opacity-0 -translate-y-2"
+                  }`}
+                >
+                  {toastMessage || ""}
+                </div>
               </div>
 
               {/* Capture button */}
