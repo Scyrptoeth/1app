@@ -655,41 +655,27 @@ export default function ZipRarFilePage() {
               <path d="M12 8h.01" />
             </svg>
             <p className="text-xs text-blue-700 leading-relaxed">
-              ZIP archives can be opened with any file manager (Windows Explorer, macOS Finder), WinRAR, 7-Zip, or built-in OS extractors. All files are processed locally in your browser — nothing is uploaded to any server.
+              ZIP and RAR are both compressed archive formats that serve the same purpose. Your .zip file can be opened with WinRAR, 7-Zip, Windows Explorer, macOS Finder, and all major archive tools. All files are processed locally in your browser — nothing is uploaded to any server.
             </p>
           </div>
 
           {/* Actions */}
-          <div className="flex flex-col sm:flex-row items-center gap-3">
+          <div className="flex flex-col sm:flex-row items-stretch gap-3">
             <button
               onClick={handleDownload}
-              className="w-full sm:w-auto flex-1 flex items-center justify-center gap-2 px-6 py-3 bg-accent-500 text-white font-semibold rounded-xl hover:bg-accent-600 active:bg-accent-700 transition-colors shadow-md shadow-accent-500/25"
+              className="flex-1 px-6 py-3 bg-accent-500 text-white font-semibold rounded-xl hover:bg-accent-600 active:bg-accent-700 transition-colors shadow-md shadow-accent-500/25 text-center"
             >
-              <svg
-                width="18"
-                height="18"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                <polyline points="7 10 12 15 17 10" />
-                <line x1="12" y1="15" x2="12" y2="3" />
-              </svg>
               Download .zip
             </button>
             <button
               onClick={handleBackToEdit}
-              className="w-full sm:w-auto flex-1 px-6 py-3 text-accent-600 font-medium rounded-xl border border-accent-200 hover:bg-accent-50 transition-colors"
+              className="flex-1 px-6 py-3 text-accent-600 font-medium rounded-xl border border-accent-200 hover:bg-accent-50 transition-colors text-center"
             >
               Back to Edit
             </button>
             <button
               onClick={handleReset}
-              className="w-full sm:w-auto flex-1 px-6 py-3 text-slate-600 font-medium rounded-xl border border-slate-200 hover:bg-slate-50 transition-colors"
+              className="flex-1 px-6 py-3 text-slate-600 font-medium rounded-xl border border-slate-200 hover:bg-slate-50 transition-colors text-center"
             >
               Process Another
             </button>

@@ -432,9 +432,9 @@ export const tools: ToolConfig[] = [
   },
   {
     id: "zip-rar-file",
-    name: "Zip File",
+    name: "Zip (Rar) File",
     description:
-      "Archive one or more files and folders into a ZIP file. Fast client-side compression with folder structure preservation.",
+      "Archive one or more files and folders into a compressed ZIP file. ZIP is universally compatible — works with WinRAR, 7-Zip, and all operating systems.",
     category: "archive",
     icon: "FileArchive",
     route: "/tools/zip-rar-file",
@@ -496,7 +496,7 @@ export const SECTIONS: ToolSection[] = [
     toolIds: ["x-content-to-pdf", "x-content-to-word"],
   },
   {
-    label: "Archive",
+    label: "Zip (Rar)",
     toolIds: ["zip-rar-file"],
   },
 ];
