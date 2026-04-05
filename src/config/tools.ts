@@ -431,6 +431,19 @@ export const tools: ToolConfig[] = [
     isAvailable: true,
   },
   {
+    id: "unzip-extract-file",
+    name: "Unzip (Extract) File",
+    description:
+      "Extract files from ZIP and RAR (v5) archives. View contents, download individual files, or re-package as a clean ZIP without OS metadata.",
+    category: "archive",
+    icon: "FileArchive",
+    route: "/tools/unzip-extract-file",
+    accentColor: "amber",
+    inputFormats: [".zip", ".rar"],
+    outputFormats: ["*"],
+    isAvailable: true,
+  },
+  {
     id: "zip-rar-file",
     name: "Zip (Rar) File",
     description:
@@ -497,7 +510,7 @@ export const SECTIONS: ToolSection[] = [
   },
   {
     label: "Zip (Rar)",
-    toolIds: ["zip-rar-file"],
+    toolIds: ["unzip-extract-file", "zip-rar-file"],
   },
 ];
 
