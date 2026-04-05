@@ -17,7 +17,7 @@ export interface PhotoPreset {
 
 export const PRINT_DPI = 300;
 
-function cmToPx(cm: number): number {
+export function cmToPx(cm: number): number {
   return Math.round((cm / 2.54) * PRINT_DPI);
 }
 
