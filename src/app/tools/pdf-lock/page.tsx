@@ -6,6 +6,8 @@ import FileUploader from "@/components/FileUploader";
 import ProcessingView from "@/components/ProcessingView";
 import DownloadView from "@/components/DownloadView";
 import { HowItWorks } from "@/components/HowItWorks";
+import { PdfPageManager, type PageConfig } from "@/components/PdfPageManager";
+import { applyPageModifications } from "@/lib/tools/pdf-page-utils";
 import { getToolById } from "@/config/tools";
 import {
   lockPdf,
@@ -14,7 +16,7 @@ import {
   type LockPdfPermissions,
 } from "@/lib/tools/pdf-lock";
 
-type Stage = "upload" | "configure" | "processing" | "done";
+type Stage = "upload" | "pages" | "configure" | "processing" | "done";
 
 const RESTRICTION_OPTIONS: Array<{
   key: keyof LockPdfPermissions;
@@ -121,9 +123,52 @@ export default function PdfLockPage() {
     confirmPassword.length >= 1 &&
     passwordsMatch;
 
+  // Track the file to use for locking (may be modified by page management)
+  const [lockFile, setLockFile] = useState<File | null>(null);
+
   const handleFilesSelected = useCallback((files: File[]) => {
     setFile(files[0]);
-    setStage("configure");
+    setStage("pages");
+  }, []);
+
+  const handlePageConfirm = useCallback(
+    async (pages: PageConfig[]) => {
+      if (!file) return;
+
+      const hasModifications =
+        pages.some((p) => !p.included) ||
+        pages.some((p) => p.rotation !== 0) ||
+        pages.some((p, i) => p.originalIndex !== i);
+
+      if (hasModifications) {
+        setStage("processing");
+        setProgress({ progress: 0, status: "Applying page modifications..." });
+        try {
+          const arrayBuffer = await file.arrayBuffer();
+          const modifiedBytes = await applyPageModifications(arrayBuffer, pages);
+          const modifiedFile = new File([modifiedBytes], file.name, {
+            type: "application/pdf",
+          });
+          setLockFile(modifiedFile);
+          setStage("configure");
+          setProgress({ progress: 0, status: "" });
+        } catch (err) {
+          console.error("Page modification failed:", err);
+          setStage("pages");
+          alert("Failed to apply page modifications. Please try again.");
+        }
+      } else {
+        setLockFile(file);
+        setStage("configure");
+      }
+    },
+    [file]
+  );
+
+  const handlePageCancel = useCallback(() => {
+    setStage("upload");
+    setFile(null);
+    setLockFile(null);
   }, []);
 
   const togglePermission = useCallback((key: keyof LockPdfPermissions) => {
@@ -161,13 +206,14 @@ export default function PdfLockPage() {
   }, []);
 
   const handleLock = useCallback(async () => {
-    if (!file || !canProceed) return;
+    const targetFile = lockFile || file;
+    if (!targetFile || !canProceed) return;
 
     setStage("processing");
 
     try {
       const lockResult = await lockPdf({
-        file,
+        file: targetFile,
         password,
         permissions,
         onProgress: (update) => setProgress(update),
@@ -181,7 +227,7 @@ export default function PdfLockPage() {
         "Failed to lock the PDF. The file may be corrupted or unsupported. Please try a different file."
       );
     }
-  }, [file, password, permissions, canProceed]);
+  }, [lockFile, file, password, permissions, canProceed]);
 
   const handleDownload = useCallback(() => {
     if (!result) return;
@@ -198,6 +244,7 @@ export default function PdfLockPage() {
   const handleReset = useCallback(() => {
     setStage("upload");
     setFile(null);
+    setLockFile(null);
     setProgress({ progress: 0, status: "" });
     setResult(null);
     setPermissions({
@@ -231,16 +278,21 @@ export default function PdfLockPage() {
           },
           {
             step: "2",
+            title: "Manage Pages",
+            desc: "Optionally rotate, reorder, or remove pages before locking. You can skip this step if no changes are needed.",
+          },
+          {
+            step: "3",
             title: "Choose Restrictions",
             desc: "Pick which actions to block: opening, copying, printing, editing, annotations, form filling, or page assembly. Use Select All for maximum protection.",
           },
           {
-            step: "3",
+            step: "4",
             title: "Set Owner Password",
             desc: "Create a strong owner password with real-time strength feedback. This password is required to remove or change the restrictions later.",
           },
           {
-            step: "4",
+            step: "5",
             title: "Download Locked PDF",
             desc: "Download your protected PDF with all chosen restrictions enforced. All processing happens in your browser, so your password and document stay private.",
           },
@@ -255,6 +307,17 @@ export default function PdfLockPage() {
           onFilesSelected={handleFilesSelected}
           title="Select a PDF to lock"
           subtitle="Add password protection and restrictions to your PDF"
+        />
+      )}
+
+      {stage === "pages" && file && (
+        <PdfPageManager
+          file={file}
+          onConfirm={handlePageConfirm}
+          onCancel={handlePageCancel}
+          confirmLabel="Continue to Lock Settings"
+          cancelLabel="Back"
+          requireChanges={false}
         />
       )}
 

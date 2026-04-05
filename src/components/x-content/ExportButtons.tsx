@@ -9,12 +9,15 @@ interface ExportButtonsProps {
   thread?: ThreadData | null;
   /** Which export formats to show. Defaults to both. */
   visibleFormats?: ExportFormat[];
+  /** If provided, PDF blob is passed to this callback instead of downloading directly. */
+  onPdfGenerated?: (blob: Blob, filename: string) => void;
 }
 
 export default function ExportButtons({
   tweet,
   thread,
   visibleFormats = ["pdf", "docx"],
+  onPdfGenerated,
 }: ExportButtonsProps) {
   const [generating, setGenerating] = useState<ExportFormat | null>(null);
 
@@ -56,7 +59,11 @@ export default function ExportButtons({
       if (format === "pdf") {
         const { generatePDF } = await import("@/lib/tools/x-content/pdf-generator");
         const blob = await generatePDF(data!);
-        downloadBlob(blob, getFilename("pdf"));
+        if (onPdfGenerated) {
+          onPdfGenerated(blob, getFilename("pdf"));
+        } else {
+          downloadBlob(blob, getFilename("pdf"));
+        }
       } else {
         const { generateDOCX } = await import("@/lib/tools/x-content/docx-generator");
         const blob = await generateDOCX(data!);

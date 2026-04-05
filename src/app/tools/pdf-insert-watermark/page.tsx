@@ -87,6 +87,19 @@ function hexToRgb(hex: string): { r: number; g: number; b: number } | null {
   return { r: parseInt(m[1], 16) / 255, g: parseInt(m[2], 16) / 255, b: parseInt(m[3], 16) / 255 };
 }
 
+function normalizeAngle(a: number): number {
+  return ((a % 360) + 360) % 360;
+}
+
+function getRotationTransform(deg: number): string {
+  const n = normalizeAngle(deg);
+  if (n === 0) return "";
+  if (n === 90) return "rotate(90deg) scale(0.75)";
+  if (n === 180) return "rotate(180deg)";
+  if (n === 270) return "rotate(270deg) scale(0.75)";
+  return `rotate(${n}deg)`;
+}
+
 // ─── Canvas Watermark Preview ────────────────────────────────────────
 
 function getCanvasPosition(
@@ -226,17 +239,21 @@ function PositionGrid({
 
 interface ActivePageThumbProps {
   pageIndex: number; thumbnailUrl?: string; dimensions?: PageDimensions;
+  pageRotation: number; selected: boolean;
   isFirst: boolean; isLast: boolean; canMoveUp: boolean; canMoveDown: boolean; canRemove: boolean;
   onMoveLeft: () => void; onMoveRight: () => void; onMoveUp: () => void; onMoveDown: () => void;
   onRemove: () => void; onPreview: () => void;
+  onRotateLeft: () => void; onRotateRight: () => void; onRotate180: () => void; onToggleSelect: () => void;
   onDragStart: (e: React.DragEvent) => void; onDragOver: (e: React.DragEvent) => void; onDrop: (e: React.DragEvent) => void;
   isPreviewPage: boolean; watermarkPosition: WatermarkPosition; mosaic: boolean;
 }
 
 function ActivePageThumb(props: ActivePageThumbProps) {
   const {
-    pageIndex, thumbnailUrl, dimensions, isFirst, isLast, canMoveUp, canMoveDown, canRemove,
+    pageIndex, thumbnailUrl, dimensions, pageRotation, selected,
+    isFirst, isLast, canMoveUp, canMoveDown, canRemove,
     onMoveLeft, onMoveRight, onMoveUp, onMoveDown, onRemove, onPreview,
+    onRotateLeft, onRotateRight, onRotate180, onToggleSelect,
     onDragStart, onDragOver, onDrop, isPreviewPage, watermarkPosition, mosaic,
   } = props;
   const observerRef = useRef<HTMLDivElement>(null);
@@ -250,14 +267,37 @@ function ActivePageThumb(props: ActivePageThumbProps) {
     return () => obs.disconnect();
   }, []);
 
+  const pageTransform = getRotationTransform(pageRotation);
+  const normPageRotation = normalizeAngle(pageRotation);
+
   return (
     <div
       ref={observerRef} draggable onClick={() => onPreview()} onDragStart={onDragStart} onDragOver={onDragOver} onDrop={onDrop}
-      className={`relative rounded-lg border-2 ${isPreviewPage ? "border-accent-400 ring-2 ring-accent-200" : "border-slate-200 hover:border-slate-300"} cursor-grab active:cursor-grabbing transition-all`}
+      className={`relative rounded-lg border-2 ${
+        selected
+          ? "border-accent-400 ring-2 ring-accent-100"
+          : isPreviewPage
+            ? "border-accent-400 ring-2 ring-accent-200"
+            : "border-slate-200 hover:border-slate-300"
+      } cursor-grab active:cursor-grabbing transition-all`}
     >
-      <div className="absolute top-1.5 left-1.5 z-10 px-1.5 py-0.5 rounded-full bg-slate-900/70 text-white text-[9px] font-bold">
-        {pageIndex + 1}
-      </div>
+      {/* Checkbox - top left */}
+      <button
+        type="button"
+        onClick={(e) => { e.stopPropagation(); onToggleSelect(); }}
+        className={`absolute top-1.5 left-1.5 z-10 w-5 h-5 rounded border-2 flex items-center justify-center transition-all ${
+          selected
+            ? "bg-accent-500 border-accent-500"
+            : "bg-white/80 border-slate-300 hover:border-slate-400"
+        }`}
+        aria-label={`Select page ${pageIndex + 1}`}
+      >
+        {selected && (
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3">
+            <polyline points="20 6 9 17 4 12" />
+          </svg>
+        )}
+      </button>
 
       <button type="button" onClick={(e) => { e.stopPropagation(); onRemove(); }} disabled={!canRemove}
         className="absolute top-1.5 right-1.5 z-10 p-1 rounded-full bg-white/80 text-slate-400 hover:bg-white hover:text-red-500 disabled:opacity-30 disabled:cursor-not-allowed transition-all shadow-sm" aria-label="Remove">
@@ -274,7 +314,9 @@ function ActivePageThumb(props: ActivePageThumbProps) {
 
       <div className="relative w-full aspect-[3/4] bg-slate-50 rounded-t-md overflow-hidden flex items-center justify-center">
         {visible && thumbnailUrl ? (
-          <img src={thumbnailUrl} alt={`Page ${pageIndex + 1}`} className="w-full h-full object-contain" />
+          <img src={thumbnailUrl} alt={`Page ${pageIndex + 1}`}
+            className="w-full h-full object-contain transition-transform duration-200"
+            style={pageTransform ? { transform: pageTransform } : undefined} />
         ) : (
           <div className="text-slate-300">
             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
@@ -307,8 +349,25 @@ function ActivePageThumb(props: ActivePageThumbProps) {
       </div>
 
       <div className="px-2 py-1.5 border-t border-slate-100">
-        <p className="text-[10px] font-medium text-slate-600">Page {pageIndex + 1}</p>
-        {dimensions && <p className="text-[9px] text-slate-400">{formatDimensions(dimensions)}</p>}
+        <div className="flex items-center justify-between">
+          <div className="min-w-0">
+            <p className="text-[10px] font-medium text-slate-600">
+              Page {pageIndex + 1}{normPageRotation !== 0 && <span className="text-slate-400"> · {normPageRotation}°</span>}
+            </p>
+            {dimensions && <p className="text-[9px] text-slate-400">{formatDimensions(dimensions)}</p>}
+          </div>
+          <div className="flex items-center gap-0.5 shrink-0">
+            <button type="button" onClick={(e) => { e.stopPropagation(); onRotateLeft(); }} className="p-0.5 rounded text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors" aria-label="Rotate left" title="Rotate left 90°">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M1 4v6h6" /><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" /></svg>
+            </button>
+            <button type="button" onClick={(e) => { e.stopPropagation(); onRotateRight(); }} className="p-0.5 rounded text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors" aria-label="Rotate right" title="Rotate right 90°">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M23 4v6h-6" /><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" /></svg>
+            </button>
+            <button type="button" onClick={(e) => { e.stopPropagation(); onRotate180(); }} className="p-0.5 rounded text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors" aria-label="Rotate 180°" title="Rotate 180°">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M21 12a9 9 0 1 1-9-9" /><polyline points="21 3 21 9 15 9" /></svg>
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -348,6 +407,8 @@ export default function InsertPdfWatermarkPage() {
 
   const [activePages, setActivePages] = useState<number[]>([]);
   const [removedPages, setRemovedPages] = useState<number[]>([]);
+  const [pageRotations, setPageRotations] = useState<Map<number, number>>(new Map());
+  const [selectedPages, setSelectedPages] = useState<Set<number>>(new Set());
   const dragIndexRef = useRef<number>(-1);
 
   // Watermark config
@@ -564,6 +625,71 @@ export default function InsertPdfWatermarkPage() {
     setRemovedPages([]);
   }, [pageCount]);
 
+  // ─── Page rotation ────────────────────────────────────────────────
+
+  const rotatePageFn = useCallback((pageIdx: number, delta: number) => {
+    setPageRotations((prev) => {
+      const next = new Map(prev);
+      const cur = next.get(pageIdx) || 0;
+      const newAngle = normalizeAngle(cur + delta);
+      if (newAngle === 0) {
+        next.delete(pageIdx);
+      } else {
+        next.set(pageIdx, newAngle);
+      }
+      return next;
+    });
+  }, []);
+
+  // ─── Selection ────────────────────────────────────────────────────
+
+  const togglePageSelect = useCallback((pageIndex: number) => {
+    setSelectedPages((prev) => {
+      const next = new Set(prev);
+      if (next.has(pageIndex)) {
+        next.delete(pageIndex);
+      } else {
+        next.add(pageIndex);
+      }
+      return next;
+    });
+  }, []);
+
+  const selectAllPages = useCallback(() => {
+    setSelectedPages(new Set(activePages));
+  }, [activePages]);
+
+  const deselectAllPages = useCallback(() => {
+    setSelectedPages(new Set());
+  }, []);
+
+  const rotateSelected = useCallback((degrees: number) => {
+    const targets = selectedPages.size > 0
+      ? Array.from(selectedPages)
+      : [...activePages];
+
+    setPageRotations((prev) => {
+      const next = new Map(prev);
+      for (const idx of targets) {
+        const current = next.get(idx) || 0;
+        const newAngle = normalizeAngle(current + degrees);
+        if (newAngle === 0) {
+          next.delete(idx);
+        } else {
+          next.set(idx, newAngle);
+        }
+      }
+      return next;
+    });
+  }, [selectedPages, activePages]);
+
+  const resetAll = useCallback(() => {
+    setActivePages(Array.from({ length: pageCount }, (_, i) => i));
+    setRemovedPages([]);
+    setPageRotations(new Map());
+    setSelectedPages(new Set());
+  }, [pageCount]);
+
   // Drag & drop
   const onDragStartFactory = useCallback((idx: number) => (e: React.DragEvent) => {
     dragIndexRef.current = idx; e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", String(idx));
@@ -626,6 +752,7 @@ export default function InsertPdfWatermarkPage() {
   const handleReset = useCallback(() => {
     setStage("upload"); setFile(null); setPageCount(0); setThumbnails({});
     setDimensions([]); setActivePages([]); setRemovedPages([]);
+    setPageRotations(new Map()); setSelectedPages(new Set());
     setProgress({ progress: 0, stage: "" }); setResult(null);
     baseImageRef.current = null;
   }, []);
@@ -696,17 +823,78 @@ export default function InsertPdfWatermarkPage() {
             {/* Column 1: Thumbnails */}
             <div className="flex-1 space-y-4 mb-6 lg:mb-0 min-w-0">
               <div className="flex flex-wrap items-center gap-2 px-3 py-2.5 bg-slate-50 border border-slate-100 rounded-lg">
-                <button type="button" onClick={resetOrder} disabled={isDefaultOrder}
-                  className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-slate-500 bg-white border border-slate-200 rounded-md hover:bg-red-50 hover:text-red-600 hover:border-red-200 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
-                  Reset Order
+                <button
+                  type="button"
+                  onClick={selectAllPages}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-slate-600 bg-white border border-slate-200 rounded-md hover:bg-slate-50 transition-colors"
+                >
+                  Select All
                 </button>
-                {removedPages.length > 0 && (
-                  <button type="button" onClick={resetOrder}
-                    className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-slate-500 bg-white border border-slate-200 rounded-md hover:bg-emerald-50 hover:text-emerald-600 hover:border-emerald-200 transition-colors">
-                    Restore All
-                  </button>
+                <button
+                  type="button"
+                  onClick={deselectAllPages}
+                  disabled={selectedPages.size === 0}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-slate-600 bg-white border border-slate-200 rounded-md hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                >
+                  Deselect All
+                </button>
+
+                <div className="w-px h-5 bg-slate-200" />
+
+                <button
+                  type="button"
+                  onClick={() => rotateSelected(-90)}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-slate-600 bg-white border border-slate-200 rounded-md hover:bg-slate-50 transition-colors"
+                  title={selectedPages.size > 0 ? "Rotate selected left 90" : "Rotate all left 90"}
+                >
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                    <path d="M1 4v6h6" />
+                    <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
+                  </svg>
+                  Left 90°
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => rotateSelected(90)}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-slate-600 bg-white border border-slate-200 rounded-md hover:bg-slate-50 transition-colors"
+                  title={selectedPages.size > 0 ? "Rotate selected right 90" : "Rotate all right 90"}
+                >
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                    <path d="M23 4v6h-6" />
+                    <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+                  </svg>
+                  Right 90°
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => rotateSelected(180)}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-slate-600 bg-white border border-slate-200 rounded-md hover:bg-slate-50 transition-colors"
+                  title={selectedPages.size > 0 ? "Rotate selected 180" : "Rotate all 180"}
+                >
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                    <path d="M21 12a9 9 0 1 1-9-9" />
+                    <polyline points="21 3 21 9 15 9" />
+                  </svg>
+                  180°
+                </button>
+
+                <div className="w-px h-5 bg-slate-200" />
+
+                <button
+                  type="button"
+                  onClick={resetAll}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-slate-500 bg-white border border-slate-200 rounded-md hover:bg-red-50 hover:text-red-600 hover:border-red-200 transition-colors"
+                >
+                  Reset All
+                </button>
+
+                {selectedPages.size > 0 && (
+                  <span className="text-[10px] text-slate-400 ml-auto">
+                    {selectedPages.size} selected
+                  </span>
                 )}
-                <span className="text-[10px] text-slate-400 ml-auto">{activePages.length} of {pageCount} pages</span>
               </div>
 
               <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-2 xl:grid-cols-3 gap-3">
@@ -714,6 +902,7 @@ export default function InsertPdfWatermarkPage() {
                   <ActivePageThumb
                     key={`a-${pageIdx}-${posIdx}`}
                     pageIndex={pageIdx} thumbnailUrl={thumbnails[pageIdx]} dimensions={dimensions[pageIdx]}
+                    pageRotation={pageRotations.get(pageIdx) || 0} selected={selectedPages.has(pageIdx)}
                     isFirst={posIdx === 0} isLast={posIdx === activePages.length - 1}
                     canMoveUp={posIdx >= GRID_COLS} canMoveDown={posIdx + GRID_COLS <= activePages.length - 1} canRemove={activePages.length > 1}
                     onMoveLeft={() => { if (posIdx > 0) movePage(posIdx, posIdx - 1); }}
@@ -722,6 +911,10 @@ export default function InsertPdfWatermarkPage() {
                     onMoveDown={() => { if (posIdx + GRID_COLS <= activePages.length - 1) movePage(posIdx, Math.min(activePages.length - 1, posIdx + GRID_COLS)); }}
                     onRemove={() => removePage(posIdx)}
                     onPreview={() => { setPreviewPageIndex(pageIdx); setShowPreview(true); }}
+                    onRotateLeft={() => rotatePageFn(pageIdx, -90)}
+                    onRotateRight={() => rotatePageFn(pageIdx, 90)}
+                    onRotate180={() => rotatePageFn(pageIdx, 180)}
+                    onToggleSelect={() => togglePageSelect(pageIdx)}
                     onDragStart={onDragStartFactory(posIdx)} onDragOver={onDragOverFactory()} onDrop={onDropFactory(posIdx)}
                     isPreviewPage={pageIdx === previewPageIndex}
                     watermarkPosition={position} mosaic={mosaic}

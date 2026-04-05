@@ -5,6 +5,8 @@ import ToolPageLayout from "@/components/ToolPageLayout";
 import { HowItWorks } from "@/components/HowItWorks";
 import FileUploader from "@/components/FileUploader";
 import ProcessingView from "@/components/ProcessingView";
+import { PdfPageManager, type PageConfig } from "@/components/PdfPageManager";
+import { applyPageModifications, hasPageModifications } from "@/lib/tools/pdf-page-utils";
 import { getToolById } from "@/config/tools";
 import {
   convertWordToPdf,
@@ -12,7 +14,7 @@ import {
   type WordToPdfResult,
 } from "@/lib/tools/word-to-pdf";
 
-type Stage = "upload" | "processing" | "done";
+type Stage = "upload" | "processing" | "configure" | "done";
 
 const DOC_FALLBACK_MESSAGE =
   "The legacy .doc format has limited conversion support in the browser. " +
@@ -26,6 +28,9 @@ export default function WordToPdfPage() {
   const [file, setFile] = useState<File | null>(null);
   const [progress, setProgress] = useState<ProcessingUpdate>({ progress: 0, status: "" });
   const [result, setResult] = useState<WordToPdfResult | null>(null);
+  const [convertedFile, setConvertedFile] = useState<File | null>(null);
+  const [finalBlob, setFinalBlob] = useState<Blob | null>(null);
+  const [finalUrl, setFinalUrl] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const handleFilesSelected = useCallback(async (files: File[]) => {
@@ -39,7 +44,11 @@ export default function WordToPdfPage() {
         setProgress(update)
       );
       setResult(processingResult);
-      setStage("done");
+      const pdfFile = new File([processingResult.blob], "converted.pdf", {
+        type: "application/pdf",
+      });
+      setConvertedFile(pdfFile);
+      setStage("configure");
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       if (message.startsWith("DOC_FORMAT_NOT_SUPPORTED")) {
@@ -53,26 +62,58 @@ export default function WordToPdfPage() {
     }
   }, []);
 
+  const handlePageConfirm = useCallback(
+    async (pages: PageConfig[]) => {
+      if (!result) return;
+      let outputBlob: Blob;
+
+      if (hasPageModifications(pages, result.pageCount)) {
+        const arrayBuffer = await result.blob.arrayBuffer();
+        const modified = await applyPageModifications(arrayBuffer, pages);
+        outputBlob = new Blob([modified], { type: "application/pdf" });
+      } else {
+        outputBlob = result.blob;
+      }
+
+      const url = URL.createObjectURL(outputBlob);
+      setFinalBlob(outputBlob);
+      setFinalUrl(url);
+      setStage("done");
+    },
+    [result]
+  );
+
+  const handlePageCancel = useCallback(() => {
+    setStage("upload");
+    setConvertedFile(null);
+    if (result?.previewUrl) URL.revokeObjectURL(result.previewUrl);
+    setResult(null);
+  }, [result]);
+
   const handleDownload = useCallback(() => {
-    if (!result || !file) return;
+    if (!finalUrl || !file) return;
     const baseName = file.name.replace(/\.(docx|doc)$/i, "");
     const outputName = `${baseName}-converted.pdf`;
     const a = document.createElement("a");
-    a.href = result.previewUrl;
+    a.href = finalUrl;
     a.download = outputName;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
-  }, [result, file]);
+  }, [finalUrl, file]);
 
   const handleReset = useCallback(() => {
     if (result?.previewUrl) URL.revokeObjectURL(result.previewUrl);
+    if (finalUrl) URL.revokeObjectURL(finalUrl);
     setStage("upload");
     setFile(null);
     setProgress({ progress: 0, status: "" });
     setResult(null);
+    setConvertedFile(null);
+    setFinalBlob(null);
+    setFinalUrl(null);
     setErrorMessage(null);
-  }, [result]);
+  }, [result, finalUrl]);
 
   const formatFileSize = (bytes: number): string => {
     if (bytes < 1024) return `${bytes} B`;
@@ -101,6 +142,11 @@ export default function WordToPdfPage() {
           },
           {
             step: "4",
+            title: "Manage Pages",
+            desc: "Optionally rotate, reorder, or remove pages from the converted PDF before downloading.",
+          },
+          {
+            step: "5",
             title: "Preview and Download",
             desc: "Preview the result directly in your browser, then download. All processing happens locally in your browser, so no files are ever sent to a server.",
           },
@@ -172,8 +218,20 @@ export default function WordToPdfPage() {
         />
       )}
 
+      {/* Configure stage (page management) */}
+      {stage === "configure" && convertedFile && (
+        <PdfPageManager
+          file={convertedFile}
+          onConfirm={handlePageConfirm}
+          onCancel={handlePageCancel}
+          confirmLabel="Download PDF"
+          cancelLabel="Back"
+          requireChanges={false}
+        />
+      )}
+
       {/* Done stage */}
-      {stage === "done" && result && file && (
+      {stage === "done" && finalBlob && finalUrl && file && result && (
         <div className="w-full">
           {/* Header */}
           <div className="flex items-center justify-between mb-6">
@@ -276,7 +334,7 @@ export default function WordToPdfPage() {
               </span>
             </div>
             <iframe
-              src={result.previewUrl}
+              src={finalUrl}
               className="w-full"
               style={{ height: "600px" }}
               title="PDF Preview"
@@ -305,7 +363,7 @@ export default function WordToPdfPage() {
             <div className="text-slate-300">|</div>
             <div>
               Word {formatFileSize(result.originalSize)} &rarr; PDF{" "}
-              {formatFileSize(result.processedSize)}
+              {formatFileSize(finalBlob.size)}
             </div>
           </div>
         </div>

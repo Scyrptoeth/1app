@@ -5,6 +5,8 @@ import ToolPageLayout from "@/components/ToolPageLayout";
 import FileUploader from "@/components/FileUploader";
 import ProcessingView from "@/components/ProcessingView";
 import { HowItWorks } from "@/components/HowItWorks";
+import { PdfPageManager, type PageConfig } from "@/components/PdfPageManager";
+import { applyPageModifications } from "@/lib/tools/pdf-page-utils";
 import { getToolById } from "@/config/tools";
 import {
   compressPdf,
@@ -15,7 +17,7 @@ import {
   type CompressionMode,
 } from "@/lib/tools/pdf-compressor";
 
-type Stage = "upload" | "mode-select" | "processing" | "done";
+type Stage = "upload" | "mode-select" | "configure" | "processing" | "done";
 
 function formatFileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -50,6 +52,7 @@ export default function CompressPdfPage() {
 
   const [stage, setStage] = useState<Stage>("upload");
   const [file, setFile] = useState<File | null>(null);
+  const [selectedMode, setSelectedMode] = useState<CompressionMode | null>(null);
   const [progress, setProgress] = useState<ProcessingUpdate>({
     progress: 0,
     status: "",
@@ -61,13 +64,17 @@ export default function CompressPdfPage() {
     setStage("mode-select");
   }, []);
 
-  const handleModeSelect = useCallback(
-    async (mode: CompressionMode) => {
-      if (!file) return;
+  const handleModeSelect = useCallback((mode: CompressionMode) => {
+    setSelectedMode(mode);
+    setStage("configure");
+  }, []);
+
+  const startCompression = useCallback(
+    async (targetFile: File, mode: CompressionMode) => {
       setStage("processing");
 
       try {
-        const compressionResult = await compressPdf(file, mode, (update) =>
+        const compressionResult = await compressPdf(targetFile, mode, (update) =>
           setProgress(update)
         );
         setResult(compressionResult);
@@ -80,8 +87,44 @@ export default function CompressPdfPage() {
         );
       }
     },
-    [file]
+    []
   );
+
+  const handlePageConfirm = useCallback(
+    async (pages: PageConfig[]) => {
+      if (!file || !selectedMode) return;
+
+      const hasModifications =
+        pages.some((p) => !p.included) ||
+        pages.some((p) => p.rotation !== 0) ||
+        pages.some((p, i) => p.originalIndex !== i);
+
+      if (hasModifications) {
+        setStage("processing");
+        setProgress({ progress: 0, status: "Applying page modifications..." });
+        try {
+          const arrayBuffer = await file.arrayBuffer();
+          const modifiedBytes = await applyPageModifications(arrayBuffer, pages);
+          const modifiedFile = new File([modifiedBytes], file.name, {
+            type: "application/pdf",
+          });
+          await startCompression(modifiedFile, selectedMode);
+        } catch (err) {
+          console.error("Page modification failed:", err);
+          setStage("configure");
+          alert("Failed to apply page modifications. Please try again.");
+        }
+      } else {
+        await startCompression(file, selectedMode);
+      }
+    },
+    [file, selectedMode, startCompression]
+  );
+
+  const handlePageCancel = useCallback(() => {
+    setSelectedMode(null);
+    setStage("mode-select");
+  }, []);
 
   const handleDownload = useCallback(() => {
     if (!result || !file) return;
@@ -103,6 +146,7 @@ export default function CompressPdfPage() {
       URL.revokeObjectURL(result.previewUrl);
     }
     setResult(null);
+    setSelectedMode(null);
     setProgress({ progress: 0, status: "" });
     setStage("mode-select");
   }, [result]);
@@ -113,6 +157,7 @@ export default function CompressPdfPage() {
     }
     setStage("upload");
     setFile(null);
+    setSelectedMode(null);
     setProgress({ progress: 0, status: "" });
     setResult(null);
   }, [result]);
@@ -133,6 +178,11 @@ export default function CompressPdfPage() {
           },
           {
             step: "3",
+            title: "Manage Pages",
+            desc: "Optionally rotate, reorder, or remove pages before compression. You can also skip this step and compress all pages as-is.",
+          },
+          {
+            step: "4",
             title: "Preview and Download",
             desc: "Review compression stats, preview the first page, and download your smaller PDF. All processing happens in your browser.",
           },
@@ -242,7 +292,19 @@ export default function CompressPdfPage() {
         </div>
       )}
 
-      {/* Stage 3: Processing */}
+      {/* Stage 3: Configure Pages */}
+      {stage === "configure" && file && (
+        <PdfPageManager
+          file={file}
+          onConfirm={handlePageConfirm}
+          onCancel={handlePageCancel}
+          confirmLabel="Compress PDF"
+          cancelLabel="Cancel"
+          requireChanges={false}
+        />
+      )}
+
+      {/* Stage 4: Processing */}
       {stage === "processing" && file && (
         <ProcessingView
           fileName={file.name}
@@ -251,7 +313,7 @@ export default function CompressPdfPage() {
         />
       )}
 
-      {/* Stage 4: Done */}
+      {/* Stage 5: Done */}
       {stage === "done" && result && file && (
         <div className="w-full max-w-lg mx-auto text-center">
           {/* Success icon */}

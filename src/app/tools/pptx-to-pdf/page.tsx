@@ -5,6 +5,8 @@ import ToolPageLayout from "@/components/ToolPageLayout";
 import { HowItWorks } from "@/components/HowItWorks";
 import FileUploader from "@/components/FileUploader";
 import ProcessingView from "@/components/ProcessingView";
+import { PdfPageManager, type PageConfig } from "@/components/PdfPageManager";
+import { applyPageModifications, hasPageModifications } from "@/lib/tools/pdf-page-utils";
 import { getToolById } from "@/config/tools";
 import {
   convertPptxToPdf,
@@ -12,7 +14,7 @@ import {
   type PptxToPdfResult,
 } from "@/lib/tools/pptx-to-pdf";
 
-type Stage = "upload" | "processing" | "done";
+type Stage = "upload" | "processing" | "configure" | "done";
 
 export default function PptxToPdfPage() {
   const tool = getToolById("pptx-to-pdf")!;
@@ -21,6 +23,9 @@ export default function PptxToPdfPage() {
   const [file, setFile] = useState<File | null>(null);
   const [progress, setProgress] = useState<ProcessingUpdate>({ progress: 0, status: "" });
   const [result, setResult] = useState<PptxToPdfResult | null>(null);
+  const [convertedFile, setConvertedFile] = useState<File | null>(null);
+  const [finalBlob, setFinalBlob] = useState<Blob | null>(null);
+  const [finalUrl, setFinalUrl] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const handleFilesSelected = useCallback(async (files: File[]) => {
@@ -34,7 +39,11 @@ export default function PptxToPdfPage() {
         setProgress(update)
       );
       setResult(processingResult);
-      setStage("done");
+      const pdfFile = new File([processingResult.blob], "converted.pdf", {
+        type: "application/pdf",
+      });
+      setConvertedFile(pdfFile);
+      setStage("configure");
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       setErrorMessage(
@@ -46,26 +55,58 @@ export default function PptxToPdfPage() {
     }
   }, []);
 
+  const handlePageConfirm = useCallback(
+    async (pages: PageConfig[]) => {
+      if (!result) return;
+      let outputBlob: Blob;
+
+      if (hasPageModifications(pages, result.slideCount)) {
+        const arrayBuffer = await result.blob.arrayBuffer();
+        const modified = await applyPageModifications(arrayBuffer, pages);
+        outputBlob = new Blob([modified], { type: "application/pdf" });
+      } else {
+        outputBlob = result.blob;
+      }
+
+      const url = URL.createObjectURL(outputBlob);
+      setFinalBlob(outputBlob);
+      setFinalUrl(url);
+      setStage("done");
+    },
+    [result]
+  );
+
+  const handlePageCancel = useCallback(() => {
+    setStage("upload");
+    setConvertedFile(null);
+    if (result?.previewUrl) URL.revokeObjectURL(result.previewUrl);
+    setResult(null);
+  }, [result]);
+
   const handleDownload = useCallback(() => {
-    if (!result || !file) return;
+    if (!finalUrl || !file) return;
     const baseName = file.name.replace(/\.(pptx|ppt)$/i, "");
     const outputName = `${baseName}-converted.pdf`;
     const a = document.createElement("a");
-    a.href = result.previewUrl;
+    a.href = finalUrl;
     a.download = outputName;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
-  }, [result, file]);
+  }, [finalUrl, file]);
 
   const handleReset = useCallback(() => {
     if (result?.previewUrl) URL.revokeObjectURL(result.previewUrl);
+    if (finalUrl) URL.revokeObjectURL(finalUrl);
     setStage("upload");
     setFile(null);
     setProgress({ progress: 0, status: "" });
     setResult(null);
+    setConvertedFile(null);
+    setFinalBlob(null);
+    setFinalUrl(null);
     setErrorMessage(null);
-  }, [result]);
+  }, [result, finalUrl]);
 
   const formatFileSize = (bytes: number): string => {
     if (bytes < 1024) return `${bytes} B`;
@@ -94,6 +135,11 @@ export default function PptxToPdfPage() {
           },
           {
             step: "4",
+            title: "Manage Pages",
+            desc: "Optionally rotate, reorder, or remove pages from the converted PDF before downloading.",
+          },
+          {
+            step: "5",
             title: "Download PDF",
             desc: "Download your converted PDF instantly. All processing happens in your browser, so no data is sent to any server.",
           },
@@ -165,8 +211,20 @@ export default function PptxToPdfPage() {
         />
       )}
 
+      {/* Configure stage (page management) */}
+      {stage === "configure" && convertedFile && (
+        <PdfPageManager
+          file={convertedFile}
+          onConfirm={handlePageConfirm}
+          onCancel={handlePageCancel}
+          confirmLabel="Download PDF"
+          cancelLabel="Back"
+          requireChanges={false}
+        />
+      )}
+
       {/* Done stage */}
-      {stage === "done" && result && file && (
+      {stage === "done" && finalBlob && finalUrl && file && result && (
         <div className="w-full">
           {/* Header */}
           <div className="flex items-center justify-between mb-6">
@@ -237,7 +295,7 @@ export default function PptxToPdfPage() {
               </span>
             </div>
             <iframe
-              src={result.previewUrl}
+              src={finalUrl}
               className="w-full"
               style={{ height: "600px" }}
               title="PDF Preview"
@@ -266,7 +324,7 @@ export default function PptxToPdfPage() {
             <div className="text-slate-300">|</div>
             <div>
               PowerPoint {formatFileSize(result.originalSize)} &rarr; PDF{" "}
-              {formatFileSize(result.processedSize)}
+              {formatFileSize(finalBlob.size)}
             </div>
           </div>
         </div>

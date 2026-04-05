@@ -85,11 +85,13 @@ interface ScanThumbProps {
   index: number;
   pageAspectRatio: number;
   pageSizeLabel: string;
+  selected: boolean;
   isFirst: boolean;
   isLast: boolean;
   canMoveUp: boolean;
   canMoveDown: boolean;
   canRemove: boolean;
+  onToggleSelect: () => void;
   onRotateLeft: () => void;
   onRotateRight: () => void;
   onRemove: () => void;
@@ -107,11 +109,13 @@ function ScanThumb({
   index,
   pageAspectRatio,
   pageSizeLabel,
+  selected,
   isFirst,
   isLast,
   canMoveUp,
   canMoveDown,
   canRemove,
+  onToggleSelect,
   onRotateLeft,
   onRotateRight,
   onRemove,
@@ -132,12 +136,25 @@ function ScanThumb({
       onDragStart={onDragStart}
       onDragOver={onDragOver}
       onDrop={onDrop}
-      className="relative rounded-lg border-2 border-slate-200 hover:border-slate-300 cursor-grab active:cursor-grabbing transition-all group"
+      className={`relative rounded-lg border-2 cursor-grab active:cursor-grabbing transition-all group ${
+        selected ? "border-accent-400 bg-accent-50/50" : "border-slate-200 hover:border-slate-300"
+      }`}
     >
+      {/* Checkbox - top left */}
+      <button
+        type="button"
+        onClick={onToggleSelect}
+        className={`absolute top-1.5 left-1.5 z-10 w-5 h-5 rounded border-2 flex items-center justify-center text-xs transition-colors ${
+          selected ? "bg-accent-500 border-accent-500 text-white" : "bg-white/80 border-slate-300 text-transparent group-hover:border-slate-400"
+        }`}
+      >
+        &#10003;
+      </button>
+
       {/* Page number badge */}
-      <div className="absolute top-1.5 left-1.5 z-10 px-1.5 py-0.5 rounded-full bg-slate-900/70 text-white text-[9px] font-bold">
+      <span className="absolute top-1.5 right-8 z-10 bg-slate-800/70 text-white text-[9px] font-bold px-1.5 py-0.5 rounded">
         {index + 1}
-      </div>
+      </span>
 
       {/* Remove button */}
       <button
@@ -439,6 +456,7 @@ export default function ScanToPdfPage() {
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [viewfinderAspect, setViewfinderAspect] = useState("3/4");
   const [previewIndex, setPreviewIndex] = useState<number | null>(null);
+  const [selectedScans, setSelectedScans] = useState<Set<string>>(new Set());
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -744,12 +762,36 @@ export default function ScanToPdfPage() {
     );
   }, []);
 
-  const rotateAll = useCallback((delta: number) => {
-    setScans((prev) =>
-      prev.map((s) =>
-        s.removed ? s : { ...s, rotation: normalizeAngle(s.rotation + delta) },
-      ),
-    );
+  const rotateSelected = useCallback((delta: number) => {
+    setScans((prev) => {
+      const activeIds = prev.filter((s) => !s.removed).map((s) => s.id);
+      const targets = selectedScans.size > 0
+        ? selectedScans
+        : new Set(activeIds);
+      return prev.map((s) =>
+        targets.has(s.id)
+          ? { ...s, rotation: normalizeAngle(s.rotation + delta) }
+          : s
+      );
+    });
+  }, [selectedScans]);
+
+  // ─── Selection ──────────────────────────────────────────────
+
+  const toggleSelectScan = useCallback((id: string) => {
+    setSelectedScans((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const selectAllScans = useCallback(() => {
+    setSelectedScans(new Set(activeScans.map((s) => s.id)));
+  }, [activeScans]);
+
+  const deselectAllScans = useCallback(() => {
+    setSelectedScans(new Set());
   }, []);
 
   // ─── Remove & Restore ───────────────────────────────────────
@@ -760,6 +802,7 @@ export default function ScanToPdfPage() {
       if (activeCount <= 1) return prev;
       return prev.map((s) => (s.id === id ? { ...s, removed: true } : s));
     });
+    setSelectedScans((prev) => { const n = new Set(prev); n.delete(id); return n; });
   }, []);
 
   const restoreScan = useCallback((id: string) => {
@@ -801,8 +844,11 @@ export default function ScanToPdfPage() {
 
   // ─── Reset ──────────────────────────────────────────────────
 
+  const hasChanges = scans.some((s) => s.removed || s.rotation !== 0);
+
   const resetAll = useCallback(() => {
     setScans((prev) => prev.map((s) => ({ ...s, removed: false, rotation: 0 })));
+    setSelectedScans(new Set());
   }, []);
 
   // ─── Process & Download ─────────────────────────────────────
@@ -861,6 +907,7 @@ export default function ScanToPdfPage() {
 
     setStage("capture");
     setScans([]);
+    setSelectedScans(new Set());
     setInputMode("camera");
     setPreviewIndex(null);
     setGlobalOrientation("portrait");
@@ -1241,42 +1288,81 @@ export default function ScanToPdfPage() {
       {/* ───── Stage: Configure ───── */}
       {stage === "configure" && (
         <div className="max-w-5xl mx-auto space-y-4">
-          {/* Controls bar */}
+          {/* Bulk controls */}
           <div className="flex flex-wrap items-center gap-2 px-3 py-2.5 bg-slate-50 border border-slate-100 rounded-lg">
             <button
               type="button"
-              onClick={resetAll}
-              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-slate-500 bg-white border border-slate-200 rounded-md hover:bg-red-50 hover:text-red-600 hover:border-red-200 transition-colors"
+              onClick={selectAllScans}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-slate-600 bg-white border border-slate-200 rounded-md hover:bg-slate-50 transition-colors"
             >
-              Reset All
+              Select All
             </button>
             <button
               type="button"
-              onClick={() => rotateAll(-90)}
-              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-slate-500 bg-white border border-slate-200 rounded-md hover:bg-slate-100 transition-colors"
+              onClick={deselectAllScans}
+              disabled={selectedScans.size === 0}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-slate-600 bg-white border border-slate-200 rounded-md hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            >
+              Deselect All
+            </button>
+
+            <div className="w-px h-5 bg-slate-200" />
+
+            <button
+              type="button"
+              onClick={() => rotateSelected(-90)}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-slate-600 bg-white border border-slate-200 rounded-md hover:bg-slate-50 transition-colors"
+              title={selectedScans.size > 0 ? "Rotate selected left 90" : "Rotate all left 90"}
             >
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                 <path d="M1 4v6h6" />
                 <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
               </svg>
-              Rotate All Left
+              Left 90
             </button>
+
             <button
               type="button"
-              onClick={() => rotateAll(90)}
-              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-slate-500 bg-white border border-slate-200 rounded-md hover:bg-slate-100 transition-colors"
+              onClick={() => rotateSelected(90)}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-slate-600 bg-white border border-slate-200 rounded-md hover:bg-slate-50 transition-colors"
+              title={selectedScans.size > 0 ? "Rotate selected right 90" : "Rotate all right 90"}
             >
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                 <path d="M23 4v6h-6" />
                 <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
               </svg>
-              Rotate All Right
+              Right 90
             </button>
 
-            <span className="text-[10px] text-slate-400 ml-auto">
-              {activeScans.length} scan{activeScans.length !== 1 ? "s" : ""}
-              {removedScans.length > 0 && ` · ${removedScans.length} removed`}
-            </span>
+            <button
+              type="button"
+              onClick={() => rotateSelected(180)}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-slate-600 bg-white border border-slate-200 rounded-md hover:bg-slate-50 transition-colors"
+              title={selectedScans.size > 0 ? "Rotate selected 180" : "Rotate all 180"}
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                <path d="M21 12a9 9 0 1 1-9-9" />
+                <polyline points="21 3 21 9 15 9" />
+              </svg>
+              180
+            </button>
+
+            <div className="w-px h-5 bg-slate-200" />
+
+            <button
+              type="button"
+              onClick={resetAll}
+              disabled={!hasChanges}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-slate-500 bg-white border border-slate-200 rounded-md hover:bg-red-50 hover:text-red-600 hover:border-red-200 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            >
+              Reset All
+            </button>
+
+            {selectedScans.size > 0 && (
+              <span className="text-[10px] text-slate-400 ml-auto">
+                {selectedScans.size} selected
+              </span>
+            )}
           </div>
 
           {/* 2-column layout: thumbnails + settings */}
@@ -1295,11 +1381,13 @@ export default function ScanToPdfPage() {
                       index={posIdx}
                       pageAspectRatio={pageAR}
                       pageSizeLabel={`${label} · ${effectiveOrientation === "landscape" ? "L" : "P"}`}
+                      selected={selectedScans.has(item.id)}
                       isFirst={posIdx === 0}
                       isLast={posIdx === activeScans.length - 1}
                       canMoveUp={posIdx >= GRID_COLS}
                       canMoveDown={posIdx + GRID_COLS <= activeScans.length - 1}
                       canRemove={activeScans.length > 1}
+                      onToggleSelect={() => toggleSelectScan(item.id)}
                       onRotateLeft={() => rotateScan(item.id, -90)}
                       onRotateRight={() => rotateScan(item.id, 90)}
                       onRemove={() => removeScan(item.id)}

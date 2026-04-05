@@ -341,17 +341,79 @@ export default function ExcelToPdfPage() {
           </div>
 
           {/* Bulk controls */}
-          <div className="flex flex-wrap items-center gap-2 mb-4 p-3 bg-slate-50 rounded-xl border border-slate-100">
-            <button onClick={selectAll} className="px-3 py-1.5 text-xs font-medium text-slate-600 bg-white rounded-lg border border-slate-200 hover:bg-slate-50">Select All</button>
-            <button onClick={deselectAll} className="px-3 py-1.5 text-xs font-medium text-slate-600 bg-white rounded-lg border border-slate-200 hover:bg-slate-50">Deselect</button>
-            <div className="w-px h-5 bg-slate-200 mx-1" />
-            <button onClick={() => rotateBulk(-90)} className="px-3 py-1.5 text-xs font-medium text-slate-600 bg-white rounded-lg border border-slate-200 hover:bg-slate-50">↺ 90°</button>
-            <button onClick={() => rotateBulk(90)} className="px-3 py-1.5 text-xs font-medium text-slate-600 bg-white rounded-lg border border-slate-200 hover:bg-slate-50">↻ 90°</button>
-            <button onClick={() => rotateBulk(180)} className="px-3 py-1.5 text-xs font-medium text-slate-600 bg-white rounded-lg border border-slate-200 hover:bg-slate-50">180°</button>
-            <div className="w-px h-5 bg-slate-200 mx-1" />
-            <button onClick={resetAll} className="px-3 py-1.5 text-xs font-medium text-red-600 bg-white rounded-lg border border-red-200 hover:bg-red-50">Reset All</button>
+          <div className="flex flex-wrap items-center gap-2 mb-4 px-3 py-2.5 bg-slate-50 border border-slate-100 rounded-lg">
+            <button
+              type="button"
+              onClick={selectAll}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-slate-600 bg-white border border-slate-200 rounded-md hover:bg-slate-50 transition-colors"
+            >
+              Select All
+            </button>
+            <button
+              type="button"
+              onClick={deselectAll}
+              disabled={selectedPages.size === 0}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-slate-600 bg-white border border-slate-200 rounded-md hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            >
+              Deselect All
+            </button>
+
+            <div className="w-px h-5 bg-slate-200" />
+
+            <button
+              type="button"
+              onClick={() => rotateBulk(-90)}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-slate-600 bg-white border border-slate-200 rounded-md hover:bg-slate-50 transition-colors"
+              title={selectedPages.size > 0 ? "Rotate selected left 90" : "Rotate all left 90"}
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                <path d="M1 4v6h6" />
+                <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
+              </svg>
+              Left 90
+            </button>
+
+            <button
+              type="button"
+              onClick={() => rotateBulk(90)}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-slate-600 bg-white border border-slate-200 rounded-md hover:bg-slate-50 transition-colors"
+              title={selectedPages.size > 0 ? "Rotate selected right 90" : "Rotate all right 90"}
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                <path d="M23 4v6h-6" />
+                <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+              </svg>
+              Right 90
+            </button>
+
+            <button
+              type="button"
+              onClick={() => rotateBulk(180)}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-slate-600 bg-white border border-slate-200 rounded-md hover:bg-slate-50 transition-colors"
+              title={selectedPages.size > 0 ? "Rotate selected 180" : "Rotate all 180"}
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                <path d="M21 12a9 9 0 1 1-9-9" />
+                <polyline points="21 3 21 9 15 9" />
+              </svg>
+              180
+            </button>
+
+            <div className="w-px h-5 bg-slate-200" />
+
+            <button
+              type="button"
+              onClick={resetAll}
+              disabled={!hasChanges}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-slate-500 bg-white border border-slate-200 rounded-md hover:bg-red-50 hover:text-red-600 hover:border-red-200 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            >
+              Reset All
+            </button>
+
             {selectedPages.size > 0 && (
-              <span className="text-xs text-slate-400 ml-2">{selectedPages.size} selected</span>
+              <span className="text-[10px] text-slate-400 ml-auto">
+                {selectedPages.size} selected
+              </span>
             )}
           </div>
 

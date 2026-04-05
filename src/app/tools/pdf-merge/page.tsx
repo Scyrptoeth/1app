@@ -174,6 +174,7 @@ interface PageThumbProps {
   /** 0-based display index among active pages */
   displayIndex: number;
   rotation: number;
+  selected: boolean;
   isFirst: boolean;
   isLast: boolean;
   canMoveUp: boolean;
@@ -182,6 +183,8 @@ interface PageThumbProps {
   onRemove: () => void;
   onRotateLeft: () => void;
   onRotateRight: () => void;
+  onRotate180: () => void;
+  onToggleSelect: () => void;
   onMoveLeft: () => void;
   onMoveRight: () => void;
   onMoveUp: () => void;
@@ -195,6 +198,7 @@ function PageThumb({
   page,
   displayIndex,
   rotation,
+  selected,
   isFirst,
   isLast,
   canMoveUp,
@@ -203,6 +207,8 @@ function PageThumb({
   onRemove,
   onRotateLeft,
   onRotateRight,
+  onRotate180,
+  onToggleSelect,
   onMoveLeft,
   onMoveRight,
   onMoveUp,
@@ -238,8 +244,30 @@ function PageThumb({
       onDragStart={onDragStart}
       onDragOver={onDragOver}
       onDrop={onDrop}
-      className="relative group rounded-lg border-2 border-slate-200 hover:border-slate-300 cursor-grab active:cursor-grabbing transition-all"
+      className={`relative group rounded-lg border-2 transition-all cursor-grab active:cursor-grabbing ${
+        selected
+          ? "border-accent-400 ring-2 ring-accent-100"
+          : "border-slate-200 hover:border-slate-300"
+      }`}
     >
+      {/* Checkbox - top left */}
+      <button
+        type="button"
+        onClick={onToggleSelect}
+        className={`absolute top-1.5 left-1.5 z-10 w-5 h-5 rounded border-2 flex items-center justify-center transition-all ${
+          selected
+            ? "bg-accent-500 border-accent-500"
+            : "bg-white/80 border-slate-300 hover:border-slate-400"
+        }`}
+        aria-label={`Select page ${page.pageIndex + 1}`}
+      >
+        {selected && (
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3">
+            <polyline points="20 6 9 17 4 12" />
+          </svg>
+        )}
+      </button>
+
       {/* Thumbnail image */}
       <div className="relative w-full aspect-[3/4] bg-slate-50 rounded-t-md overflow-hidden">
         {visible && page.thumbnailUrl ? (
@@ -341,6 +369,9 @@ function PageThumb({
             <button type="button" onClick={(e) => { e.stopPropagation(); onRotateRight(); }} className="p-0.5 rounded text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors" aria-label="Rotate right" title="Rotate right 90°">
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M23 4v6h-6" /><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" /></svg>
             </button>
+            <button type="button" onClick={(e) => { e.stopPropagation(); onRotate180(); }} className="p-0.5 rounded text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors" aria-label="Rotate 180°" title="Rotate 180°">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M21 12a9 9 0 1 1-9-9" /><polyline points="21 3 21 9 15 9" /></svg>
+            </button>
           </div>
         </div>
         <span className={`inline-block mt-0.5 px-1.5 py-0.5 text-[9px] font-medium rounded-full ${getFileColor(page.fileIndex)}`}>
@@ -349,7 +380,7 @@ function PageThumb({
       </div>
 
       {/* Order number badge */}
-      <div className="absolute top-1.5 left-1.5 w-5 h-5 rounded-full bg-slate-900/70 text-white text-[9px] font-bold flex items-center justify-center">
+      <div className="absolute top-8 left-1.5 w-5 h-5 rounded-full bg-slate-900/70 text-white text-[9px] font-bold flex items-center justify-center">
         {displayIndex + 1}
       </div>
     </div>
@@ -424,6 +455,7 @@ export default function PdfMergePage() {
   const [progress, setProgress] = useState<ProcessingUpdate>({ progress: 0, status: "" });
   const [result, setResult] = useState<MergePdfResult | null>(null);
   const [rotations, setRotations] = useState<Map<string, number>>(new Map());
+  const [selectedPages, setSelectedPages] = useState<Set<string>>(new Set());
 
   // File thumbnails (first page of each file)
   const [fileThumbnails, setFileThumbnails] = useState<Record<number, string>>({});
@@ -679,6 +711,8 @@ export default function PdfMergePage() {
     setFileOrder([]);
     setFileThumbnails({});
     setViewMode("file");
+    setRotations(new Map());
+    setSelectedPages(new Set());
     setProgress({ progress: 0, status: "" });
     setResult(null);
   }, []);
@@ -699,6 +733,56 @@ export default function PdfMergePage() {
       next.set(key, normalizeAngle(cur + delta));
       return next;
     });
+  }, []);
+
+  // ─── Selection ────────────────────────────────────────────────
+
+  const togglePageSelect = useCallback((fileIndex: number, pageIndex: number) => {
+    const key = `${fileIndex}-${pageIndex}`;
+    setSelectedPages((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
+      return next;
+    });
+  }, []);
+
+  const selectAllPages = useCallback(() => {
+    setSelectedPages(new Set(activePages.map((p) => `${p.fileIndex}-${p.pageIndex}`)));
+  }, [activePages]);
+
+  const deselectAllPages = useCallback(() => {
+    setSelectedPages(new Set());
+  }, []);
+
+  const rotateSelected = useCallback((degrees: number) => {
+    const targets = selectedPages.size > 0
+      ? Array.from(selectedPages)
+      : activePages.map((p) => `${p.fileIndex}-${p.pageIndex}`);
+
+    setRotations((prev) => {
+      const next = new Map(prev);
+      for (const key of targets) {
+        const current = next.get(key) || 0;
+        const newAngle = normalizeAngle(current + degrees);
+        if (newAngle === 0) {
+          next.delete(key);
+        } else {
+          next.set(key, newAngle);
+        }
+      }
+      return next;
+    });
+  }, [selectedPages, activePages]);
+
+  const resetAll = useCallback(() => {
+    setRotations(new Map());
+    setSelectedPages(new Set());
+    // Restore all removed pages
+    setPages((prev) => prev.map((p) => ({ ...p, included: true })));
   }, []);
 
   // ─── Drag handlers (shared) ────────────────────────────────────
@@ -859,6 +943,82 @@ export default function PdfMergePage() {
           {/* Page-level view */}
           {viewMode === "page" && (
             <>
+              {/* Batch controls */}
+              <div className="flex flex-wrap items-center gap-2 px-3 py-2.5 bg-slate-50 border border-slate-100 rounded-lg">
+                <button
+                  type="button"
+                  onClick={selectAllPages}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-slate-600 bg-white border border-slate-200 rounded-md hover:bg-slate-50 transition-colors"
+                >
+                  Select All
+                </button>
+                <button
+                  type="button"
+                  onClick={deselectAllPages}
+                  disabled={selectedPages.size === 0}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-slate-600 bg-white border border-slate-200 rounded-md hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                >
+                  Deselect All
+                </button>
+
+                <div className="w-px h-5 bg-slate-200" />
+
+                <button
+                  type="button"
+                  onClick={() => rotateSelected(-90)}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-slate-600 bg-white border border-slate-200 rounded-md hover:bg-slate-50 transition-colors"
+                  title={selectedPages.size > 0 ? "Rotate selected left 90" : "Rotate all left 90"}
+                >
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                    <path d="M1 4v6h6" />
+                    <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
+                  </svg>
+                  Left 90°
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => rotateSelected(90)}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-slate-600 bg-white border border-slate-200 rounded-md hover:bg-slate-50 transition-colors"
+                  title={selectedPages.size > 0 ? "Rotate selected right 90" : "Rotate all right 90"}
+                >
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                    <path d="M23 4v6h-6" />
+                    <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+                  </svg>
+                  Right 90°
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => rotateSelected(180)}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-slate-600 bg-white border border-slate-200 rounded-md hover:bg-slate-50 transition-colors"
+                  title={selectedPages.size > 0 ? "Rotate selected 180" : "Rotate all 180"}
+                >
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                    <path d="M21 12a9 9 0 1 1-9-9" />
+                    <polyline points="21 3 21 9 15 9" />
+                  </svg>
+                  180°
+                </button>
+
+                <div className="w-px h-5 bg-slate-200" />
+
+                <button
+                  type="button"
+                  onClick={resetAll}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-slate-500 bg-white border border-slate-200 rounded-md hover:bg-red-50 hover:text-red-600 hover:border-red-200 transition-colors"
+                >
+                  Reset All
+                </button>
+
+                {selectedPages.size > 0 && (
+                  <span className="text-[10px] text-slate-400 ml-auto">
+                    {selectedPages.size} selected
+                  </span>
+                )}
+              </div>
+
               {/* Active pages grid */}
               <div className="grid grid-cols-3 gap-3">
                 {activePages.map((page, activeIdx) => {
@@ -873,10 +1033,13 @@ export default function PdfMergePage() {
                       isLast={activeIdx === activePages.length - 1}
                       canMoveUp={activeIdx >= 3}
                       canMoveDown={activeIdx + 3 <= activePages.length - 1}
+                      selected={selectedPages.has(`${page.fileIndex}-${page.pageIndex}`)}
                       canRemove={includedPageCount > 1}
                       onRemove={() => removePage(fullIdx)}
                       onRotateLeft={() => rotatePage(page.fileIndex, page.pageIndex, -90)}
                       onRotateRight={() => rotatePage(page.fileIndex, page.pageIndex, 90)}
+                      onRotate180={() => rotatePage(page.fileIndex, page.pageIndex, 180)}
+                      onToggleSelect={() => togglePageSelect(page.fileIndex, page.pageIndex)}
                       onMoveLeft={() => moveActivePage(activeIdx, activeIdx - 1)}
                       onMoveRight={() => moveActivePage(activeIdx, activeIdx + 1)}
                       onMoveUp={() => moveActivePage(activeIdx, Math.max(0, activeIdx - 3))}

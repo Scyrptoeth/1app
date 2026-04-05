@@ -65,6 +65,7 @@ interface ActivePageThumbProps {
   thumbnailUrl?: string;
   dimensions?: PageDimensions;
   rotation: number;
+  selected: boolean;
   isFirst: boolean;
   isLast: boolean;
   canMoveUp: boolean;
@@ -77,6 +78,8 @@ interface ActivePageThumbProps {
   onRemove: () => void;
   onRotateLeft: () => void;
   onRotateRight: () => void;
+  onRotate180: () => void;
+  onToggleSelect: () => void;
   onDragStart: (e: React.DragEvent) => void;
   onDragOver: (e: React.DragEvent) => void;
   onDrop: (e: React.DragEvent) => void;
@@ -87,6 +90,7 @@ function ActivePageThumb({
   thumbnailUrl,
   dimensions,
   rotation,
+  selected,
   isFirst,
   isLast,
   canMoveUp,
@@ -99,6 +103,8 @@ function ActivePageThumb({
   onRemove,
   onRotateLeft,
   onRotateRight,
+  onRotate180,
+  onToggleSelect,
   onDragStart,
   onDragOver,
   onDrop,
@@ -130,12 +136,29 @@ function ActivePageThumb({
       onDragStart={onDragStart}
       onDragOver={onDragOver}
       onDrop={onDrop}
-      className="relative rounded-lg border-2 border-slate-200 hover:border-slate-300 cursor-grab active:cursor-grabbing transition-all"
+      className={`relative rounded-lg border-2 transition-all cursor-grab active:cursor-grabbing ${
+        selected
+          ? "border-accent-400 ring-2 ring-accent-100"
+          : "border-slate-200 hover:border-slate-300"
+      }`}
     >
-      {/* Page number badge */}
-      <div className="absolute top-1.5 left-1.5 z-10 px-1.5 py-0.5 rounded-full bg-slate-900/70 text-white text-[9px] font-bold">
-        Page {pageIndex + 1}
-      </div>
+      {/* Checkbox - top left */}
+      <button
+        type="button"
+        onClick={onToggleSelect}
+        className={`absolute top-1.5 left-1.5 z-10 w-5 h-5 rounded border-2 flex items-center justify-center transition-all ${
+          selected
+            ? "bg-accent-500 border-accent-500"
+            : "bg-white/80 border-slate-300 hover:border-slate-400"
+        }`}
+        aria-label={`Select page ${pageIndex + 1}`}
+      >
+        {selected && (
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3">
+            <polyline points="20 6 9 17 4 12" />
+          </svg>
+        )}
+      </button>
 
       {/* Remove button */}
       <button
@@ -214,22 +237,54 @@ function ActivePageThumb({
         </div>
       </div>
 
-      {/* Info bar + rotation controls */}
-      <div className="flex items-center justify-between px-2 py-1.5 border-t border-slate-100">
-        <div className="min-w-0">
-          <p className="text-[10px] font-medium text-slate-600">Page {pageIndex + 1}</p>
-          {dimensions && (
-            <p className="text-[9px] text-slate-400">
-              {formatDimensions(dimensions)}{rotation !== 0 && ` · ${normalizeAngle(rotation)}°`}
-            </p>
+      {/* Page label + rotation badge + rotation controls */}
+      <div className="px-2 py-1.5 border-t border-slate-100">
+        <div className="flex items-center justify-between mb-1.5">
+          <p className="text-[10px] font-medium text-slate-600">
+            Page {pageIndex + 1}
+          </p>
+          {normalizeAngle(rotation) !== 0 && (
+            <span className="px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 text-[10px] font-bold">
+              {normalizeAngle(rotation)}°
+            </span>
           )}
         </div>
-        <div className="flex items-center gap-0.5 shrink-0 ml-1">
-          <button type="button" onClick={(e) => { e.stopPropagation(); onRotateLeft(); }} className="p-1 rounded text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors" aria-label="Rotate left" title="Rotate left 90°">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M1 4v6h6" /><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" /></svg>
+        <div className="flex items-center justify-center gap-1">
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); onRotateLeft(); }}
+            className="p-1 rounded-md bg-slate-100 text-slate-500 hover:bg-slate-200 hover:text-slate-700 transition-all"
+            aria-label="Rotate left 90°"
+            title="Rotate left 90°"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+              <path d="M1 4v6h6" />
+              <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
+            </svg>
           </button>
-          <button type="button" onClick={(e) => { e.stopPropagation(); onRotateRight(); }} className="p-1 rounded text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors" aria-label="Rotate right" title="Rotate right 90°">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M23 4v6h-6" /><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" /></svg>
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); onRotateRight(); }}
+            className="p-1 rounded-md bg-slate-100 text-slate-500 hover:bg-slate-200 hover:text-slate-700 transition-all"
+            aria-label="Rotate right 90°"
+            title="Rotate right 90°"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+              <path d="M23 4v6h-6" />
+              <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); onRotate180(); }}
+            className="p-1 rounded-md bg-slate-100 text-slate-500 hover:bg-slate-200 hover:text-slate-700 transition-all"
+            aria-label="Rotate 180°"
+            title="Rotate 180°"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+              <path d="M21 12a9 9 0 1 1-9-9" />
+              <polyline points="21 3 21 9 15 9" />
+            </svg>
           </button>
         </div>
       </div>
@@ -288,6 +343,7 @@ export default function OcrPdfPage() {
   const [activePages, setActivePages] = useState<number[]>([]);
   const [removedPages, setRemovedPages] = useState<number[]>([]);
   const [rotations, setRotations] = useState<Map<number, number>>(new Map());
+  const [selectedPages, setSelectedPages] = useState<Set<number>>(new Set());
   const [progress, setProgress] = useState<ProcessingUpdate>({ progress: 0, status: "" });
   const [result, setResult] = useState<OcrPdfResult | null>(null);
   const [loadingThumbnails, setLoadingThumbnails] = useState(false);
@@ -315,6 +371,7 @@ export default function OcrPdfPage() {
     setLoadingThumbnails(true);
     setThumbnails({});
     setRemovedPages([]);
+    setSelectedPages(new Set());
     setTextCheck(null);
 
     try {
@@ -364,6 +421,11 @@ export default function OcrPdfPage() {
       const pageIndex = prev[posIdx];
       const next = prev.filter((_, i) => i !== posIdx);
       setRemovedPages((rm) => [...rm, pageIndex]);
+      setSelectedPages((sp) => {
+        const ns = new Set(sp);
+        ns.delete(pageIndex);
+        return ns;
+      });
       return next;
     });
   }, []);
@@ -410,24 +472,57 @@ export default function OcrPdfPage() {
     setRotations((prev) => {
       const next = new Map(prev);
       const cur = next.get(pageIdx) || 0;
-      next.set(pageIdx, normalizeAngle(cur + delta));
+      const newAngle = normalizeAngle(cur + delta);
+      if (newAngle === 0) {
+        next.delete(pageIdx);
+      } else {
+        next.set(pageIdx, newAngle);
+      }
       return next;
     });
   }, []);
 
-  const rotateAllPages = useCallback(
-    (delta: number) => {
-      setRotations((prev) => {
-        const next = new Map(prev);
-        for (const pageIdx of activePages) {
-          const cur = next.get(pageIdx) || 0;
-          next.set(pageIdx, normalizeAngle(cur + delta));
+  const rotateSelected = useCallback((degrees: number) => {
+    const targets = selectedPages.size > 0
+      ? Array.from(selectedPages)
+      : [...activePages];
+
+    setRotations((prev) => {
+      const next = new Map(prev);
+      for (const idx of targets) {
+        const current = next.get(idx) || 0;
+        const newAngle = normalizeAngle(current + degrees);
+        if (newAngle === 0) {
+          next.delete(idx);
+        } else {
+          next.set(idx, newAngle);
         }
-        return next;
-      });
-    },
-    [activePages]
-  );
+      }
+      return next;
+    });
+  }, [selectedPages, activePages]);
+
+  // ─── Selection ─────────────────────────────────────────────────
+
+  const togglePageSelect = useCallback((pageIndex: number) => {
+    setSelectedPages((prev) => {
+      const next = new Set(prev);
+      if (next.has(pageIndex)) {
+        next.delete(pageIndex);
+      } else {
+        next.add(pageIndex);
+      }
+      return next;
+    });
+  }, []);
+
+  const selectAll = useCallback(() => {
+    setSelectedPages(new Set(activePages));
+  }, [activePages]);
+
+  const deselectAll = useCallback(() => {
+    setSelectedPages(new Set());
+  }, []);
 
   // ─── Reset ─────────────────────────────────────────────────────
 
@@ -435,6 +530,7 @@ export default function OcrPdfPage() {
     setActivePages(Array.from({ length: pageCount }, (_, i) => i));
     setRemovedPages([]);
     setRotations(new Map());
+    setSelectedPages(new Set());
   }, [pageCount]);
 
   // ─── Process & Download ────────────────────────────────────────
@@ -477,6 +573,7 @@ export default function OcrPdfPage() {
     setActivePages([]);
     setRemovedPages([]);
     setRotations(new Map());
+    setSelectedPages(new Set());
     setProgress({ progress: 0, status: "" });
     setResult(null);
     setTextCheck(null);
@@ -577,36 +674,66 @@ export default function OcrPdfPage() {
             </div>
           )}
 
-          {/* Controls bar */}
+          {/* Bulk controls */}
           <div className="flex flex-wrap items-center gap-2 px-3 py-2.5 bg-slate-50 border border-slate-100 rounded-lg">
             <button
               type="button"
-              onClick={() => rotateAllPages(-90)}
-              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-slate-500 bg-white border border-slate-200 rounded-md hover:bg-slate-50 hover:text-slate-700 transition-colors"
-              title="Rotate all pages 90° left"
+              onClick={selectAll}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-slate-600 bg-white border border-slate-200 rounded-md hover:bg-slate-50 transition-colors"
             >
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M1 4v6h6" /><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" /></svg>
-              All 90° Left
+              Select All
             </button>
             <button
               type="button"
-              onClick={() => rotateAllPages(90)}
-              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-slate-500 bg-white border border-slate-200 rounded-md hover:bg-slate-50 hover:text-slate-700 transition-colors"
-              title="Rotate all pages 90° right"
+              onClick={deselectAll}
+              disabled={selectedPages.size === 0}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-slate-600 bg-white border border-slate-200 rounded-md hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
             >
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M23 4v6h-6" /><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" /></svg>
-              All 90° Right
-            </button>
-            <button
-              type="button"
-              onClick={() => rotateAllPages(180)}
-              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-slate-500 bg-white border border-slate-200 rounded-md hover:bg-slate-50 hover:text-slate-700 transition-colors"
-              title="Rotate all pages 180°"
-            >
-              All 180°
+              Deselect All
             </button>
 
-            <div className="w-px h-5 bg-slate-200 mx-1" />
+            <div className="w-px h-5 bg-slate-200" />
+
+            <button
+              type="button"
+              onClick={() => rotateSelected(-90)}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-slate-600 bg-white border border-slate-200 rounded-md hover:bg-slate-50 transition-colors"
+              title={selectedPages.size > 0 ? "Rotate selected left 90" : "Rotate all left 90"}
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                <path d="M1 4v6h6" />
+                <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
+              </svg>
+              Left 90°
+            </button>
+
+            <button
+              type="button"
+              onClick={() => rotateSelected(90)}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-slate-600 bg-white border border-slate-200 rounded-md hover:bg-slate-50 transition-colors"
+              title={selectedPages.size > 0 ? "Rotate selected right 90" : "Rotate all right 90"}
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                <path d="M23 4v6h-6" />
+                <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+              </svg>
+              Right 90°
+            </button>
+
+            <button
+              type="button"
+              onClick={() => rotateSelected(180)}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-slate-600 bg-white border border-slate-200 rounded-md hover:bg-slate-50 transition-colors"
+              title={selectedPages.size > 0 ? "Rotate selected 180" : "Rotate all 180"}
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                <path d="M21 12a9 9 0 1 1-9-9" />
+                <polyline points="21 3 21 9 15 9" />
+              </svg>
+              180°
+            </button>
+
+            <div className="w-px h-5 bg-slate-200" />
 
             <button
               type="button"
@@ -617,10 +744,11 @@ export default function OcrPdfPage() {
               Reset All
             </button>
 
-            <span className="text-[10px] text-slate-400 ml-auto">
-              {activePages.length} active
-              {removedPages.length > 0 && ` · ${removedPages.length} removed`}
-            </span>
+            {selectedPages.size > 0 && (
+              <span className="text-[10px] text-slate-400 ml-auto">
+                {selectedPages.size} selected
+              </span>
+            )}
           </div>
 
           {/* Active pages grid */}
@@ -632,6 +760,7 @@ export default function OcrPdfPage() {
                 thumbnailUrl={thumbnails[pageIdx]}
                 dimensions={dimensions[pageIdx]}
                 rotation={rotations.get(pageIdx) || 0}
+                selected={selectedPages.has(pageIdx)}
                 isFirst={posIdx === 0}
                 isLast={posIdx === activePages.length - 1}
                 canMoveUp={posIdx >= GRID_COLS}
@@ -644,6 +773,8 @@ export default function OcrPdfPage() {
                 onRemove={() => removePage(posIdx)}
                 onRotateLeft={() => rotatePage(pageIdx, -90)}
                 onRotateRight={() => rotatePage(pageIdx, 90)}
+                onRotate180={() => rotatePage(pageIdx, 180)}
+                onToggleSelect={() => togglePageSelect(pageIdx)}
                 onDragStart={onDragStartFactory(posIdx)}
                 onDragOver={onDragOverFactory()}
                 onDrop={onDropFactory(posIdx)}

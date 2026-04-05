@@ -6,6 +6,8 @@ import FileUploader from "@/components/FileUploader";
 import ProcessingView from "@/components/ProcessingView";
 import DownloadView from "@/components/DownloadView";
 import { HowItWorks } from "@/components/HowItWorks";
+import { PdfPageManager, type PageConfig } from "@/components/PdfPageManager";
+import { applyPageModifications } from "@/lib/tools/pdf-page-utils";
 import { getToolById } from "@/config/tools";
 import {
   removePdfWatermark,
@@ -13,7 +15,7 @@ import {
   type PdfProcessingResult,
 } from "@/lib/tools/pdf-watermark-remover";
 
-type Stage = "upload" | "processing" | "done";
+type Stage = "upload" | "configure" | "processing" | "done";
 
 export default function PdfWatermarkRemovePage() {
   const tool = getToolById("pdf-watermark-remove")!;
@@ -26,25 +28,68 @@ export default function PdfWatermarkRemovePage() {
   });
   const [result, setResult] = useState<PdfProcessingResult | null>(null);
 
-  const handleFilesSelected = useCallback(async (files: File[]) => {
-    const selectedFile = files[0];
-    setFile(selectedFile);
-    setStage("processing");
+  const handleFilesSelected = useCallback((files: File[]) => {
+    setFile(files[0]);
+    setStage("configure");
+  }, []);
 
-    try {
-      const processingResult = await removePdfWatermark(
-        selectedFile,
-        (update) => setProgress(update)
-      );
-      setResult(processingResult);
-      setStage("done");
-    } catch (err) {
-      console.error("PDF processing failed:", err);
-      setStage("upload");
-      alert(
-        "Failed to process the PDF. The file may be encrypted or corrupted. Please try a different file."
-      );
-    }
+  const startWatermarkRemoval = useCallback(
+    async (targetFile: File) => {
+      setStage("processing");
+
+      try {
+        const processingResult = await removePdfWatermark(
+          targetFile,
+          (update) => setProgress(update)
+        );
+        setResult(processingResult);
+        setStage("done");
+      } catch (err) {
+        console.error("PDF processing failed:", err);
+        setStage("upload");
+        setFile(null);
+        alert(
+          "Failed to process the PDF. The file may be encrypted or corrupted. Please try a different file."
+        );
+      }
+    },
+    []
+  );
+
+  const handlePageConfirm = useCallback(
+    async (pages: PageConfig[]) => {
+      if (!file) return;
+
+      const hasModifications =
+        pages.some((p) => !p.included) ||
+        pages.some((p) => p.rotation !== 0) ||
+        pages.some((p, i) => p.originalIndex !== i);
+
+      if (hasModifications) {
+        setStage("processing");
+        setProgress({ progress: 0, status: "Applying page modifications..." });
+        try {
+          const arrayBuffer = await file.arrayBuffer();
+          const modifiedBytes = await applyPageModifications(arrayBuffer, pages);
+          const modifiedFile = new File([modifiedBytes], file.name, {
+            type: "application/pdf",
+          });
+          await startWatermarkRemoval(modifiedFile);
+        } catch (err) {
+          console.error("Page modification failed:", err);
+          setStage("configure");
+          alert("Failed to apply page modifications. Please try again.");
+        }
+      } else {
+        await startWatermarkRemoval(file);
+      }
+    },
+    [file, startWatermarkRemoval]
+  );
+
+  const handlePageCancel = useCallback(() => {
+    setFile(null);
+    setStage("upload");
   }, []);
 
   const handleDownload = useCallback(() => {
@@ -86,11 +131,16 @@ export default function PdfWatermarkRemovePage() {
           },
           {
             step: "2",
+            title: "Manage Pages",
+            desc: "Optionally rotate, reorder, or remove pages before watermark removal. You can also skip this step and process all pages as-is.",
+          },
+          {
+            step: "3",
             title: "Smart Detection",
             desc: "The engine analyzes the PDF structure to identify watermark layers, annotations, and overlays, then removes them while preserving all original content.",
           },
           {
-            step: "3",
+            step: "4",
             title: "Download Clean PDF",
             desc: "Download your watermark-free PDF instantly. All processing happens in your browser, so your files stay private.",
           },
@@ -105,6 +155,17 @@ export default function PdfWatermarkRemovePage() {
           onFilesSelected={handleFilesSelected}
           title="Select a PDF to remove watermark"
           subtitle="Supports multi-page PDF documents"
+        />
+      )}
+
+      {stage === "configure" && file && (
+        <PdfPageManager
+          file={file}
+          onConfirm={handlePageConfirm}
+          onCancel={handlePageCancel}
+          confirmLabel="Remove Watermark"
+          cancelLabel="Cancel"
+          requireChanges={false}
         />
       )}
 
