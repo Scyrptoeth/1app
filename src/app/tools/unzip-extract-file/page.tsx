@@ -395,7 +395,7 @@ export default function UnzipExtractFilePage() {
               onClick={handleReset}
               className="flex-1 px-6 py-3 text-slate-600 font-medium rounded-xl border border-slate-200 hover:bg-slate-50 transition-colors text-center"
             >
-              Extract Another
+              Process Another
             </button>
           </div>
         </div>
