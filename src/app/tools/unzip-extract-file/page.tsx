@@ -10,6 +10,7 @@ import {
   type ExtractResult,
   type ExtractedFile,
 } from "@/lib/tools/unzip-extract-file";
+import { HowItWorks } from "@/components/HowItWorks";
 
 type Stage = "upload" | "processing" | "done";
 
@@ -150,6 +151,24 @@ export default function UnzipExtractFilePage() {
 
   return (
     <ToolPageLayout tool={tool}>
+      <HowItWorks steps={[
+        {
+          step: "1",
+          title: "Upload Archive",
+          desc: "Select a ZIP or RAR file by dragging it in or using the file picker.",
+        },
+        {
+          step: "2",
+          title: "Extract Files",
+          desc: "Your archive is extracted instantly. OS metadata like __MACOSX, .DS_Store, and Thumbs.db is filtered out automatically.",
+        },
+        {
+          step: "3",
+          title: "Download",
+          desc: "Download individual files or grab everything as a clean ZIP. All processing happens in your browser, so nothing leaves your device.",
+        },
+      ]} />
+
       {/* Stage 1: Upload */}
       {stage === "upload" && (
         <div className="w-full max-w-2xl mx-auto">
@@ -401,46 +420,6 @@ export default function UnzipExtractFilePage() {
         </div>
       )}
 
-      {/* How it works */}
-      <div className="mt-16 pt-12 border-t border-slate-100">
-        <h2 className="text-lg font-semibold text-slate-900 mb-6">
-          How it works
-        </h2>
-        <div className="grid sm:grid-cols-3 gap-6">
-          {[
-            {
-              step: "1",
-              title: "Upload Archive",
-              desc: "Select a .zip or .rar file via drag & drop or file picker.",
-            },
-            {
-              step: "2",
-              title: "Extract",
-              desc: "Files are extracted entirely in your browser. OS metadata is filtered out automatically.",
-            },
-            {
-              step: "3",
-              title: "Download",
-              desc: "Download individual files or all files as a clean ZIP archive.",
-            },
-          ].map((item) => (
-            <div
-              key={item.step}
-              className="flex flex-col items-center text-center"
-            >
-              <div className="w-10 h-10 rounded-full bg-accent-50 flex items-center justify-center mb-3">
-                <span className="text-sm font-bold text-accent-600">
-                  {item.step}
-                </span>
-              </div>
-              <h3 className="text-sm font-semibold text-slate-900 mb-1">
-                {item.title}
-              </h3>
-              <p className="text-xs text-slate-500">{item.desc}</p>
-            </div>
-          ))}
-        </div>
-      </div>
     </ToolPageLayout>
   );
 }

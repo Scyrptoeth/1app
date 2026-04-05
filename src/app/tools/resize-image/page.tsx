@@ -19,6 +19,7 @@ import {
   RotateCcw as ResetIcon,
 } from "lucide-react";
 import ToolPageLayout from "@/components/ToolPageLayout";
+import { HowItWorks } from "@/components/HowItWorks";
 import FileUploader from "@/components/FileUploader";
 import CropEditor from "@/components/CropEditor";
 import { getToolById } from "@/config/tools";
@@ -592,6 +593,31 @@ export default function ResizeImagePage() {
 
   return (
     <ToolPageLayout tool={tool}>
+      <HowItWorks
+        steps={[
+          {
+            step: "1",
+            title: "Upload Photo",
+            desc: "Select a JPG or PNG image from your device.",
+          },
+          {
+            step: "2",
+            title: "Choose Size",
+            desc: "Pick a standard photo preset like 3x4 cm or 4x6 cm, or enter a custom width and height in centimeters.",
+          },
+          {
+            step: "3",
+            title: "Position and Adjust",
+            desc: "Drag to position your subject within the frame, zoom to fine-tune the crop, and optionally remove or change the background color.",
+          },
+          {
+            step: "4",
+            title: "Download",
+            desc: "Download your print-ready photo at 300 DPI in JPEG format. All processing happens in your browser, so your photos remain completely private.",
+          },
+        ]}
+      />
+
       {/* ─── UPLOAD ─── */}
       {stage === "upload" && (
         <FileUploader
@@ -982,27 +1008,6 @@ export default function ResizeImagePage() {
             </button>
           </div>
 
-          <div className="border-t border-slate-100 pt-6">
-            <h3 className="text-sm font-semibold text-slate-700 mb-3">How it works</h3>
-            <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 text-xs text-slate-500">
-              <div className="bg-slate-50 rounded-lg p-3">
-                <div className="font-semibold text-slate-600 mb-1">1. Upload</div>
-                Select a JPG or PNG image from your device
-              </div>
-              <div className="bg-slate-50 rounded-lg p-3">
-                <div className="font-semibold text-slate-600 mb-1">2. Choose Size</div>
-                {"Pick 3\u00d74 cm, 4\u00d76 cm, or enter a custom size"}
-              </div>
-              <div className="bg-slate-50 rounded-lg p-3">
-                <div className="font-semibold text-slate-600 mb-1">3. Position</div>
-                Drag to position your face, zoom to adjust, optionally change background
-              </div>
-              <div className="bg-slate-50 rounded-lg p-3">
-                <div className="font-semibold text-slate-600 mb-1">4. Download</div>
-                Get your {PRINT_DPI} DPI JPEG ready for professional printing
-              </div>
-            </div>
-          </div>
         </div>
       )}
     </ToolPageLayout>

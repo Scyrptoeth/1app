@@ -4,6 +4,7 @@ import { useState, useCallback } from "react";
 import ToolPageLayout from "@/components/ToolPageLayout";
 import FileUploader from "@/components/FileUploader";
 import ProcessingView from "@/components/ProcessingView";
+import { HowItWorks } from "@/components/HowItWorks";
 import { getToolById } from "@/config/tools";
 import {
   convertPdfToPpt,
@@ -275,42 +276,30 @@ export default function PdfToPptPage() {
         </div>
       )}
 
-      {/* How it works */}
-      <div className="mt-16 pt-12 border-t border-slate-100">
-        <h2 className="text-lg font-semibold text-slate-900 mb-6">How it works</h2>
-        <div className="grid sm:grid-cols-4 gap-6">
-          {[
-            {
-              step: "1",
-              title: "Upload PDF",
-              desc: "Select any PDF document — presentations, reports, or scanned files.",
-            },
-            {
-              step: "2",
-              title: "Smart Extraction",
-              desc: "Text, images, and layout are analyzed. Editable text is extracted where possible, preserving fonts and positioning.",
-            },
-            {
-              step: "3",
-              title: "3 Output Modes",
-              desc: "Get three versions: Hybrid (image + text overlay), Image Only (visual fidelity), and Text Only (fully editable).",
-            },
-            {
-              step: "4",
-              title: "Download PPTX",
-              desc: "Download your preferred version as a PowerPoint file, ready to edit or present.",
-            },
-          ].map((item) => (
-            <div key={item.step} className="flex flex-col items-center text-center">
-              <div className="w-10 h-10 rounded-full bg-accent-50 flex items-center justify-center mb-3">
-                <span className="text-sm font-bold text-accent-600">{item.step}</span>
-              </div>
-              <h3 className="text-sm font-semibold text-slate-900 mb-1">{item.title}</h3>
-              <p className="text-xs text-slate-500">{item.desc}</p>
-            </div>
-          ))}
-        </div>
-      </div>
+      <HowItWorks
+        steps={[
+          {
+            step: "1",
+            title: "Upload PDF",
+            desc: "Select any PDF document, whether it is a presentation, report, or scanned file.",
+          },
+          {
+            step: "2",
+            title: "Smart Extraction",
+            desc: "Text, images, and layout are analyzed page by page. Editable text is extracted where possible, preserving fonts and positioning.",
+          },
+          {
+            step: "3",
+            title: "Three Output Modes",
+            desc: "Get Hybrid (image background with text overlay), Image Only (pixel-perfect fidelity), and Text Only (fully editable slides).",
+          },
+          {
+            step: "4",
+            title: "Download PPTX",
+            desc: "Download your preferred version as a PowerPoint file, ready to edit or present. All processing happens in your browser.",
+          },
+        ]}
+      />
     </ToolPageLayout>
   );
 }

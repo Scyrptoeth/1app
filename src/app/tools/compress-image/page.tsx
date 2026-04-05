@@ -4,6 +4,7 @@ import { useState, useCallback } from "react";
 import ToolPageLayout from "@/components/ToolPageLayout";
 import FileUploader from "@/components/FileUploader";
 import ProcessingView from "@/components/ProcessingView";
+import { HowItWorks } from "@/components/HowItWorks";
 import { getToolById } from "@/config/tools";
 import {
   compressImage,
@@ -119,6 +120,26 @@ export default function CompressImagePage() {
 
   return (
     <ToolPageLayout tool={tool}>
+      <HowItWorks
+        steps={[
+          {
+            step: "1",
+            title: "Upload Image",
+            desc: "Select a JPEG or PNG image you want to compress. Files up to 100 MB are supported.",
+          },
+          {
+            step: "2",
+            title: "Choose Compression Level",
+            desc: "Pick from three modes: high, medium, or low compression. Image dimensions stay the same, only file size changes.",
+          },
+          {
+            step: "3",
+            title: "Preview and Download",
+            desc: "Review the compressed result with before/after stats, then download. PNG stays PNG, JPEG stays JPEG. All processing happens in your browser.",
+          },
+        ]}
+      />
+
       {/* Stage 1: Upload */}
       {stage === "upload" && (
         <FileUploader
@@ -365,47 +386,6 @@ export default function CompressImagePage() {
           </div>
         </div>
       )}
-
-      {/* How it works */}
-      <div className="mt-16 pt-12 border-t border-slate-100">
-        <h2 className="text-lg font-semibold text-slate-900 mb-6">
-          How it works
-        </h2>
-        <div className="grid sm:grid-cols-3 gap-6">
-          {[
-            {
-              step: "1",
-              title: "Upload Image",
-              desc: "Select a JPEG or PNG image you want to compress. Files up to 100MB are supported.",
-            },
-            {
-              step: "2",
-              title: "Choose Mode",
-              desc: "Pick from three compression levels. Dimensions stay the same — only file size is reduced.",
-            },
-            {
-              step: "3",
-              title: "Download",
-              desc: "Preview the result and download your compressed image. PNG stays PNG, JPEG stays JPEG.",
-            },
-          ].map((item) => (
-            <div
-              key={item.step}
-              className="flex flex-col items-center text-center"
-            >
-              <div className="w-10 h-10 rounded-full bg-accent-50 flex items-center justify-center mb-3">
-                <span className="text-sm font-bold text-accent-600">
-                  {item.step}
-                </span>
-              </div>
-              <h3 className="text-sm font-semibold text-slate-900 mb-1">
-                {item.title}
-              </h3>
-              <p className="text-xs text-slate-500">{item.desc}</p>
-            </div>
-          ))}
-        </div>
-      </div>
     </ToolPageLayout>
   );
 }

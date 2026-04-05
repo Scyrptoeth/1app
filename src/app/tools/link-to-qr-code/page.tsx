@@ -3,6 +3,7 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import ToolPageLayout from "@/components/ToolPageLayout";
 import ProcessingView from "@/components/ProcessingView";
+import { HowItWorks } from "@/components/HowItWorks";
 import { getToolById } from "@/config/tools";
 import {
   generateQrCode,
@@ -299,6 +300,31 @@ export default function LinkToQrCodePage() {
 
   return (
     <ToolPageLayout tool={tool}>
+      <HowItWorks
+        steps={[
+          {
+            step: "1",
+            title: "Enter URL or Text",
+            desc: "Type or paste any URL or text you want to encode into a QR code.",
+          },
+          {
+            step: "2",
+            title: "Customize Style",
+            desc: "Pick a frame style with optional text, choose a font, adjust dot and background colors, or enable a transparent background. A live preview updates as you make changes.",
+          },
+          {
+            step: "3",
+            title: "Generate QR Code",
+            desc: "Click Generate to create a high-resolution 1024px PNG with error correction level H, ensuring the code remains scannable even if partially obscured.",
+          },
+          {
+            step: "4",
+            title: "Download",
+            desc: "Download your QR code and use it anywhere. All processing happens in your browser, so no data is sent to any server.",
+          },
+        ]}
+      />
+
       {stage === "input" && (
         <div className="flex flex-col lg:flex-row gap-8">
           {/* Left: controls */}
@@ -661,51 +687,6 @@ export default function LinkToQrCodePage() {
         </>
       )}
 
-      {/* How it works */}
-      <div className="mt-16 pt-12 border-t border-slate-100">
-        <h2 className="text-lg font-semibold text-slate-900 mb-6">
-          How it works
-        </h2>
-        <div className="grid sm:grid-cols-4 gap-6">
-          {[
-            {
-              step: "1",
-              title: "Enter URL",
-              desc: "Type or paste a URL or text that you want to encode.",
-            },
-            {
-              step: "2",
-              title: "Customize",
-              desc: "Choose a frame style, text, font, colors, and preview in real-time.",
-            },
-            {
-              step: "3",
-              title: "Generate",
-              desc: "Click generate to create a high-quality PNG QR code.",
-            },
-            {
-              step: "4",
-              title: "Download",
-              desc: "Download the QR code image and use it anywhere.",
-            },
-          ].map((item) => (
-            <div
-              key={item.step}
-              className="flex flex-col items-center text-center"
-            >
-              <div className="w-10 h-10 rounded-full bg-accent-50 flex items-center justify-center mb-3">
-                <span className="text-sm font-bold text-accent-600">
-                  {item.step}
-                </span>
-              </div>
-              <h3 className="text-sm font-semibold text-slate-900 mb-1">
-                {item.title}
-              </h3>
-              <p className="text-xs text-slate-500">{item.desc}</p>
-            </div>
-          ))}
-        </div>
-      </div>
     </ToolPageLayout>
   );
 }

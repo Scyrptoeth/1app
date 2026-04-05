@@ -5,6 +5,7 @@ import ToolPageLayout from "@/components/ToolPageLayout";
 import FileUploader from "@/components/FileUploader";
 import ProcessingView from "@/components/ProcessingView";
 import DownloadView from "@/components/DownloadView";
+import { HowItWorks } from "@/components/HowItWorks";
 import { getToolById } from "@/config/tools";
 import {
   removeImageWatermark,
@@ -80,6 +81,26 @@ export default function ImageWatermarkRemovePage() {
 
   return (
     <ToolPageLayout tool={tool}>
+      <HowItWorks
+        steps={[
+          {
+            step: "1",
+            title: "Upload Image",
+            desc: "Select a JPG, JPEG, or PNG image that contains a watermark you want to remove.",
+          },
+          {
+            step: "2",
+            title: "Auto-Detect and Remove",
+            desc: "The algorithm automatically detects semi-transparent watermark overlays and removes them. A quality score indicates how much of the watermark was successfully cleaned.",
+          },
+          {
+            step: "3",
+            title: "Download Clean Image",
+            desc: "Download your watermark-free image in the same format as the original. All processing happens in your browser, so your files never leave your device.",
+          },
+        ]}
+      />
+
       {stage === "upload" && (
         <FileUploader
           acceptedFormats={[".jpg", ".jpeg", ".png"]}
@@ -153,46 +174,6 @@ export default function ImageWatermarkRemovePage() {
         </>
       )}
 
-      {/* How it works */}
-      <div className="mt-16 pt-12 border-t border-slate-100">
-        <h2 className="text-lg font-semibold text-slate-900 mb-6">
-          How it works
-        </h2>
-        <div className="grid sm:grid-cols-3 gap-6">
-          {[
-            {
-              step: "1",
-              title: "Upload",
-              desc: "Select a JPG, JPEG, or PNG image with a watermark.",
-            },
-            {
-              step: "2",
-              title: "Auto-Detect & Remove",
-              desc: "Our algorithm detects and removes semi-transparent watermark overlays.",
-            },
-            {
-              step: "3",
-              title: "Download",
-              desc: "Download your clean image in the same format as the original.",
-            },
-          ].map((item) => (
-            <div
-              key={item.step}
-              className="flex flex-col items-center text-center"
-            >
-              <div className="w-10 h-10 rounded-full bg-accent-50 flex items-center justify-center mb-3">
-                <span className="text-sm font-bold text-accent-600">
-                  {item.step}
-                </span>
-              </div>
-              <h3 className="text-sm font-semibold text-slate-900 mb-1">
-                {item.title}
-              </h3>
-              <p className="text-xs text-slate-500">{item.desc}</p>
-            </div>
-          ))}
-        </div>
-      </div>
     </ToolPageLayout>
   );
 }

@@ -2,6 +2,7 @@
 
 import { useState, useCallback, useRef } from "react";
 import ToolPageLayout from "@/components/ToolPageLayout";
+import { HowItWorks } from "@/components/HowItWorks";
 import ProcessingView from "@/components/ProcessingView";
 import { getToolById } from "@/config/tools";
 import {
@@ -271,6 +272,26 @@ export default function ZipRarFilePage() {
 
   return (
     <ToolPageLayout tool={tool}>
+      <HowItWorks
+        steps={[
+          {
+            title: "Add Files or Folders",
+            desc: "Drag and drop files or entire folders into the upload area, or use the file picker and folder selector. Any file type is accepted, and you can add more files at any time.",
+          },
+          {
+            title: "Name Your Archive",
+            desc: "Review the file list, confirm folder structure is correct, and set a custom name for your ZIP archive.",
+          },
+          {
+            title: "Create ZIP",
+            desc: "Click Create ZIP to compress all your files into a single archive. Folder hierarchy is preserved inside the ZIP for easy extraction later.",
+          },
+          {
+            title: "Download Your Archive",
+            desc: "Download the finished .zip file, which is compatible with WinRAR, 7-Zip, Windows Explorer, macOS Finder, and all major tools. All processing happens in your browser; nothing is uploaded to any server.",
+          },
+        ]}
+      />
       {/* Stage 1: Upload */}
       {stage === "upload" && (
         <div className="w-full max-w-2xl mx-auto">
@@ -722,51 +743,6 @@ export default function ZipRarFilePage() {
         </div>
       )}
 
-      {/* How it works */}
-      <div className="mt-16 pt-12 border-t border-slate-100">
-        <h2 className="text-lg font-semibold text-slate-900 mb-6">
-          How it works
-        </h2>
-        <div className="grid sm:grid-cols-4 gap-6">
-          {[
-            {
-              step: "1",
-              title: "Upload Files",
-              desc: "Select files or folders via drag & drop or file picker. Any file type is accepted.",
-            },
-            {
-              step: "2",
-              title: "Configure",
-              desc: "Name your archive and review the file list. Folder structure is preserved inside the ZIP.",
-            },
-            {
-              step: "3",
-              title: "Process",
-              desc: "Files are compressed into a ZIP archive entirely in your browser. Nothing leaves your device.",
-            },
-            {
-              step: "4",
-              title: "Download",
-              desc: "Download your ZIP archive. Compatible with all operating systems and archive tools.",
-            },
-          ].map((item) => (
-            <div
-              key={item.step}
-              className="flex flex-col items-center text-center"
-            >
-              <div className="w-10 h-10 rounded-full bg-accent-50 flex items-center justify-center mb-3">
-                <span className="text-sm font-bold text-accent-600">
-                  {item.step}
-                </span>
-              </div>
-              <h3 className="text-sm font-semibold text-slate-900 mb-1">
-                {item.title}
-              </h3>
-              <p className="text-xs text-slate-500">{item.desc}</p>
-            </div>
-          ))}
-        </div>
-      </div>
     </ToolPageLayout>
   );
 }

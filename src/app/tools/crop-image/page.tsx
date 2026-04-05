@@ -5,6 +5,7 @@ import ToolPageLayout from "@/components/ToolPageLayout";
 import FileUploader from "@/components/FileUploader";
 import ProcessingView from "@/components/ProcessingView";
 import CropEditor from "@/components/CropEditor";
+import { HowItWorks } from "@/components/HowItWorks";
 import { getToolById } from "@/config/tools";
 import {
   cropImage,
@@ -126,6 +127,31 @@ export default function CropImagePage() {
 
   return (
     <ToolPageLayout tool={tool}>
+      <HowItWorks
+        steps={[
+          {
+            step: "1",
+            title: "Upload Image",
+            desc: "Select a JPEG or PNG image you want to crop. Files up to 100 MB are supported.",
+          },
+          {
+            step: "2",
+            title: "Adjust Crop Area",
+            desc: "Drag the selection, resize handles, pick an aspect ratio preset, or rotate the image before cropping.",
+          },
+          {
+            step: "3",
+            title: "Crop",
+            desc: "Click \"Crop IMAGE\" to apply. The original format and maximum quality are preserved.",
+          },
+          {
+            step: "4",
+            title: "Download",
+            desc: "Preview the result and download your cropped image. All processing happens locally in your browser.",
+          },
+        ]}
+      />
+
       {/* ---- Upload ---- */}
       {stage === "upload" && (
         <FileUploader
@@ -283,52 +309,6 @@ export default function CropImagePage() {
           </div>
         </div>
       )}
-
-      {/* ---- How it works ---- */}
-      <div className="mt-16 pt-12 border-t border-slate-100">
-        <h2 className="text-lg font-semibold text-slate-900 mb-6">
-          How it works
-        </h2>
-        <div className="grid sm:grid-cols-4 gap-6">
-          {[
-            {
-              step: "1",
-              title: "Upload",
-              desc: "Select a JPEG or PNG image you want to crop.",
-            },
-            {
-              step: "2",
-              title: "Adjust",
-              desc: "Drag the crop area, resize handles, choose aspect ratio presets, and rotate.",
-            },
-            {
-              step: "3",
-              title: "Crop",
-              desc: 'Click "Crop IMAGE" to process. Everything runs locally in your browser.',
-            },
-            {
-              step: "4",
-              title: "Download",
-              desc: "Preview and download. Format and quality are fully preserved.",
-            },
-          ].map((item) => (
-            <div
-              key={item.step}
-              className="flex flex-col items-center text-center"
-            >
-              <div className="w-10 h-10 rounded-full bg-accent-50 flex items-center justify-center mb-3">
-                <span className="text-sm font-bold text-accent-600">
-                  {item.step}
-                </span>
-              </div>
-              <h3 className="text-sm font-semibold text-slate-900 mb-1">
-                {item.title}
-              </h3>
-              <p className="text-xs text-slate-500">{item.desc}</p>
-            </div>
-          ))}
-        </div>
-      </div>
     </ToolPageLayout>
   );
 }

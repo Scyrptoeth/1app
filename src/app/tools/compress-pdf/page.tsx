@@ -4,6 +4,7 @@ import { useState, useCallback } from "react";
 import ToolPageLayout from "@/components/ToolPageLayout";
 import FileUploader from "@/components/FileUploader";
 import ProcessingView from "@/components/ProcessingView";
+import { HowItWorks } from "@/components/HowItWorks";
 import { getToolById } from "@/config/tools";
 import {
   compressPdf,
@@ -118,6 +119,26 @@ export default function CompressPdfPage() {
 
   return (
     <ToolPageLayout tool={tool}>
+      <HowItWorks
+        steps={[
+          {
+            step: "1",
+            title: "Upload PDF",
+            desc: "Select a PDF document you want to compress. Multi-page files up to 100 MB are supported.",
+          },
+          {
+            step: "2",
+            title: "Choose Compression Level",
+            desc: "Pick from three modes based on your quality and size requirements. Each mode shows an estimated output size before you commit.",
+          },
+          {
+            step: "3",
+            title: "Preview and Download",
+            desc: "Review compression stats, preview the first page, and download your smaller PDF. All processing happens in your browser.",
+          },
+        ]}
+      />
+
       {/* Stage 1: Upload */}
       {stage === "upload" && (
         <FileUploader
@@ -377,47 +398,6 @@ export default function CompressPdfPage() {
           </div>
         </div>
       )}
-
-      {/* How it works */}
-      <div className="mt-16 pt-12 border-t border-slate-100">
-        <h2 className="text-lg font-semibold text-slate-900 mb-6">
-          How it works
-        </h2>
-        <div className="grid sm:grid-cols-3 gap-6">
-          {[
-            {
-              step: "1",
-              title: "Upload PDF",
-              desc: "Select a PDF document you want to compress. Files up to 100MB are supported.",
-            },
-            {
-              step: "2",
-              title: "Choose Mode",
-              desc: "Pick from three compression levels based on your quality and size requirements.",
-            },
-            {
-              step: "3",
-              title: "Download",
-              desc: "Preview the result and download your compressed PDF. All processing happens in your browser.",
-            },
-          ].map((item) => (
-            <div
-              key={item.step}
-              className="flex flex-col items-center text-center"
-            >
-              <div className="w-10 h-10 rounded-full bg-accent-50 flex items-center justify-center mb-3">
-                <span className="text-sm font-bold text-accent-600">
-                  {item.step}
-                </span>
-              </div>
-              <h3 className="text-sm font-semibold text-slate-900 mb-1">
-                {item.title}
-              </h3>
-              <p className="text-xs text-slate-500">{item.desc}</p>
-            </div>
-          ))}
-        </div>
-      </div>
     </ToolPageLayout>
   );
 }

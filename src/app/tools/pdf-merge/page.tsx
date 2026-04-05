@@ -5,6 +5,7 @@ import ToolPageLayout from "@/components/ToolPageLayout";
 import FileUploader from "@/components/FileUploader";
 import ProcessingView from "@/components/ProcessingView";
 import DownloadView from "@/components/DownloadView";
+import { HowItWorks } from "@/components/HowItWorks";
 import { getToolById } from "@/config/tools";
 import {
   mergePdfs,
@@ -1016,37 +1017,30 @@ export default function PdfMergePage() {
         </>
       )}
 
-      {/* How it works */}
-      <div className="mt-16 pt-12 border-t border-slate-100">
-        <h2 className="text-lg font-semibold text-slate-900 mb-6">How it works</h2>
-        <div className="grid sm:grid-cols-3 gap-6">
-          {[
-            {
-              step: "1",
-              title: "Upload PDFs",
-              desc: "Select two or more PDF files you want to combine.",
-            },
-            {
-              step: "2",
-              title: "Arrange Order",
-              desc: "Drag & drop to reorder files or individual pages. Remove pages you don't need.",
-            },
-            {
-              step: "3",
-              title: "Download Merged PDF",
-              desc: "Get a single PDF with all pages in your chosen order.",
-            },
-          ].map((item) => (
-            <div key={item.step} className="flex flex-col items-center text-center">
-              <div className="w-10 h-10 rounded-full bg-accent-50 flex items-center justify-center mb-3">
-                <span className="text-sm font-bold text-accent-600">{item.step}</span>
-              </div>
-              <h3 className="text-sm font-semibold text-slate-900 mb-1">{item.title}</h3>
-              <p className="text-xs text-slate-500">{item.desc}</p>
-            </div>
-          ))}
-        </div>
-      </div>
+      <HowItWorks
+        steps={[
+          {
+            step: "1",
+            title: "Upload PDFs",
+            desc: "Select two or more PDF files you want to combine. You can add more files at any time during the process.",
+          },
+          {
+            step: "2",
+            title: "Arrange and Customize",
+            desc: "Switch between File View and Page View to reorder by dragging, rotate individual pages, or remove pages you do not need.",
+          },
+          {
+            step: "3",
+            title: "Merge and Download",
+            desc: "Click Merge to combine everything into a single PDF with pages in your chosen order.",
+          },
+          {
+            step: "4",
+            title: "Private and Secure",
+            desc: "All processing happens in your browser. Your files are never uploaded to any server.",
+          },
+        ]}
+      />
     </ToolPageLayout>
   );
 }

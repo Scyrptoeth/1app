@@ -2,6 +2,7 @@
 
 import { useState, useCallback } from "react";
 import ToolPageLayout from "@/components/ToolPageLayout";
+import { HowItWorks } from "@/components/HowItWorks";
 import FileUploader from "@/components/FileUploader";
 import ProcessingView from "@/components/ProcessingView";
 import { getToolById } from "@/config/tools";
@@ -81,6 +82,31 @@ export default function WordToPdfPage() {
 
   return (
     <ToolPageLayout tool={tool}>
+      <HowItWorks
+        steps={[
+          {
+            step: "1",
+            title: "Upload Word File",
+            desc: "Select a .docx or .doc file from your device. Files up to 50 MB are supported, and .docx is recommended for best results.",
+          },
+          {
+            step: "2",
+            title: "Render Document",
+            desc: "Your document is rendered in the browser with high precision, preserving fonts, tables, images, and charts.",
+          },
+          {
+            step: "3",
+            title: "Generate PDF",
+            desc: "Each page is packaged into a PDF with a fully searchable and selectable text layer. A quality score shows how completely the content was rendered.",
+          },
+          {
+            step: "4",
+            title: "Preview and Download",
+            desc: "Preview the result directly in your browser, then download. All processing happens locally in your browser, so no files are ever sent to a server.",
+          },
+        ]}
+      />
+
       {/* Error notice */}
       {errorMessage && (
         <div className="mb-6 flex items-start gap-3 p-4 bg-red-50 border border-red-200 rounded-xl">
@@ -285,42 +311,6 @@ export default function WordToPdfPage() {
         </div>
       )}
 
-      {/* How it works */}
-      <div className="mt-16 pt-12 border-t border-slate-100">
-        <h2 className="text-lg font-semibold text-slate-900 mb-6">How it works</h2>
-        <div className="grid sm:grid-cols-4 gap-6">
-          {[
-            {
-              step: "1",
-              title: "Upload Word",
-              desc: "Select a .docx or .doc file from your device.",
-            },
-            {
-              step: "2",
-              title: "Render Document",
-              desc: "The document is rendered in your browser with high precision — preserving fonts, tables, images, and charts.",
-            },
-            {
-              step: "3",
-              title: "Generate PDF",
-              desc: "Each page is packaged into a PDF with a searchable and selectable text layer.",
-            },
-            {
-              step: "4",
-              title: "Download PDF",
-              desc: "Download the result directly — no data is sent to any server.",
-            },
-          ].map((item) => (
-            <div key={item.step} className="flex flex-col items-center text-center">
-              <div className="w-10 h-10 rounded-full bg-accent-50 flex items-center justify-center mb-3">
-                <span className="text-sm font-bold text-accent-600">{item.step}</span>
-              </div>
-              <h3 className="text-sm font-semibold text-slate-900 mb-1">{item.title}</h3>
-              <p className="text-xs text-slate-500">{item.desc}</p>
-            </div>
-          ))}
-        </div>
-      </div>
     </ToolPageLayout>
   );
 }

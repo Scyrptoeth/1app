@@ -12,6 +12,7 @@ import {
   type ProcessingUpdate,
   type RotatePdfResult,
 } from "@/lib/tools/pdf-rotator";
+import { HowItWorks } from "@/components/HowItWorks";
 
 type Stage = "upload" | "configure" | "processing" | "done";
 
@@ -570,6 +571,29 @@ export default function RotatePdfPage() {
 
   return (
     <ToolPageLayout tool={tool}>
+      <HowItWorks steps={[
+        {
+          step: "1",
+          title: "Upload PDF",
+          desc: "Select the PDF document whose pages you want to rotate or rearrange.",
+        },
+        {
+          step: "2",
+          title: "Select and Rotate",
+          desc: "Rotate pages individually or select multiple pages to rotate them in bulk. Choose 90 degrees left, right, or 180 degrees.",
+        },
+        {
+          step: "3",
+          title: "Reorder and Remove",
+          desc: "Drag and drop pages to reorder them, use arrow controls, or remove pages you no longer need.",
+        },
+        {
+          step: "4",
+          title: "Download",
+          desc: "Save your modified PDF with original quality fully preserved. All processing happens in your browser, so nothing is uploaded to any server.",
+        },
+      ]} />
+
       {/* Upload */}
       {stage === "upload" && (
         <FileUploader
@@ -850,37 +874,6 @@ export default function RotatePdfPage() {
         </>
       )}
 
-      {/* How it works */}
-      <div className="mt-16 pt-12 border-t border-slate-100">
-        <h2 className="text-lg font-semibold text-slate-900 mb-6">How it works</h2>
-        <div className="grid sm:grid-cols-3 gap-6">
-          {[
-            {
-              step: "1",
-              title: "Upload PDF",
-              desc: "Select a PDF document whose pages you want to rotate or rearrange.",
-            },
-            {
-              step: "2",
-              title: "Rotate & Arrange",
-              desc: "Rotate pages individually or in bulk, reorder with drag & drop or arrows, and remove pages you don't need.",
-            },
-            {
-              step: "3",
-              title: "Download",
-              desc: "Download your modified PDF — original quality fully preserved.",
-            },
-          ].map((item) => (
-            <div key={item.step} className="flex flex-col items-center text-center">
-              <div className="w-10 h-10 rounded-full bg-accent-50 flex items-center justify-center mb-3">
-                <span className="text-sm font-bold text-accent-600">{item.step}</span>
-              </div>
-              <h3 className="text-sm font-semibold text-slate-900 mb-1">{item.title}</h3>
-              <p className="text-xs text-slate-500">{item.desc}</p>
-            </div>
-          ))}
-        </div>
-      </div>
     </ToolPageLayout>
   );
 }

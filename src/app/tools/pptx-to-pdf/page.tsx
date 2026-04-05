@@ -2,6 +2,7 @@
 
 import { useState, useCallback } from "react";
 import ToolPageLayout from "@/components/ToolPageLayout";
+import { HowItWorks } from "@/components/HowItWorks";
 import FileUploader from "@/components/FileUploader";
 import ProcessingView from "@/components/ProcessingView";
 import { getToolById } from "@/config/tools";
@@ -74,6 +75,31 @@ export default function PptxToPdfPage() {
 
   return (
     <ToolPageLayout tool={tool}>
+      <HowItWorks
+        steps={[
+          {
+            step: "1",
+            title: "Upload PowerPoint",
+            desc: "Select a .pptx or .ppt file from your device. PPTX is recommended for best results.",
+          },
+          {
+            step: "2",
+            title: "Parse Slides",
+            desc: "Every slide element, including images, shapes, and text, is read directly from the PowerPoint file.",
+          },
+          {
+            step: "3",
+            title: "Render to PDF",
+            desc: "Each slide is rendered as a PDF page with vector text that is searchable, selectable, and printable.",
+          },
+          {
+            step: "4",
+            title: "Download PDF",
+            desc: "Download your converted PDF instantly. All processing happens in your browser, so no data is sent to any server.",
+          },
+        ]}
+      />
+
       {/* Error notice */}
       {errorMessage && (
         <div className="mb-6 flex items-start gap-3 p-4 bg-red-50 border border-red-200 rounded-xl">
@@ -246,42 +272,6 @@ export default function PptxToPdfPage() {
         </div>
       )}
 
-      {/* How it works */}
-      <div className="mt-16 pt-12 border-t border-slate-100">
-        <h2 className="text-lg font-semibold text-slate-900 mb-6">How it works</h2>
-        <div className="grid sm:grid-cols-4 gap-6">
-          {[
-            {
-              step: "1",
-              title: "Upload PowerPoint",
-              desc: "Select a .pptx or .ppt file from your device.",
-            },
-            {
-              step: "2",
-              title: "Parse Slides",
-              desc: "Every slide element — images, shapes, and text — is read directly from the PPTX file.",
-            },
-            {
-              step: "3",
-              title: "Render to PDF",
-              desc: "Each slide is rendered as a PDF page with vector text and embedded images.",
-            },
-            {
-              step: "4",
-              title: "Download PDF",
-              desc: "Download the result directly — no data is sent to any server.",
-            },
-          ].map((item) => (
-            <div key={item.step} className="flex flex-col items-center text-center">
-              <div className="w-10 h-10 rounded-full bg-accent-50 flex items-center justify-center mb-3">
-                <span className="text-sm font-bold text-accent-600">{item.step}</span>
-              </div>
-              <h3 className="text-sm font-semibold text-slate-900 mb-1">{item.title}</h3>
-              <p className="text-xs text-slate-500">{item.desc}</p>
-            </div>
-          ))}
-        </div>
-      </div>
     </ToolPageLayout>
   );
 }

@@ -4,6 +4,7 @@ import { useState, useCallback, useRef } from "react";
 import ToolPageLayout from "@/components/ToolPageLayout";
 import FileUploader from "@/components/FileUploader";
 import ProcessingView from "@/components/ProcessingView";
+import { HowItWorks } from "@/components/HowItWorks";
 import { getToolById } from "@/config/tools";
 import {
   convertImagesToPdf,
@@ -644,6 +645,31 @@ export default function ImageToPdfPage() {
 
   return (
     <ToolPageLayout tool={tool}>
+      <HowItWorks
+        steps={[
+          {
+            step: "1",
+            title: "Upload Images",
+            desc: "Select one or more JPG or PNG images. You can drag and drop or click to browse your files.",
+          },
+          {
+            step: "2",
+            title: "Arrange and Configure",
+            desc: "Reorder images by dragging, rotate individual pages or all at once, and remove any you do not need. Choose a page size (A4, Letter, Fit to Image, and more) and orientation.",
+          },
+          {
+            step: "3",
+            title: "Convert to PDF",
+            desc: "Images are embedded into a PDF at full resolution with zero quality loss. Merge all images into a single PDF or keep individual files.",
+          },
+          {
+            step: "4",
+            title: "Download",
+            desc: "Download your finished PDF with original image quality fully preserved. All processing happens in your browser, so your images stay private.",
+          },
+        ]}
+      />
+
       {/* Hidden input for adding more images */}
       <input
         ref={addInputRef}
@@ -924,42 +950,6 @@ export default function ImageToPdfPage() {
         </>
       )}
 
-      {/* How it works */}
-      <div className="mt-16 pt-12 border-t border-slate-100">
-        <h2 className="text-lg font-semibold text-slate-900 mb-6">How it works</h2>
-        <div className="grid sm:grid-cols-4 gap-6">
-          {[
-            {
-              step: "1",
-              title: "Upload Images",
-              desc: "Select one or more JPG or PNG images to convert.",
-            },
-            {
-              step: "2",
-              title: "Configure",
-              desc: "Set page size and orientation. Reorder, rotate, or remove images.",
-            },
-            {
-              step: "3",
-              title: "Convert",
-              desc: "Images are embedded into a PDF at full resolution — 100% client-side.",
-            },
-            {
-              step: "4",
-              title: "Download",
-              desc: "Download your PDF — original image quality fully preserved.",
-            },
-          ].map((item) => (
-            <div key={item.step} className="flex flex-col items-center text-center">
-              <div className="w-10 h-10 rounded-full bg-accent-50 flex items-center justify-center mb-3">
-                <span className="text-sm font-bold text-accent-600">{item.step}</span>
-              </div>
-              <h3 className="text-sm font-semibold text-slate-900 mb-1">{item.title}</h3>
-              <p className="text-xs text-slate-500">{item.desc}</p>
-            </div>
-          ))}
-        </div>
-      </div>
     </ToolPageLayout>
   );
 }

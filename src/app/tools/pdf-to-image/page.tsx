@@ -4,6 +4,7 @@ import { useState, useCallback } from "react";
 import ToolPageLayout from "@/components/ToolPageLayout";
 import FileUploader from "@/components/FileUploader";
 import ProcessingView from "@/components/ProcessingView";
+import { HowItWorks } from "@/components/HowItWorks";
 import { getToolById } from "@/config/tools";
 import {
   convertPdfToImages,
@@ -260,44 +261,30 @@ export default function PdfToImagePage() {
         </div>
       )}
 
-      {/* How it works */}
-      <div className="mt-16 pt-12 border-t border-slate-100">
-        <h2 className="text-lg font-semibold text-slate-900 mb-6">
-          How it works
-        </h2>
-        <div className="grid sm:grid-cols-4 gap-6">
-          {[
-            {
-              step: "1",
-              title: "Upload PDF",
-              desc: "Select any PDF document — reports, presentations, scanned pages, or multi-page files.",
-            },
-            {
-              step: "2",
-              title: "High-Quality Render",
-              desc: "Each page is rendered at 2x resolution for crisp, clear PNG output suitable for printing or digital sharing.",
-            },
-            {
-              step: "3",
-              title: "Preview",
-              desc: "Review all converted images with quality indicators. Check resolution and file size per page.",
-            },
-            {
-              step: "4",
-              title: "Download Images",
-              desc: "Download individual pages as PNG or all pages as a ZIP file with one click.",
-            },
-          ].map((item) => (
-            <div key={item.step} className="flex flex-col items-center text-center">
-              <div className="w-10 h-10 rounded-full bg-accent-50 flex items-center justify-center mb-3">
-                <span className="text-sm font-bold text-accent-600">{item.step}</span>
-              </div>
-              <h3 className="text-sm font-semibold text-slate-900 mb-1">{item.title}</h3>
-              <p className="text-xs text-slate-500">{item.desc}</p>
-            </div>
-          ))}
-        </div>
-      </div>
+      <HowItWorks
+        steps={[
+          {
+            step: "1",
+            title: "Upload PDF",
+            desc: "Select any PDF document, including reports, presentations, scanned pages, or multi-page files.",
+          },
+          {
+            step: "2",
+            title: "High-Quality Render",
+            desc: "Each page is rendered at 2x resolution for crisp, clear PNG output suitable for printing or digital sharing.",
+          },
+          {
+            step: "3",
+            title: "Preview and Inspect",
+            desc: "Browse all converted images in a grid. Click any thumbnail to view it full-size, and check resolution and file size per page.",
+          },
+          {
+            step: "4",
+            title: "Download Images",
+            desc: "Download individual pages as PNG or grab all pages as a single ZIP file. All processing happens in your browser.",
+          },
+        ]}
+      />
 
       {/* Full-size Modal */}
       {modalPage && (

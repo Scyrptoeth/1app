@@ -2,6 +2,7 @@
 
 import { useState, useCallback, useRef, useEffect } from "react";
 import ToolPageLayout from "@/components/ToolPageLayout";
+import { HowItWorks } from "@/components/HowItWorks";
 import FileUploader from "@/components/FileUploader";
 import ProcessingView from "@/components/ProcessingView";
 import { getToolById } from "@/config/tools";
@@ -462,6 +463,31 @@ export default function ReorderPdfPage() {
 
   return (
     <ToolPageLayout tool={tool}>
+      <HowItWorks
+        steps={[
+          {
+            step: "1",
+            title: "Upload PDF",
+            desc: "Select a PDF document whose pages you want to rearrange.",
+          },
+          {
+            step: "2",
+            title: "Reorder Pages",
+            desc: "Drag and drop page thumbnails or use arrow controls to rearrange them. Remove pages you do not need, and rotate individual pages as required.",
+          },
+          {
+            step: "3",
+            title: "Reset or Restore",
+            desc: "Reset to the original order anytime, or restore removed pages with a single click.",
+          },
+          {
+            step: "4",
+            title: "Download PDF",
+            desc: "Download your reordered PDF with original quality, fonts, and layout fully preserved. All processing happens in your browser, so your files stay private.",
+          },
+        ]}
+      />
+
       {/* Upload */}
       {stage === "upload" && (
         <FileUploader
@@ -705,37 +731,6 @@ export default function ReorderPdfPage() {
         </>
       )}
 
-      {/* How it works */}
-      <div className="mt-16 pt-12 border-t border-slate-100">
-        <h2 className="text-lg font-semibold text-slate-900 mb-6">How it works</h2>
-        <div className="grid sm:grid-cols-3 gap-6">
-          {[
-            {
-              step: "1",
-              title: "Upload PDF",
-              desc: "Select a PDF document whose pages you want to rearrange.",
-            },
-            {
-              step: "2",
-              title: "Reorder Pages",
-              desc: "Drag & drop or use arrow controls to rearrange pages. Remove pages you don't need.",
-            },
-            {
-              step: "3",
-              title: "Download",
-              desc: "Download your reordered PDF — original quality fully preserved.",
-            },
-          ].map((item) => (
-            <div key={item.step} className="flex flex-col items-center text-center">
-              <div className="w-10 h-10 rounded-full bg-accent-50 flex items-center justify-center mb-3">
-                <span className="text-sm font-bold text-accent-600">{item.step}</span>
-              </div>
-              <h3 className="text-sm font-semibold text-slate-900 mb-1">{item.title}</h3>
-              <p className="text-xs text-slate-500">{item.desc}</p>
-            </div>
-          ))}
-        </div>
-      </div>
     </ToolPageLayout>
   );
 }

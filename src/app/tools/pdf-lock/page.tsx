@@ -5,6 +5,7 @@ import ToolPageLayout from "@/components/ToolPageLayout";
 import FileUploader from "@/components/FileUploader";
 import ProcessingView from "@/components/ProcessingView";
 import DownloadView from "@/components/DownloadView";
+import { HowItWorks } from "@/components/HowItWorks";
 import { getToolById } from "@/config/tools";
 import {
   lockPdf,
@@ -221,6 +222,31 @@ export default function PdfLockPage() {
 
   return (
     <ToolPageLayout tool={tool}>
+      <HowItWorks
+        steps={[
+          {
+            step: "1",
+            title: "Upload PDF",
+            desc: "Select the PDF document you want to protect with password and restrictions.",
+          },
+          {
+            step: "2",
+            title: "Choose Restrictions",
+            desc: "Pick which actions to block: opening, copying, printing, editing, annotations, form filling, or page assembly. Use Select All for maximum protection.",
+          },
+          {
+            step: "3",
+            title: "Set Owner Password",
+            desc: "Create a strong owner password with real-time strength feedback. This password is required to remove or change the restrictions later.",
+          },
+          {
+            step: "4",
+            title: "Download Locked PDF",
+            desc: "Download your protected PDF with all chosen restrictions enforced. All processing happens in your browser, so your password and document stay private.",
+          },
+        ]}
+      />
+
       {stage === "upload" && (
         <FileUploader
           acceptedFormats={[".pdf"]}
@@ -519,46 +545,6 @@ export default function PdfLockPage() {
         </>
       )}
 
-      {/* How it works */}
-      <div className="mt-16 pt-12 border-t border-slate-100">
-        <h2 className="text-lg font-semibold text-slate-900 mb-6">
-          How it works
-        </h2>
-        <div className="grid sm:grid-cols-3 gap-6">
-          {[
-            {
-              step: "1",
-              title: "Upload PDF",
-              desc: "Select the PDF document you want to protect.",
-            },
-            {
-              step: "2",
-              title: "Set Restrictions",
-              desc: "Choose which actions to block and set an owner password.",
-            },
-            {
-              step: "3",
-              title: "Download Locked PDF",
-              desc: "Get your protected PDF with restrictions enforced.",
-            },
-          ].map((item) => (
-            <div
-              key={item.step}
-              className="flex flex-col items-center text-center"
-            >
-              <div className="w-10 h-10 rounded-full bg-accent-50 flex items-center justify-center mb-3">
-                <span className="text-sm font-bold text-accent-600">
-                  {item.step}
-                </span>
-              </div>
-              <h3 className="text-sm font-semibold text-slate-900 mb-1">
-                {item.title}
-              </h3>
-              <p className="text-xs text-slate-500">{item.desc}</p>
-            </div>
-          ))}
-        </div>
-      </div>
     </ToolPageLayout>
   );
 }

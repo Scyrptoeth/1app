@@ -5,6 +5,7 @@ import ToolPageLayout from "@/components/ToolPageLayout";
 import FileUploader from "@/components/FileUploader";
 import ProcessingView from "@/components/ProcessingView";
 import DownloadView from "@/components/DownloadView";
+import { HowItWorks } from "@/components/HowItWorks";
 import { getToolById } from "@/config/tools";
 import {
   removePdfWatermark,
@@ -176,46 +177,25 @@ export default function PdfWatermarkRemovePage() {
         </>
       )}
 
-      {/* How it works */}
-      <div className="mt-16 pt-12 border-t border-slate-100">
-        <h2 className="text-lg font-semibold text-slate-900 mb-6">
-          How it works
-        </h2>
-        <div className="grid sm:grid-cols-3 gap-6">
-          {[
-            {
-              step: "1",
-              title: "Upload PDF",
-              desc: "Select a PDF document that contains watermarks.",
-            },
-            {
-              step: "2",
-              title: "Smart Detection",
-              desc: "We analyze the PDF structure to find watermark layers, annotations, and overlays.",
-            },
-            {
-              step: "3",
-              title: "Download Clean PDF",
-              desc: "Download your watermark-free PDF with all original content preserved.",
-            },
-          ].map((item) => (
-            <div
-              key={item.step}
-              className="flex flex-col items-center text-center"
-            >
-              <div className="w-10 h-10 rounded-full bg-accent-50 flex items-center justify-center mb-3">
-                <span className="text-sm font-bold text-accent-600">
-                  {item.step}
-                </span>
-              </div>
-              <h3 className="text-sm font-semibold text-slate-900 mb-1">
-                {item.title}
-              </h3>
-              <p className="text-xs text-slate-500">{item.desc}</p>
-            </div>
-          ))}
-        </div>
-      </div>
+      <HowItWorks
+        steps={[
+          {
+            step: "1",
+            title: "Upload PDF",
+            desc: "Select a PDF document that contains watermarks. Multi-page documents are fully supported.",
+          },
+          {
+            step: "2",
+            title: "Smart Detection",
+            desc: "The engine analyzes the PDF structure to identify watermark layers, annotations, and overlays, then removes them while preserving all original content.",
+          },
+          {
+            step: "3",
+            title: "Download Clean PDF",
+            desc: "Download your watermark-free PDF instantly. All processing happens in your browser, so your files stay private.",
+          },
+        ]}
+      />
     </ToolPageLayout>
   );
 }

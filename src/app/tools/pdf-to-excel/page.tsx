@@ -5,6 +5,7 @@ import ToolPageLayout from "@/components/ToolPageLayout";
 import FileUploader from "@/components/FileUploader";
 import ProcessingView from "@/components/ProcessingView";
 import DownloadView from "@/components/DownloadView";
+import { HowItWorks } from "@/components/HowItWorks";
 import { getToolById } from "@/config/tools";
 import {
   convertPdfToExcel,
@@ -252,51 +253,30 @@ export default function PdfToExcelPage() {
         </div>
       )}
 
-      {/* How it works */}
-      <div className="mt-16 pt-12 border-t border-slate-100">
-        <h2 className="text-lg font-semibold text-slate-900 mb-6">
-          How it works
-        </h2>
-        <div className="grid sm:grid-cols-4 gap-6">
-          {[
-            {
-              step: "1",
-              title: "Upload PDF",
-              desc: "Select a PDF document containing tables, financial data, or structured content.",
-            },
-            {
-              step: "2",
-              title: "Smart Extraction",
-              desc: "OCR engine reads every page and analyzes the layout — detecting columns, rows, and data types.",
-            },
-            {
-              step: "3",
-              title: "Preview",
-              desc: "Review the extracted data in a table view. Each page becomes a separate Excel sheet.",
-            },
-            {
-              step: "4",
-              title: "Download Excel",
-              desc: "Download a formatted .xlsx file with headers, borders, number formatting, and auto-fit columns.",
-            },
-          ].map((item) => (
-            <div
-              key={item.step}
-              className="flex flex-col items-center text-center"
-            >
-              <div className="w-10 h-10 rounded-full bg-accent-50 flex items-center justify-center mb-3">
-                <span className="text-sm font-bold text-accent-600">
-                  {item.step}
-                </span>
-              </div>
-              <h3 className="text-sm font-semibold text-slate-900 mb-1">
-                {item.title}
-              </h3>
-              <p className="text-xs text-slate-500">{item.desc}</p>
-            </div>
-          ))}
-        </div>
-      </div>
+      <HowItWorks
+        steps={[
+          {
+            step: "1",
+            title: "Upload PDF",
+            desc: "Select a PDF containing tables, financial data, or structured content. Both scanned and text-based PDFs are supported.",
+          },
+          {
+            step: "2",
+            title: "Smart Extraction",
+            desc: "The engine analyzes every page, detecting columns, rows, and data types. Text-based PDFs use direct extraction while scanned PDFs use OCR.",
+          },
+          {
+            step: "3",
+            title: "Preview Results",
+            desc: "Review extracted data in a table view with a quality indicator. Each page becomes a separate sheet, including side-by-side layouts.",
+          },
+          {
+            step: "4",
+            title: "Download Excel",
+            desc: "Download a formatted .xlsx file with headers, borders, and auto-fit columns. All processing happens in your browser.",
+          },
+        ]}
+      />
     </ToolPageLayout>
   );
 }

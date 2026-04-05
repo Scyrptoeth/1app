@@ -18,6 +18,7 @@ import {
   scanItemsToImageItems,
   type ScanItem,
 } from "@/lib/tools/scan-to-pdf";
+import { HowItWorks } from "@/components/HowItWorks";
 
 type Stage = "capture" | "configure" | "processing" | "done";
 type InputMode = "camera" | "upload";
@@ -876,6 +877,29 @@ export default function ScanToPdfPage() {
       tool={tool}
       privacyMessage="Photos are processed locally — nothing is uploaded"
     >
+      <HowItWorks steps={[
+        {
+          step: "1",
+          title: "Capture or Upload",
+          desc: "Use your device camera to scan document pages, or upload existing images (JPG, PNG) from your gallery.",
+        },
+        {
+          step: "2",
+          title: "Auto-Enhance",
+          desc: "Each scan is automatically enhanced for sharper text and cleaner backgrounds.",
+        },
+        {
+          step: "3",
+          title: "Configure Pages",
+          desc: "Reorder, rotate, or remove pages. Choose your preferred page size (A4, Letter, Fit to Image, and more) and orientation.",
+        },
+        {
+          step: "4",
+          title: "Download PDF",
+          desc: "Generate and save your multi-page PDF. All processing happens locally in your browser, so your documents stay private.",
+        },
+      ]} />
+
       {/* ───── Stage: Capture ───── */}
       {stage === "capture" && (
         <div className="w-full max-w-2xl mx-auto space-y-4">
@@ -1473,42 +1497,6 @@ export default function ScanToPdfPage() {
         </>
       )}
 
-      {/* ───── How it works ───── */}
-      <div className="mt-16 pt-12 border-t border-slate-100">
-        <h2 className="text-lg font-semibold text-slate-900 mb-6">How it works</h2>
-        <div className="grid sm:grid-cols-4 gap-6">
-          {[
-            {
-              step: "1",
-              title: "Scan",
-              desc: "Use your camera to capture document pages.",
-            },
-            {
-              step: "2",
-              title: "Enhance",
-              desc: "Images are automatically enhanced for optimal quality.",
-            },
-            {
-              step: "3",
-              title: "Configure",
-              desc: "Reorder, rotate, or remove pages. Set page size and orientation.",
-            },
-            {
-              step: "4",
-              title: "Download",
-              desc: "Download your PDF — enhanced quality preserved.",
-            },
-          ].map((item) => (
-            <div key={item.step} className="flex flex-col items-center text-center">
-              <div className="w-10 h-10 rounded-full bg-accent-50 flex items-center justify-center mb-3">
-                <span className="text-sm font-bold text-accent-600">{item.step}</span>
-              </div>
-              <h3 className="text-sm font-semibold text-slate-900 mb-1">{item.title}</h3>
-              <p className="text-xs text-slate-500">{item.desc}</p>
-            </div>
-          ))}
-        </div>
-      </div>
     </ToolPageLayout>
   );
 }

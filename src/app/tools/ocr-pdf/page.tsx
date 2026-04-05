@@ -4,6 +4,7 @@ import { useState, useCallback, useRef, useEffect } from "react";
 import ToolPageLayout from "@/components/ToolPageLayout";
 import FileUploader from "@/components/FileUploader";
 import ProcessingView from "@/components/ProcessingView";
+import { HowItWorks } from "@/components/HowItWorks";
 import { getToolById } from "@/config/tools";
 import {
   ocrPdf,
@@ -485,6 +486,31 @@ export default function OcrPdfPage() {
 
   return (
     <ToolPageLayout tool={tool}>
+      <HowItWorks
+        steps={[
+          {
+            step: "1",
+            title: "Upload PDF",
+            desc: "Select a scanned or image-based PDF file. The tool automatically checks whether your PDF already contains searchable text.",
+          },
+          {
+            step: "2",
+            title: "Prepare Pages",
+            desc: "Rotate, reorder, or remove pages before OCR. Drag and drop thumbnails to rearrange, or use the bulk rotation controls for quick adjustments.",
+          },
+          {
+            step: "3",
+            title: "Run OCR",
+            desc: "Tesseract.js recognizes text in English and Indonesian, then adds an invisible text layer on top of each page. A quality score shows recognition accuracy.",
+          },
+          {
+            step: "4",
+            title: "Download Searchable PDF",
+            desc: "Download your PDF with fully selectable, copyable, and searchable text while the visual quality stays 100% preserved. All processing happens in your browser.",
+          },
+        ]}
+      />
+
       {/* Upload */}
       {stage === "upload" && (
         <FileUploader
@@ -784,37 +810,6 @@ export default function OcrPdfPage() {
         </>
       )}
 
-      {/* How it works */}
-      <div className="mt-16 pt-12 border-t border-slate-100">
-        <h2 className="text-lg font-semibold text-slate-900 mb-6">How it works</h2>
-        <div className="grid sm:grid-cols-3 gap-6">
-          {[
-            {
-              step: "1",
-              title: "Upload PDF",
-              desc: "Select a scanned or image-based PDF. You can rotate and reorder pages before OCR.",
-            },
-            {
-              step: "2",
-              title: "OCR Processing",
-              desc: "Each page is analyzed with Tesseract.js OCR engine (English + Indonesian) to recognize text.",
-            },
-            {
-              step: "3",
-              title: "Download",
-              desc: "Download your searchable PDF — select, copy, and search text while visual quality is 100% preserved.",
-            },
-          ].map((item) => (
-            <div key={item.step} className="flex flex-col items-center text-center">
-              <div className="w-10 h-10 rounded-full bg-accent-50 flex items-center justify-center mb-3">
-                <span className="text-sm font-bold text-accent-600">{item.step}</span>
-              </div>
-              <h3 className="text-sm font-semibold text-slate-900 mb-1">{item.title}</h3>
-              <p className="text-xs text-slate-500">{item.desc}</p>
-            </div>
-          ))}
-        </div>
-      </div>
     </ToolPageLayout>
   );
 }

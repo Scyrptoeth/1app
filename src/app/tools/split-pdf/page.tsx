@@ -14,6 +14,7 @@ import {
   type SplitGroup,
   type SplitPdfResult,
 } from "@/lib/tools/pdf-splitter";
+import { HowItWorks } from "@/components/HowItWorks";
 
 type Stage = "upload" | "configure" | "processing" | "done";
 
@@ -624,6 +625,29 @@ export default function SplitPdfPage() {
 
   return (
     <ToolPageLayout tool={tool}>
+      <HowItWorks steps={[
+        {
+          step: "1",
+          title: "Upload PDF",
+          desc: "Select the PDF file you want to split into separate documents, up to 200 MB.",
+        },
+        {
+          step: "2",
+          title: "Create Groups",
+          desc: "Add output groups and drag pages between them. Rename each group and rotate or reorder pages as needed.",
+        },
+        {
+          step: "3",
+          title: "Split and Download",
+          desc: "Download each group as an individual PDF, or grab everything at once as a ZIP file.",
+        },
+        {
+          step: "4",
+          title: "Privacy First",
+          desc: "All splitting and reordering happens entirely in your browser. Your PDF is never uploaded to any server.",
+        },
+      ]} />
+
       {/* Upload stage */}
       {stage === "upload" && (
         <FileUploader
@@ -1003,37 +1027,6 @@ export default function SplitPdfPage() {
         </div>
       )}
 
-      {/* How it works */}
-      <div className="mt-16 pt-12 border-t border-slate-100">
-        <h2 className="text-lg font-semibold text-slate-900 mb-6">How it works</h2>
-        <div className="grid sm:grid-cols-3 gap-6">
-          {[
-            {
-              step: "1",
-              title: "Upload PDF",
-              desc: "Select the PDF file you want to split into multiple files.",
-            },
-            {
-              step: "2",
-              title: "Organize Groups",
-              desc: "Create output groups and drag pages between them. Reorder and rename as needed.",
-            },
-            {
-              step: "3",
-              title: "Download Files",
-              desc: "Get individual PDFs or download all at once as a ZIP file.",
-            },
-          ].map((item) => (
-            <div key={item.step} className="flex flex-col items-center text-center">
-              <div className="w-10 h-10 rounded-full bg-accent-50 flex items-center justify-center mb-3">
-                <span className="text-sm font-bold text-accent-600">{item.step}</span>
-              </div>
-              <h3 className="text-sm font-semibold text-slate-900 mb-1">{item.title}</h3>
-              <p className="text-xs text-slate-500">{item.desc}</p>
-            </div>
-          ))}
-        </div>
-      </div>
     </ToolPageLayout>
   );
 }

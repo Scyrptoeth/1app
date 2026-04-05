@@ -4,6 +4,7 @@ import { useState, useCallback, useRef, useEffect } from "react";
 import ToolPageLayout from "@/components/ToolPageLayout";
 import FileUploader from "@/components/FileUploader";
 import ProcessingView from "@/components/ProcessingView";
+import { HowItWorks } from "@/components/HowItWorks";
 import { getToolById } from "@/config/tools";
 import {
   convertExcelToPdf,
@@ -248,6 +249,31 @@ export default function ExcelToPdfPage() {
 
   return (
     <ToolPageLayout tool={tool}>
+      <HowItWorks
+        steps={[
+          {
+            step: "1",
+            title: "Upload Excel",
+            desc: "Select an .xlsx or .xls spreadsheet. Files up to 50 MB are supported, with full styling preserved for .xlsx.",
+          },
+          {
+            step: "2",
+            title: "Automatic Conversion",
+            desc: "All sheets, styles, and data are parsed and rendered into a searchable, selectable PDF.",
+          },
+          {
+            step: "3",
+            title: "Configure Pages",
+            desc: "Drag to reorder pages, rotate individual or bulk pages, and remove any pages you do not need.",
+          },
+          {
+            step: "4",
+            title: "Download",
+            desc: "Apply your changes and download the final PDF. All processing happens entirely in your browser.",
+          },
+        ]}
+      />
+
       {/* Error notice */}
       {errorMessage && (
         <div className="mb-6 flex items-start gap-3 p-4 bg-red-50 border border-red-200 rounded-xl">
@@ -568,28 +594,6 @@ export default function ExcelToPdfPage() {
           </div>
         </div>
       )}
-
-      {/* How it works */}
-      <div className="mt-16 pt-12 border-t border-slate-100">
-        <h2 className="text-lg font-semibold text-slate-900 mb-6">How it works</h2>
-        <div className="grid sm:grid-cols-5 gap-6">
-          {[
-            { step: "1", title: "Upload Excel", desc: "Select an .xlsx or .xls file." },
-            { step: "2", title: "Parse & Render", desc: "Sheets, styles, charts extracted and rendered to PDF." },
-            { step: "3", title: "Configure Pages", desc: "Reorder, rotate, or remove pages before download." },
-            { step: "4", title: "Apply Changes", desc: "Page modifications applied losslessly via pdf-lib." },
-            { step: "5", title: "Download", desc: "Download directly — no data sent to any server." },
-          ].map((item) => (
-            <div key={item.step} className="flex flex-col items-center text-center">
-              <div className="w-10 h-10 rounded-full bg-accent-50 flex items-center justify-center mb-3">
-                <span className="text-sm font-bold text-accent-600">{item.step}</span>
-              </div>
-              <h3 className="text-sm font-semibold text-slate-900 mb-1">{item.title}</h3>
-              <p className="text-xs text-slate-500">{item.desc}</p>
-            </div>
-          ))}
-        </div>
-      </div>
     </ToolPageLayout>
   );
 }

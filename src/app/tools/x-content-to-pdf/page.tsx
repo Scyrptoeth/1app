@@ -2,6 +2,7 @@
 
 import { useState, useCallback } from "react";
 import ToolPageLayout from "@/components/ToolPageLayout";
+import { HowItWorks } from "@/components/HowItWorks";
 import TweetInput from "@/components/x-content/TweetInput";
 import TweetPreview from "@/components/x-content/TweetPreview";
 import ExportButtons from "@/components/x-content/ExportButtons";
@@ -59,6 +60,26 @@ export default function XContentToPdfPage() {
       tool={tool}
       privacyMessage="Content is fetched via API — no files are stored on our servers"
     >
+      <HowItWorks
+        steps={[
+          {
+            step: "1",
+            title: "Paste Post URL",
+            desc: "Copy and paste the link of any X (Twitter) post or thread. You can also add multiple URLs to combine them into one document.",
+          },
+          {
+            step: "2",
+            title: "Preview Content",
+            desc: "The full post content is fetched and displayed, including text, images, and engagement metrics.",
+          },
+          {
+            step: "3",
+            title: "Export as PDF",
+            desc: "Download a clean, formatted PDF ready to share or archive. Tweet data is fetched securely through our server, and no X/Twitter login is required.",
+          },
+        ]}
+      />
+
       <div className="space-y-8">
         <TweetInput onFetch={handleFetch} isLoading={isLoading} />
 
@@ -76,43 +97,6 @@ export default function XContentToPdfPage() {
           visibleFormats={["pdf"]}
         />
 
-        {/* How it works */}
-        {!tweet && !thread && !isLoading && (
-          <div className="pt-8 border-t border-slate-100">
-            <h2 className="text-lg font-semibold text-slate-900 mb-4">
-              How it works
-            </h2>
-            <div className="grid sm:grid-cols-3 gap-6">
-              {[
-                {
-                  step: "1",
-                  title: "Paste URL",
-                  desc: "Copy the link of any X post, thread, or article",
-                },
-                {
-                  step: "2",
-                  title: "Extract Content",
-                  desc: "We fetch the full content including images and metrics",
-                },
-                {
-                  step: "3",
-                  title: "Download PDF",
-                  desc: "Get a clean, formatted PDF document ready to share",
-                },
-              ].map((item) => (
-                <div key={item.step} className="text-center space-y-2">
-                  <div className="w-8 h-8 rounded-full bg-accent-50 text-accent-600 font-bold text-sm flex items-center justify-center mx-auto">
-                    {item.step}
-                  </div>
-                  <h3 className="font-semibold text-slate-900 text-sm">
-                    {item.title}
-                  </h3>
-                  <p className="text-slate-500 text-xs">{item.desc}</p>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
       </div>
     </ToolPageLayout>
   );

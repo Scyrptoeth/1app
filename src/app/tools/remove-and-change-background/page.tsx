@@ -2,6 +2,7 @@
 
 import { useState, useCallback, useRef, useEffect } from "react";
 import ToolPageLayout from "@/components/ToolPageLayout";
+import { HowItWorks } from "@/components/HowItWorks";
 import FileUploader from "@/components/FileUploader";
 import ProcessingView from "@/components/ProcessingView";
 import CropEditor from "@/components/CropEditor";
@@ -673,6 +674,31 @@ export default function RemoveAndChangeBackgroundPage() {
 
   return (
     <ToolPageLayout tool={tool}>
+      <HowItWorks
+        steps={[
+          {
+            step: "1",
+            title: "Upload Image",
+            desc: "Select a JPG, JPEG, or PNG image you want to process.",
+          },
+          {
+            step: "2",
+            title: "Remove Background",
+            desc: "AI removes the background automatically using on-device machine learning. Choose to keep it transparent, replace it with a solid color, or set a custom image as the new background.",
+          },
+          {
+            step: "3",
+            title: "Customize",
+            desc: "Fine-tune your result with rotate, flip, and crop tools. Adjust background image scale and position for the perfect composition.",
+          },
+          {
+            step: "4",
+            title: "Download",
+            desc: "Download your processed image in PNG format at full quality. All processing happens entirely in your browser, so your images stay private.",
+          },
+        ]}
+      />
+
       {/* ---- Upload ---- */}
       {stage === "upload" && (
         <FileUploader
@@ -1250,51 +1276,6 @@ export default function RemoveAndChangeBackgroundPage() {
         </div>
       )}
 
-      {/* ---- How it works ---- */}
-      <div className="mt-16 pt-12 border-t border-slate-100">
-        <h2 className="text-lg font-semibold text-slate-900 mb-6">
-          How it works
-        </h2>
-        <div className="grid sm:grid-cols-4 gap-6">
-          {[
-            {
-              step: "1",
-              title: "Upload",
-              desc: "Select a JPG, JPEG, or PNG image you want to process.",
-            },
-            {
-              step: "2",
-              title: "Remove Background",
-              desc: "AI removes the background automatically using on-device processing.",
-            },
-            {
-              step: "3",
-              title: "Customize",
-              desc: "Optionally add a new color or image background, rotate, or crop.",
-            },
-            {
-              step: "4",
-              title: "Download",
-              desc: "Download your processed image in PNG format with maximum quality.",
-            },
-          ].map((item) => (
-            <div
-              key={item.step}
-              className="flex flex-col items-center text-center"
-            >
-              <div className="w-10 h-10 rounded-full bg-accent-50 flex items-center justify-center mb-3">
-                <span className="text-sm font-bold text-accent-600">
-                  {item.step}
-                </span>
-              </div>
-              <h3 className="text-sm font-semibold text-slate-900 mb-1">
-                {item.title}
-              </h3>
-              <p className="text-xs text-slate-500">{item.desc}</p>
-            </div>
-          ))}
-        </div>
-      </div>
     </ToolPageLayout>
   );
 }

@@ -4,6 +4,7 @@ import { useState, useCallback, useRef, useEffect } from "react";
 import ToolPageLayout from "@/components/ToolPageLayout";
 import FileUploader from "@/components/FileUploader";
 import ProcessingView from "@/components/ProcessingView";
+import { HowItWorks } from "@/components/HowItWorks";
 import { getToolById } from "@/config/tools";
 import {
   insertWatermark,
@@ -633,6 +634,31 @@ export default function InsertPdfWatermarkPage() {
 
   return (
     <ToolPageLayout tool={tool} contentMaxWidth="max-w-7xl">
+      <HowItWorks
+        steps={[
+          {
+            step: "1",
+            title: "Upload PDF",
+            desc: "Select the PDF document you want to watermark. Files up to 200 MB are supported.",
+          },
+          {
+            step: "2",
+            title: "Configure Watermark",
+            desc: "Choose between text or image mode. For text, set the content, font, size, bold/italic/underline styling, and color. For images, upload a PNG or JPG. Adjust opacity, rotation, position (9-point grid or mosaic pattern), and layer placement (over or below content).",
+          },
+          {
+            step: "3",
+            title: "Preview",
+            desc: "See a live preview of the watermark overlaid on your PDF pages. Select any page thumbnail to check the exact placement before processing.",
+          },
+          {
+            step: "4",
+            title: "Download",
+            desc: "Download your watermarked PDF with the original document quality fully preserved. All processing happens in your browser, so your files stay private.",
+          },
+        ]}
+      />
+
       {/* ─── Upload ──────────────────────────────────────────── */}
       {stage === "upload" && (
         <FileUploader acceptedFormats={[".pdf"]} maxSizeMB={200} onFilesSelected={handleFileSelected}
@@ -951,26 +977,6 @@ export default function InsertPdfWatermarkPage() {
         </>
       )}
 
-      {/* ─── How it works ──────────────────────────────────────── */}
-      <div className="mt-16 pt-12 border-t border-slate-100 max-w-4xl mx-auto">
-        <h2 className="text-lg font-semibold text-slate-900 mb-6">How it works</h2>
-        <div className="grid sm:grid-cols-4 gap-6">
-          {[
-            { step: "1", title: "Upload PDF", desc: "Select a PDF document to add a watermark to." },
-            { step: "2", title: "Configure", desc: "Choose text or image, set font, position, opacity, rotation, and layer." },
-            { step: "3", title: "Preview", desc: "See a live preview of the watermark before processing." },
-            { step: "4", title: "Download", desc: "Download your watermarked PDF — original quality preserved." },
-          ].map((item) => (
-            <div key={item.step} className="flex flex-col items-center text-center">
-              <div className="w-10 h-10 rounded-full bg-accent-50 flex items-center justify-center mb-3">
-                <span className="text-sm font-bold text-accent-600">{item.step}</span>
-              </div>
-              <h3 className="text-sm font-semibold text-slate-900 mb-1">{item.title}</h3>
-              <p className="text-xs text-slate-500">{item.desc}</p>
-            </div>
-          ))}
-        </div>
-      </div>
     </ToolPageLayout>
   );
 }

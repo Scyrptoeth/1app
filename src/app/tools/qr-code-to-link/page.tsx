@@ -2,6 +2,7 @@
 
 import { useState, useCallback, useRef, useEffect } from "react";
 import ToolPageLayout from "@/components/ToolPageLayout";
+import { HowItWorks } from "@/components/HowItWorks";
 import FileUploader from "@/components/FileUploader";
 import ProcessingView from "@/components/ProcessingView";
 import InputModeToggle, { type InputMode } from "@/components/InputModeToggle";
@@ -453,6 +454,31 @@ export default function QrCodeToLinkPage() {
 
   return (
     <ToolPageLayout tool={tool}>
+      <HowItWorks
+        steps={[
+          {
+            step: "1",
+            title: "Upload or Scan",
+            desc: "Upload a PNG or JPG image containing a QR code, or use your device camera to scan one in real time.",
+          },
+          {
+            step: "2",
+            title: "Detect QR Codes",
+            desc: "The decoder scans the image to locate all QR codes automatically.",
+          },
+          {
+            step: "3",
+            title: "Decode Content",
+            desc: "Each detected QR code is decoded to extract the embedded URL or text data.",
+          },
+          {
+            step: "4",
+            title: "Copy or Open",
+            desc: "Copy the decoded content to your clipboard or click to open URLs directly. All processing happens in your browser with no data sent to any server.",
+          },
+        ]}
+      />
+
       {stage === "upload" && (
         <>
           <InputModeToggle
@@ -572,51 +598,6 @@ export default function QrCodeToLinkPage() {
         </>
       )}
 
-      {/* How it works */}
-      <div className="mt-16 pt-12 border-t border-slate-100">
-        <h2 className="text-lg font-semibold text-slate-900 mb-6">
-          How it works
-        </h2>
-        <div className="grid sm:grid-cols-4 gap-6">
-          {[
-            {
-              step: "1",
-              title: "Upload or Scan",
-              desc: "Upload a QR code image, or use your camera to scan one directly.",
-            },
-            {
-              step: "2",
-              title: "QR Detection",
-              desc: "Our algorithm scans the image to locate all QR codes.",
-            },
-            {
-              step: "3",
-              title: "Decode",
-              desc: "Each QR code is decoded to extract the embedded link or text.",
-            },
-            {
-              step: "4",
-              title: "Copy Link",
-              desc: "Copy the decoded content to your clipboard or click to open URLs.",
-            },
-          ].map((item) => (
-            <div
-              key={item.step}
-              className="flex flex-col items-center text-center"
-            >
-              <div className="w-10 h-10 rounded-full bg-accent-50 flex items-center justify-center mb-3">
-                <span className="text-sm font-bold text-accent-600">
-                  {item.step}
-                </span>
-              </div>
-              <h3 className="text-sm font-semibold text-slate-900 mb-1">
-                {item.title}
-              </h3>
-              <p className="text-xs text-slate-500">{item.desc}</p>
-            </div>
-          ))}
-        </div>
-      </div>
     </ToolPageLayout>
   );
 }

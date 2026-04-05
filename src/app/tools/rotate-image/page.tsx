@@ -8,6 +8,7 @@ import CropEditor from "@/components/CropEditor";
 import { getToolById } from "@/config/tools";
 import { rotateImage } from "@/lib/tools/rotate-image";
 import { cropImage, type CropArea } from "@/lib/tools/crop-image";
+import { HowItWorks } from "@/components/HowItWorks";
 
 // ---------------------------------------------------------------------------
 // Types & helpers
@@ -446,6 +447,29 @@ export default function RotateImagePage() {
 
   return (
     <ToolPageLayout tool={tool}>
+      <HowItWorks steps={[
+        {
+          step: "1",
+          title: "Upload Image",
+          desc: "Select a JPG, JPEG, or PNG image up to 100 MB.",
+        },
+        {
+          step: "2",
+          title: "Rotate and Flip",
+          desc: "Rotate 90 degrees clockwise, counterclockwise, or 180 degrees. Flip horizontally or vertically with a live preview.",
+        },
+        {
+          step: "3",
+          title: "Crop (Optional)",
+          desc: "Switch to the integrated crop editor to fine-tune your image before saving.",
+        },
+        {
+          step: "4",
+          title: "Download",
+          desc: "Save your transformed image in its original format and quality. All processing happens in your browser, so your files stay private.",
+        },
+      ]} />
+
       {/* ---- Upload ---- */}
       {stage === "upload" && (
         <FileUploader
@@ -838,51 +862,6 @@ export default function RotateImagePage() {
         </div>
       )}
 
-      {/* ---- How it works ---- */}
-      <div className="mt-16 pt-12 border-t border-slate-100">
-        <h2 className="text-lg font-semibold text-slate-900 mb-6">
-          How it works
-        </h2>
-        <div className="grid sm:grid-cols-4 gap-6">
-          {[
-            {
-              step: "1",
-              title: "Upload",
-              desc: "Select a JPEG or PNG image you want to transform.",
-            },
-            {
-              step: "2",
-              title: "Transform",
-              desc: "Rotate, flip, or combine multiple transformations with live preview.",
-            },
-            {
-              step: "3",
-              title: "Crop (Optional)",
-              desc: "Fine-tune your image with the integrated crop tool.",
-            },
-            {
-              step: "4",
-              title: "Download",
-              desc: "Save your transformed image. Format and quality are fully preserved.",
-            },
-          ].map((item) => (
-            <div
-              key={item.step}
-              className="flex flex-col items-center text-center"
-            >
-              <div className="w-10 h-10 rounded-full bg-accent-50 flex items-center justify-center mb-3">
-                <span className="text-sm font-bold text-accent-600">
-                  {item.step}
-                </span>
-              </div>
-              <h3 className="text-sm font-semibold text-slate-900 mb-1">
-                {item.title}
-              </h3>
-              <p className="text-xs text-slate-500">{item.desc}</p>
-            </div>
-          ))}
-        </div>
-      </div>
     </ToolPageLayout>
   );
 }

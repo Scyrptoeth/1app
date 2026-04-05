@@ -2,6 +2,7 @@
 
 import { useState, useCallback, useRef, useEffect } from "react";
 import ToolPageLayout from "@/components/ToolPageLayout";
+import { HowItWorks } from "@/components/HowItWorks";
 import FileUploader from "@/components/FileUploader";
 import ProcessingView from "@/components/ProcessingView";
 import { getToolById } from "@/config/tools";
@@ -460,6 +461,31 @@ export default function RemovePagePdfPage() {
 
   return (
     <ToolPageLayout tool={tool}>
+      <HowItWorks
+        steps={[
+          {
+            step: "1",
+            title: "Upload PDF",
+            desc: "Select a PDF document from which you want to remove pages.",
+          },
+          {
+            step: "2",
+            title: "Select Pages to Remove",
+            desc: "Click the X button on any page to mark it for deletion. You can also drag and drop to reorder the remaining pages, or rotate individual pages.",
+          },
+          {
+            step: "3",
+            title: "Restore if Needed",
+            desc: "Changed your mind? Restore any removed page with a single click before downloading.",
+          },
+          {
+            step: "4",
+            title: "Download PDF",
+            desc: "Download your updated PDF with original quality fully preserved. All processing happens in your browser, so your files remain private.",
+          },
+        ]}
+      />
+
       {/* Upload */}
       {stage === "upload" && (
         <FileUploader
@@ -713,37 +739,6 @@ export default function RemovePagePdfPage() {
         </>
       )}
 
-      {/* How it works */}
-      <div className="mt-16 pt-12 border-t border-slate-100">
-        <h2 className="text-lg font-semibold text-slate-900 mb-6">How it works</h2>
-        <div className="grid sm:grid-cols-3 gap-6">
-          {[
-            {
-              step: "1",
-              title: "Upload PDF",
-              desc: "Select a PDF document from which you want to remove pages.",
-            },
-            {
-              step: "2",
-              title: "Select Pages to Remove",
-              desc: "Click the X button on pages you want to delete. Drag & drop to reorder the remaining pages.",
-            },
-            {
-              step: "3",
-              title: "Download",
-              desc: "Download your PDF with selected pages removed — original quality fully preserved.",
-            },
-          ].map((item) => (
-            <div key={item.step} className="flex flex-col items-center text-center">
-              <div className="w-10 h-10 rounded-full bg-accent-50 flex items-center justify-center mb-3">
-                <span className="text-sm font-bold text-accent-600">{item.step}</span>
-              </div>
-              <h3 className="text-sm font-semibold text-slate-900 mb-1">{item.title}</h3>
-              <p className="text-xs text-slate-500">{item.desc}</p>
-            </div>
-          ))}
-        </div>
-      </div>
     </ToolPageLayout>
   );
 }

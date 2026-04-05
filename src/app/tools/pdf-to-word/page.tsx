@@ -5,6 +5,7 @@ import ToolPageLayout from "@/components/ToolPageLayout";
 import FileUploader from "@/components/FileUploader";
 import ProcessingView from "@/components/ProcessingView";
 import DownloadView from "@/components/DownloadView";
+import { HowItWorks } from "@/components/HowItWorks";
 import { getToolById } from "@/config/tools";
 import {
   convertPdfToWord,
@@ -257,51 +258,30 @@ export default function PdfToWordPage() {
         </div>
       )}
 
-      {/* How it works */}
-      <div className="mt-16 pt-12 border-t border-slate-100">
-        <h2 className="text-lg font-semibold text-slate-900 mb-6">
-          How it works
-        </h2>
-        <div className="grid sm:grid-cols-4 gap-6">
-          {[
-            {
-              step: "1",
-              title: "Upload PDF",
-              desc: "Select any text-based PDF document — reports, contracts, forms, or manuals.",
-            },
-            {
-              step: "2",
-              title: "Text Extraction",
-              desc: "The engine reads every text element, capturing position, font, size, and style information.",
-            },
-            {
-              step: "3",
-              title: "Layout Reconstruction",
-              desc: "Text items are grouped into lines and paragraphs, preserving bold, italic, and font sizing.",
-            },
-            {
-              step: "4",
-              title: "Download .docx",
-              desc: "Get a fully editable Word document with page breaks matching the original PDF.",
-            },
-          ].map((item) => (
-            <div
-              key={item.step}
-              className="flex flex-col items-center text-center"
-            >
-              <div className="w-10 h-10 rounded-full bg-violet-50 flex items-center justify-center mb-3">
-                <span className="text-sm font-bold text-violet-600">
-                  {item.step}
-                </span>
-              </div>
-              <h3 className="text-sm font-semibold text-slate-900 mb-1">
-                {item.title}
-              </h3>
-              <p className="text-xs text-slate-500">{item.desc}</p>
-            </div>
-          ))}
-        </div>
-      </div>
+      <HowItWorks
+        steps={[
+          {
+            step: "1",
+            title: "Upload PDF",
+            desc: "Select a text-based PDF document such as reports, contracts, forms, or manuals.",
+          },
+          {
+            step: "2",
+            title: "Text Extraction",
+            desc: "The engine reads every text element on each page, capturing position, font, size, and style information.",
+          },
+          {
+            step: "3",
+            title: "Layout Reconstruction",
+            desc: "Text items are grouped into lines and paragraphs, preserving bold, italic, and font sizing with page breaks matching the original.",
+          },
+          {
+            step: "4",
+            title: "Download .docx",
+            desc: "Get a fully editable Word document ready to open in Microsoft Word or Google Docs. All processing happens in your browser.",
+          },
+        ]}
+      />
     </ToolPageLayout>
   );
 }

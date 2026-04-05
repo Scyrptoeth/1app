@@ -5,6 +5,7 @@ import ToolPageLayout from "@/components/ToolPageLayout";
 import FileUploader from "@/components/FileUploader";
 import ProcessingView from "@/components/ProcessingView";
 import CropEditor from "@/components/CropEditor";
+import { HowItWorks } from "@/components/HowItWorks";
 import { getToolById } from "@/config/tools";
 import {
   insertImageWatermark,
@@ -526,6 +527,31 @@ export default function InsertImageWatermarkPage() {
 
   return (
     <ToolPageLayout tool={tool} contentMaxWidth="max-w-7xl">
+      <HowItWorks
+        steps={[
+          {
+            step: "1",
+            title: "Upload Image",
+            desc: "Select a JPG or PNG image you want to watermark. Files up to 100 MB are supported.",
+          },
+          {
+            step: "2",
+            title: "Configure Watermark",
+            desc: "Choose text or image mode, then set font, color, size, position, opacity, rotation, and layer placement.",
+          },
+          {
+            step: "3",
+            title: "Preview and Adjust",
+            desc: "See a live preview of the watermark. You can also rotate, flip, or crop the image before applying.",
+          },
+          {
+            step: "4",
+            title: "Download",
+            desc: "Download your watermarked image at maximum quality. All processing happens entirely in your browser.",
+          },
+        ]}
+      />
+
       {/* ─── Upload ──────────────────────────────────────────── */}
       {stage === "upload" && (
         <FileUploader
@@ -883,27 +909,6 @@ export default function InsertImageWatermarkPage() {
           </div>
         </>
       )}
-
-      {/* ─── How it works ──────────────────────────────────────── */}
-      <div className="mt-16 pt-12 border-t border-slate-100 max-w-4xl mx-auto">
-        <h2 className="text-lg font-semibold text-slate-900 mb-6">How it works</h2>
-        <div className="grid sm:grid-cols-4 gap-6">
-          {[
-            { step: "1", title: "Upload Image", desc: "Select a JPG or PNG image to add a watermark to." },
-            { step: "2", title: "Configure", desc: "Choose text or image watermark, set font, position, opacity, rotation, and layer." },
-            { step: "3", title: "Preview", desc: "See a live preview of the watermark. Optionally rotate, flip, or crop before applying." },
-            { step: "4", title: "Download", desc: "Download your watermarked image — maximum quality preserved." },
-          ].map((item) => (
-            <div key={item.step} className="flex flex-col items-center text-center">
-              <div className="w-10 h-10 rounded-full bg-accent-50 flex items-center justify-center mb-3">
-                <span className="text-sm font-bold text-accent-600">{item.step}</span>
-              </div>
-              <h3 className="text-sm font-semibold text-slate-900 mb-1">{item.title}</h3>
-              <p className="text-xs text-slate-500">{item.desc}</p>
-            </div>
-          ))}
-        </div>
-      </div>
     </ToolPageLayout>
   );
 }
