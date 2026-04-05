@@ -102,8 +102,8 @@ export default function ResizeImagePage() {
 
   // ──── Size selection ────
   const [selectedPreset, setSelectedPreset] = useState<PhotoPreset>(PRESET_3X4);
-  const [customW, setCustomW] = useState(3);
-  const [customH, setCustomH] = useState(4);
+  const [customW, setCustomW] = useState("3");
+  const [customH, setCustomH] = useState("4");
 
   // ──── Viewport crop (pan + zoom) ────
   const [zoom, setZoom] = useState(1);
@@ -291,21 +291,21 @@ export default function ResizeImagePage() {
   }
 
   function handleCustomWChange(val: string) {
-    const v = parseFloat(val);
-    if (isNaN(v) || v < 0) return;
-    setCustomW(v);
-    if (v > 0 && customH > 0) {
-      setSelectedPreset(makeCustomPreset(v, customH));
+    setCustomW(val);
+    const w = parseFloat(val);
+    const h = parseFloat(customH);
+    if (!isNaN(w) && w > 0 && !isNaN(h) && h > 0) {
+      setSelectedPreset(makeCustomPreset(w, h));
       resetViewport();
     }
   }
 
   function handleCustomHChange(val: string) {
-    const v = parseFloat(val);
-    if (isNaN(v) || v < 0) return;
-    setCustomH(v);
-    if (customW > 0 && v > 0) {
-      setSelectedPreset(makeCustomPreset(customW, v));
+    setCustomH(val);
+    const w = parseFloat(customW);
+    const h = parseFloat(val);
+    if (!isNaN(w) && w > 0 && !isNaN(h) && h > 0) {
+      setSelectedPreset(makeCustomPreset(w, h));
       resetViewport();
     }
   }
@@ -533,8 +533,8 @@ export default function ResizeImagePage() {
     setImageDims({ width: 0, height: 0 });
     setOriginalFile(null);
     setSelectedPreset(PRESET_3X4);
-    setCustomW(3);
-    setCustomH(4);
+    setCustomW("3");
+    setCustomH("4");
     resetViewport();
     setBgRemoved(false);
     setBgRemoving(false);
@@ -566,8 +566,8 @@ export default function ResizeImagePage() {
     setBgScale(100);
     setBgPosition("center");
     setSelectedPreset(PRESET_3X4);
-    setCustomW(3);
-    setCustomH(4);
+    setCustomW("3");
+    setCustomH("4");
     setResult(null);
 
     const url = URL.createObjectURL(originalFile);
@@ -639,8 +639,9 @@ export default function ResizeImagePage() {
             <div className="flex items-center gap-2">
               <span className="text-sm text-slate-500">Custom:</span>
               <input
-                type="number"
-                value={customW || ""}
+                type="text"
+                inputMode="decimal"
+                value={customW}
                 onChange={(e) => handleCustomWChange(e.target.value)}
                 className={`w-20 px-2 py-1.5 border rounded-lg text-sm text-center ${
                   selectedPreset.id === "custom"
@@ -652,8 +653,9 @@ export default function ResizeImagePage() {
               />
               <span className="text-sm text-slate-400">{"\u00d7"}</span>
               <input
-                type="number"
-                value={customH || ""}
+                type="text"
+                inputMode="decimal"
+                value={customH}
                 onChange={(e) => handleCustomHChange(e.target.value)}
                 className={`w-20 px-2 py-1.5 border rounded-lg text-sm text-center ${
                   selectedPreset.id === "custom"
