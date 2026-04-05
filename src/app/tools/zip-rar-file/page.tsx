@@ -432,6 +432,10 @@ export default function ZipRarFilePage() {
             </button>
           </div>
 
+          <p className="mt-2 text-center text-xs text-slate-400">
+            Your browser may ask for folder access permission. Your files stay on your device and are never uploaded to any server.
+          </p>
+
           {/* Size warning */}
           {sizeWarning && (
             <div className="mt-4 flex items-start gap-2 p-3 bg-amber-50 border border-amber-100 rounded-xl">
