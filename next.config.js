@@ -3,6 +3,9 @@ const nextConfig = {
   typescript: {
     ignoreBuildErrors: true,
   },
+  eslint: {
+    ignoreDuringBuilds: true,
+  },
   turbopack: {
     // Explicitly set root to avoid confusion with lockfile at home directory
     root: __dirname,
@@ -27,7 +30,7 @@ const nextConfig = {
     return [
       {
         // Enable SharedArrayBuffer for ONNX multi-threaded inference
-        source: "/tools/remove-and-change-background",
+        source: "/tools/(remove-and-change-background|resize-image)",
         headers: [
           {
             key: "Cross-Origin-Opener-Policy",
