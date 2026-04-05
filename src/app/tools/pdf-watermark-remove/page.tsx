@@ -77,6 +77,26 @@ export default function PdfWatermarkRemovePage() {
 
   return (
     <ToolPageLayout tool={tool}>
+      <HowItWorks
+        steps={[
+          {
+            step: "1",
+            title: "Upload PDF",
+            desc: "Select a PDF document that contains watermarks. Multi-page documents are fully supported.",
+          },
+          {
+            step: "2",
+            title: "Smart Detection",
+            desc: "The engine analyzes the PDF structure to identify watermark layers, annotations, and overlays, then removes them while preserving all original content.",
+          },
+          {
+            step: "3",
+            title: "Download Clean PDF",
+            desc: "Download your watermark-free PDF instantly. All processing happens in your browser, so your files stay private.",
+          },
+        ]}
+      />
+
       {stage === "upload" && (
         <FileUploader
           acceptedFormats={[".pdf"]}
@@ -177,25 +197,6 @@ export default function PdfWatermarkRemovePage() {
         </>
       )}
 
-      <HowItWorks
-        steps={[
-          {
-            step: "1",
-            title: "Upload PDF",
-            desc: "Select a PDF document that contains watermarks. Multi-page documents are fully supported.",
-          },
-          {
-            step: "2",
-            title: "Smart Detection",
-            desc: "The engine analyzes the PDF structure to identify watermark layers, annotations, and overlays, then removes them while preserving all original content.",
-          },
-          {
-            step: "3",
-            title: "Download Clean PDF",
-            desc: "Download your watermark-free PDF instantly. All processing happens in your browser, so your files stay private.",
-          },
-        ]}
-      />
     </ToolPageLayout>
   );
 }

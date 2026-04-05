@@ -87,6 +87,31 @@ export default function PdfToExcelPage() {
 
   return (
     <ToolPageLayout tool={tool}>
+      <HowItWorks
+        steps={[
+          {
+            step: "1",
+            title: "Upload PDF",
+            desc: "Select a PDF containing tables, financial data, or structured content. Both scanned and text-based PDFs are supported.",
+          },
+          {
+            step: "2",
+            title: "Smart Extraction",
+            desc: "The engine analyzes every page, detecting columns, rows, and data types. Text-based PDFs use direct extraction while scanned PDFs use OCR.",
+          },
+          {
+            step: "3",
+            title: "Preview Results",
+            desc: "Review extracted data in a table view with a quality indicator. Each page becomes a separate sheet, including side-by-side layouts.",
+          },
+          {
+            step: "4",
+            title: "Download Excel",
+            desc: "Download a formatted .xlsx file with headers, borders, and auto-fit columns. All processing happens in your browser.",
+          },
+        ]}
+      />
+
       {stage === "upload" && (
         <FileUploader
           acceptedFormats={[".pdf"]}
@@ -252,31 +277,6 @@ export default function PdfToExcelPage() {
           </div>
         </div>
       )}
-
-      <HowItWorks
-        steps={[
-          {
-            step: "1",
-            title: "Upload PDF",
-            desc: "Select a PDF containing tables, financial data, or structured content. Both scanned and text-based PDFs are supported.",
-          },
-          {
-            step: "2",
-            title: "Smart Extraction",
-            desc: "The engine analyzes every page, detecting columns, rows, and data types. Text-based PDFs use direct extraction while scanned PDFs use OCR.",
-          },
-          {
-            step: "3",
-            title: "Preview Results",
-            desc: "Review extracted data in a table view with a quality indicator. Each page becomes a separate sheet, including side-by-side layouts.",
-          },
-          {
-            step: "4",
-            title: "Download Excel",
-            desc: "Download a formatted .xlsx file with headers, borders, and auto-fit columns. All processing happens in your browser.",
-          },
-        ]}
-      />
     </ToolPageLayout>
   );
 }

@@ -736,6 +736,31 @@ export default function PdfMergePage() {
 
   return (
     <ToolPageLayout tool={tool}>
+      <HowItWorks
+        steps={[
+          {
+            step: "1",
+            title: "Upload PDFs",
+            desc: "Select two or more PDF files you want to combine. You can add more files at any time during the process.",
+          },
+          {
+            step: "2",
+            title: "Arrange and Customize",
+            desc: "Switch between File View and Page View to reorder by dragging, rotate individual pages, or remove pages you do not need.",
+          },
+          {
+            step: "3",
+            title: "Merge and Download",
+            desc: "Click Merge to combine everything into a single PDF with pages in your chosen order.",
+          },
+          {
+            step: "4",
+            title: "Private and Secure",
+            desc: "All processing happens in your browser. Your files are never uploaded to any server.",
+          },
+        ]}
+      />
+
       {/* Upload stage */}
       {stage === "upload" && (
         <FileUploader
@@ -1017,30 +1042,6 @@ export default function PdfMergePage() {
         </>
       )}
 
-      <HowItWorks
-        steps={[
-          {
-            step: "1",
-            title: "Upload PDFs",
-            desc: "Select two or more PDF files you want to combine. You can add more files at any time during the process.",
-          },
-          {
-            step: "2",
-            title: "Arrange and Customize",
-            desc: "Switch between File View and Page View to reorder by dragging, rotate individual pages, or remove pages you do not need.",
-          },
-          {
-            step: "3",
-            title: "Merge and Download",
-            desc: "Click Merge to combine everything into a single PDF with pages in your chosen order.",
-          },
-          {
-            step: "4",
-            title: "Private and Secure",
-            desc: "All processing happens in your browser. Your files are never uploaded to any server.",
-          },
-        ]}
-      />
     </ToolPageLayout>
   );
 }

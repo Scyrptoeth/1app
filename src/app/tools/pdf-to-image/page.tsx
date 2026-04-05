@@ -101,6 +101,31 @@ export default function PdfToImagePage() {
 
   return (
     <ToolPageLayout tool={tool}>
+      <HowItWorks
+        steps={[
+          {
+            step: "1",
+            title: "Upload PDF",
+            desc: "Select any PDF document, including reports, presentations, scanned pages, or multi-page files.",
+          },
+          {
+            step: "2",
+            title: "High-Quality Render",
+            desc: "Each page is rendered at 2x resolution for crisp, clear PNG output suitable for printing or digital sharing.",
+          },
+          {
+            step: "3",
+            title: "Preview and Inspect",
+            desc: "Browse all converted images in a grid. Click any thumbnail to view it full-size, and check resolution and file size per page.",
+          },
+          {
+            step: "4",
+            title: "Download Images",
+            desc: "Download individual pages as PNG or grab all pages as a single ZIP file. All processing happens in your browser.",
+          },
+        ]}
+      />
+
       {stage === "upload" && (
         <FileUploader
           acceptedFormats={[".pdf"]}
@@ -260,31 +285,6 @@ export default function PdfToImagePage() {
           </div>
         </div>
       )}
-
-      <HowItWorks
-        steps={[
-          {
-            step: "1",
-            title: "Upload PDF",
-            desc: "Select any PDF document, including reports, presentations, scanned pages, or multi-page files.",
-          },
-          {
-            step: "2",
-            title: "High-Quality Render",
-            desc: "Each page is rendered at 2x resolution for crisp, clear PNG output suitable for printing or digital sharing.",
-          },
-          {
-            step: "3",
-            title: "Preview and Inspect",
-            desc: "Browse all converted images in a grid. Click any thumbnail to view it full-size, and check resolution and file size per page.",
-          },
-          {
-            step: "4",
-            title: "Download Images",
-            desc: "Download individual pages as PNG or grab all pages as a single ZIP file. All processing happens in your browser.",
-          },
-        ]}
-      />
 
       {/* Full-size Modal */}
       {modalPage && (

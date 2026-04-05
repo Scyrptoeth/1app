@@ -77,6 +77,31 @@ export default function PdfToWordPage() {
 
   return (
     <ToolPageLayout tool={tool}>
+      <HowItWorks
+        steps={[
+          {
+            step: "1",
+            title: "Upload PDF",
+            desc: "Select a text-based PDF document such as reports, contracts, forms, or manuals.",
+          },
+          {
+            step: "2",
+            title: "Text Extraction",
+            desc: "The engine reads every text element on each page, capturing position, font, size, and style information.",
+          },
+          {
+            step: "3",
+            title: "Layout Reconstruction",
+            desc: "Text items are grouped into lines and paragraphs, preserving bold, italic, and font sizing with page breaks matching the original.",
+          },
+          {
+            step: "4",
+            title: "Download .docx",
+            desc: "Get a fully editable Word document ready to open in Microsoft Word or Google Docs. All processing happens in your browser.",
+          },
+        ]}
+      />
+
       {stage === "upload" && (
         <FileUploader
           acceptedFormats={[".pdf"]}
@@ -258,30 +283,6 @@ export default function PdfToWordPage() {
         </div>
       )}
 
-      <HowItWorks
-        steps={[
-          {
-            step: "1",
-            title: "Upload PDF",
-            desc: "Select a text-based PDF document such as reports, contracts, forms, or manuals.",
-          },
-          {
-            step: "2",
-            title: "Text Extraction",
-            desc: "The engine reads every text element on each page, capturing position, font, size, and style information.",
-          },
-          {
-            step: "3",
-            title: "Layout Reconstruction",
-            desc: "Text items are grouped into lines and paragraphs, preserving bold, italic, and font sizing with page breaks matching the original.",
-          },
-          {
-            step: "4",
-            title: "Download .docx",
-            desc: "Get a fully editable Word document ready to open in Microsoft Word or Google Docs. All processing happens in your browser.",
-          },
-        ]}
-      />
     </ToolPageLayout>
   );
 }

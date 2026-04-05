@@ -71,6 +71,31 @@ export default function PdfToPptPage() {
 
   return (
     <ToolPageLayout tool={tool}>
+      <HowItWorks
+        steps={[
+          {
+            step: "1",
+            title: "Upload PDF",
+            desc: "Select any PDF document, whether it is a presentation, report, or scanned file.",
+          },
+          {
+            step: "2",
+            title: "Smart Extraction",
+            desc: "Text, images, and layout are analyzed page by page. Editable text is extracted where possible, preserving fonts and positioning.",
+          },
+          {
+            step: "3",
+            title: "Three Output Modes",
+            desc: "Get Hybrid (image background with text overlay), Image Only (pixel-perfect fidelity), and Text Only (fully editable slides).",
+          },
+          {
+            step: "4",
+            title: "Download PPTX",
+            desc: "Download your preferred version as a PowerPoint file, ready to edit or present. All processing happens in your browser.",
+          },
+        ]}
+      />
+
       {stage === "upload" && (
         <FileUploader
           acceptedFormats={[".pdf"]}
@@ -276,30 +301,6 @@ export default function PdfToPptPage() {
         </div>
       )}
 
-      <HowItWorks
-        steps={[
-          {
-            step: "1",
-            title: "Upload PDF",
-            desc: "Select any PDF document, whether it is a presentation, report, or scanned file.",
-          },
-          {
-            step: "2",
-            title: "Smart Extraction",
-            desc: "Text, images, and layout are analyzed page by page. Editable text is extracted where possible, preserving fonts and positioning.",
-          },
-          {
-            step: "3",
-            title: "Three Output Modes",
-            desc: "Get Hybrid (image background with text overlay), Image Only (pixel-perfect fidelity), and Text Only (fully editable slides).",
-          },
-          {
-            step: "4",
-            title: "Download PPTX",
-            desc: "Download your preferred version as a PowerPoint file, ready to edit or present. All processing happens in your browser.",
-          },
-        ]}
-      />
     </ToolPageLayout>
   );
 }
