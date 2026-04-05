@@ -21,7 +21,8 @@ export type ToolCategory =
   | "ocr"
   | "protect"
   | "split"
-  | "rotate";
+  | "rotate"
+  | "archive";
 
 export const categoryLabels: Record<ToolCategory, string> = {
   watermark: "Watermark",
@@ -34,6 +35,7 @@ export const categoryLabels: Record<ToolCategory, string> = {
   protect: "Protect",
   split: "Split",
   rotate: "Rotate",
+  archive: "Archive",
 };
 
 export const categoryColors: Record<ToolCategory, string> = {
@@ -47,6 +49,7 @@ export const categoryColors: Record<ToolCategory, string> = {
   protect: "bg-slate-700",
   split: "bg-cyan-500",
   rotate: "bg-orange-500",
+  archive: "bg-amber-500",
 };
 
 export const tools: ToolConfig[] = [
@@ -427,6 +430,19 @@ export const tools: ToolConfig[] = [
     outputFormats: [".jpg", ".jpeg", ".png"],
     isAvailable: true,
   },
+  {
+    id: "zip-rar-file",
+    name: "Zip & Rar File",
+    description:
+      "Archive one or more files and folders into a ZIP file. Fast client-side compression with folder structure preservation.",
+    category: "archive",
+    icon: "FileArchive",
+    route: "/tools/zip-rar-file",
+    accentColor: "amber",
+    inputFormats: ["*"],
+    outputFormats: [".zip"],
+    isAvailable: true,
+  },
 ];
 
 export interface ToolSection {
@@ -478,6 +494,10 @@ export const SECTIONS: ToolSection[] = [
   {
     label: "X Content",
     toolIds: ["x-content-to-pdf", "x-content-to-word"],
+  },
+  {
+    label: "Zip (Rar)",
+    toolIds: ["zip-rar-file"],
   },
 ];
 
