@@ -432,7 +432,7 @@ export const tools: ToolConfig[] = [
   },
   {
     id: "zip-rar-file",
-    name: "Zip & Rar File",
+    name: "Zip File",
     description:
       "Archive one or more files and folders into a ZIP file. Fast client-side compression with folder structure preservation.",
     category: "archive",
@@ -496,7 +496,7 @@ export const SECTIONS: ToolSection[] = [
     toolIds: ["x-content-to-pdf", "x-content-to-word"],
   },
   {
-    label: "Zip (Rar)",
+    label: "Archive",
     toolIds: ["zip-rar-file"],
   },
 ];

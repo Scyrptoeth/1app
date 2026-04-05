@@ -98,7 +98,6 @@ export default function ZipRarFilePage() {
   const [sizeWarning, setSizeWarning] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const folderInputRef = useRef<HTMLInputElement>(null);
   const addFileInputRef = useRef<HTMLInputElement>(null);
 
   const SIZE_WARNING_THRESHOLD = 500 * 1024 * 1024; // 500MB
@@ -382,37 +381,33 @@ export default function ZipRarFilePage() {
             )}
           </div>
 
-          {/* Upload buttons */}
-          <div className="flex items-center gap-3 mt-4">
-            <button
-              onClick={() => fileInputRef.current?.click()}
-              className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors"
+          {/* Upload button */}
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            className="w-full mt-4 flex items-center justify-center gap-2 px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors"
+          >
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
             >
-              <svg
-                width="16"
-                height="16"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" />
-                <path d="M14 2v4a2 2 0 0 0 2 2h4" />
-                <path d="M12 18v-6" />
-                <path d="m9 15 3-3 3 3" />
-              </svg>
-              Select Files
-            </button>
-            <button
-              onClick={() => folderInputRef.current?.click()}
-              className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors"
-            >
-              <FolderIcon />
-              Select Folder
-            </button>
-          </div>
+              <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" />
+              <path d="M14 2v4a2 2 0 0 0 2 2h4" />
+              <path d="M12 18v-6" />
+              <path d="m9 15 3-3 3 3" />
+            </svg>
+            Select Files
+          </button>
+
+          {/* Folder hint */}
+          <p className="mt-2 text-center text-xs text-slate-400">
+            To add a folder, drag & drop it into the area above.
+          </p>
 
           {/* Size warning */}
           {sizeWarning && (
@@ -452,17 +447,6 @@ export default function ZipRarFilePage() {
             ref={fileInputRef}
             type="file"
             multiple
-            className="hidden"
-            onChange={(e) => {
-              if (e.target.files) handleFilesSelected(e.target.files);
-              e.target.value = "";
-            }}
-          />
-          {/* @ts-expect-error — webkitdirectory is not in React types */}
-          <input
-            ref={folderInputRef}
-            type="file"
-            webkitdirectory=""
             className="hidden"
             onChange={(e) => {
               if (e.target.files) handleFilesSelected(e.target.files);
@@ -697,17 +681,6 @@ export default function ZipRarFilePage() {
               </svg>
               Download .zip
             </button>
-
-            <button
-              disabled
-              className="w-full sm:w-auto flex-1 px-6 py-3 text-slate-400 font-medium rounded-xl border border-slate-200 bg-slate-50 cursor-not-allowed"
-              title="RAR creation requires proprietary RARLAB technology. Coming soon."
-            >
-              Download .rar — Coming Soon
-            </button>
-          </div>
-
-          <div className="flex flex-col sm:flex-row items-center gap-3 mt-3">
             <button
               onClick={handleBackToEdit}
               className="w-full sm:w-auto flex-1 px-6 py-3 text-accent-600 font-medium rounded-xl border border-accent-200 hover:bg-accent-50 transition-colors"
