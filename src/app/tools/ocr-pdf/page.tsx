@@ -501,7 +501,7 @@ export default function OcrPdfPage() {
           {
             step: "3",
             title: "Run OCR",
-            desc: "Tesseract.js recognizes text in English and Indonesian, then adds an invisible text layer on top of each page. A quality score shows recognition accuracy.",
+            desc: "Smart text recognition analyzes each page in English and Indonesian, then adds an invisible text layer on top of each page. A quality score shows recognition accuracy.",
           },
           {
             step: "4",
@@ -518,7 +518,7 @@ export default function OcrPdfPage() {
           maxSizeMB={200}
           onFilesSelected={handleFileSelected}
           title="Select a PDF to make searchable"
-          subtitle="Upload a scanned or image-based PDF — drag & drop or click to select"
+          subtitle="Upload a scanned or image-based PDF. Drag and drop or click to select."
         />
       )}
 
@@ -738,7 +738,7 @@ export default function OcrPdfPage() {
 
             {/* Quality badge */}
             <div className={`inline-flex items-center gap-2 px-3 py-1.5 mb-6 rounded-full border text-xs font-semibold ${getQualityColor(result.qualityScore)}`}>
-              OCR Confidence: {result.qualityScore}% — {getQualityLabel(result.qualityScore)}
+              OCR Confidence: {result.qualityScore}%, {getQualityLabel(result.qualityScore)}
             </div>
 
             {/* File info */}
@@ -804,7 +804,7 @@ export default function OcrPdfPage() {
               <line x1="12" y1="16" x2="12.01" y2="16" />
             </svg>
             <p className="text-xs text-blue-700 leading-relaxed">
-              An invisible text layer has been added over the original pages. The visual appearance is 100% identical to the original — only a searchable text layer was added. You can now select text, copy it, and use Ctrl+F to search.
+              An invisible text layer has been added over the original pages. The visual appearance is 100% identical to the original. Only a searchable text layer was added. You can now select text, copy it, and use Ctrl+F to search.
             </p>
           </div>
         </>

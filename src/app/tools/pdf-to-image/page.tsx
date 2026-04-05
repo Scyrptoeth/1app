@@ -154,7 +154,7 @@ export default function PdfToImagePage() {
                 Converted Images
               </h3>
               <p className="text-sm text-slate-500">
-                {result.totalPages} page{result.totalPages > 1 ? "s" : ""} converted — review before downloading
+                {result.totalPages} page{result.totalPages > 1 ? "s" : ""} converted. Review before downloading.
               </p>
             </div>
             <div className="flex items-center gap-3">
@@ -298,7 +298,7 @@ export default function PdfToImagePage() {
           >
             <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100">
               <span className="text-sm font-semibold text-slate-700">
-                Page {modalPage.pageNumber} — {modalPage.width}×{modalPage.height} · {formatFileSize(modalPage.fileSize)}
+                Page {modalPage.pageNumber}, {modalPage.width}×{modalPage.height} · {formatFileSize(modalPage.fileSize)}
               </span>
               <button
                 onClick={() => setModalPage(null)}

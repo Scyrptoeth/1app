@@ -130,12 +130,12 @@ function ImageThumb({
       onDrop={onDrop}
       className="relative rounded-lg border-2 border-slate-200 hover:border-slate-300 cursor-grab active:cursor-grabbing transition-all group"
     >
-      {/* Page number badge — top left */}
+      {/* Page number badge - top left */}
       <div className="absolute top-1.5 left-1.5 z-10 px-1.5 py-0.5 rounded-full bg-slate-900/70 text-white text-[9px] font-bold">
         {index + 1}
       </div>
 
-      {/* Remove button — top right */}
+      {/* Remove button - top right */}
       <button
         type="button"
         onClick={onRemove}
@@ -149,7 +149,7 @@ function ImageThumb({
         </svg>
       </button>
 
-      {/* Thumbnail — page mock-up */}
+      {/* Thumbnail - page mock-up */}
       <div className="relative w-full aspect-[3/4] bg-slate-200/40 rounded-t-md overflow-hidden flex items-center justify-center p-2.5">
         {/* White page with correct aspect ratio */}
         <div
@@ -164,12 +164,12 @@ function ImageThumb({
           />
         </div>
 
-        {/* Page size label — bottom right */}
+        {/* Page size label - bottom right */}
         <div className="absolute bottom-1.5 right-1.5 z-10 px-1.5 py-0.5 rounded bg-slate-700/60 text-white text-[8px] font-semibold tracking-wide">
           {pageSizeLabel}
         </div>
 
-        {/* Arrow controls — center overlay (visible on hover) */}
+        {/* Arrow controls - center overlay (visible on hover) */}
         <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
           <div className="flex flex-col items-center gap-0.5">
             <button
@@ -281,7 +281,7 @@ function RemovedImageThumb({ item, onRestore }: RemovedImageThumbProps) {
           className="w-full h-full object-contain"
         />
 
-        {/* Restore button — center */}
+        {/* Restore button - center */}
         <div className="absolute inset-0 flex items-center justify-center">
           <button
             type="button"
@@ -688,7 +688,7 @@ export default function ImageToPdfPage() {
           multiple
           onFilesSelected={handleFileSelected}
           title="Select images to convert to PDF"
-          subtitle="Upload one or more images — drag & drop or click to select"
+          subtitle="Upload one or more images. Drag and drop or click to select."
         />
       )}
 
@@ -879,7 +879,7 @@ export default function ImageToPdfPage() {
               </div>
             </div>
 
-            {/* 3 action buttons — equal width */}
+            {/* 3 action buttons - equal width */}
             <div className="flex flex-col sm:flex-row gap-3">
               <button
                 onClick={handleDownload}
@@ -932,7 +932,7 @@ export default function ImageToPdfPage() {
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="text-emerald-500">
                 <polyline points="20 6 9 17 4 12" />
               </svg>
-              <span className="text-xs font-medium text-emerald-700">High Quality — Original resolution preserved</span>
+              <span className="text-xs font-medium text-emerald-700">High Quality. Original resolution preserved.</span>
             </div>
           </div>
 

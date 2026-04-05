@@ -135,7 +135,7 @@ export default function RotateImagePage() {
     );
   }, []);
 
-  // Flip handlers — compensate for rotation so the flip applies visually
+  // Flip handlers - compensate for rotation so the flip applies visually
   const handleFlipH = useCallback(() => {
     if (rotation === 90 || rotation === 270) {
       setFlipV((v) => !v);
@@ -634,7 +634,7 @@ export default function RotateImagePage() {
 
           </div>
 
-          {/* Actions — 3 equal-width buttons */}
+          {/* Actions - 3 equal-width buttons */}
           <div className="mt-8 flex flex-col sm:flex-row items-center justify-center gap-3 max-w-xl mx-auto">
             <button
               onClick={handleDownload}
@@ -762,7 +762,7 @@ export default function RotateImagePage() {
             Your image is ready to download.
           </p>
 
-          {/* Preview — tight wrap, no empty space on sides */}
+          {/* Preview - tight wrap, no empty space on sides */}
           <div className="mb-6 flex justify-center">
             <div className="rounded-xl overflow-hidden border border-slate-100 shadow-sm inline-block">
               <img
@@ -824,7 +824,7 @@ export default function RotateImagePage() {
             </p>
           </div>
 
-          {/* Actions — 3 buttons */}
+          {/* Actions - 3 buttons */}
           <div className="flex flex-col sm:flex-row gap-3">
             <button
               onClick={handleDownloadResult}

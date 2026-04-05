@@ -580,7 +580,7 @@ export default function ScanToPdfPage() {
     // Camera sensors report landscape dimensions (e.g. 1920×1080) even when
     // the phone is portrait. The viewfinder displays a portrait crop via
     // CSS object-cover. We replicate that exact crop here so the captured
-    // image matches what the user sees — portrait capture → portrait image.
+    // image matches what the user sees - portrait capture → portrait image.
     const isPortrait = window.matchMedia("(orientation: portrait)").matches;
     const streamIsLandscape = rawW > rawH;
     const needsCrop = isPortrait === streamIsLandscape;
@@ -592,7 +592,7 @@ export default function ScanToPdfPage() {
 
     if (needsCrop && streamIsLandscape) {
       // Portrait device + landscape stream → crop sides to portrait
-      // Visible width = rawH × (rawH / rawW) — replicates object-cover math
+      // Visible width = rawH × (rawH / rawW) - replicates object-cover math
       captureH = rawH;
       captureW = Math.round((rawH * rawH) / rawW);
       sx = Math.round((rawW - captureW) / 2);
@@ -875,7 +875,7 @@ export default function ScanToPdfPage() {
   return (
     <ToolPageLayout
       tool={tool}
-      privacyMessage="Photos are processed locally — nothing is uploaded"
+      privacyMessage="Photos are processed locally. Nothing is uploaded."
     >
       <HowItWorks steps={[
         {
@@ -939,7 +939,7 @@ export default function ScanToPdfPage() {
                     className={`relative rounded-2xl overflow-hidden ${isPreview ? "bg-slate-900" : "bg-black"}`}
                     style={{ aspectRatio: viewfinderAspect }}
                   >
-                    {/* Video — hidden during preview */}
+                    {/* Video - hidden during preview */}
                     <video
                       ref={videoRef}
                       autoPlay
@@ -986,7 +986,7 @@ export default function ScanToPdfPage() {
                       </>
                     )}
 
-                    {/* Camera overlays — only when camera active */}
+                    {/* Camera overlays - only when camera active */}
                     {!isPreview && (
                       <>
                         {!cameraReady && (
@@ -1048,7 +1048,7 @@ export default function ScanToPdfPage() {
                     </div>
                   </div>
 
-                  {/* Capture button — only when camera active */}
+                  {/* Capture button - only when camera active */}
                   {!isPreview && (
                     <div className="flex justify-center">
                       <button
@@ -1063,7 +1063,7 @@ export default function ScanToPdfPage() {
                     </div>
                   )}
 
-                  {/* Preview controls — rotate + delete */}
+                  {/* Preview controls - rotate + delete */}
                   {isPreview && (
                     <div className="flex items-center justify-center gap-2">
                       <button
@@ -1124,7 +1124,7 @@ export default function ScanToPdfPage() {
                     </div>
                   )}
 
-                  {/* Thumbnail strip — active scans */}
+                  {/* Thumbnail strip - active scans */}
                   {activeScans.length > 0 && (
                     <div className="flex gap-2 overflow-x-auto pb-2 -mx-2 px-2">
                       {activeScans.map((scan, i) => (
@@ -1170,7 +1170,7 @@ export default function ScanToPdfPage() {
                     </div>
                   )}
 
-                  {/* Removed scans — restore strip */}
+                  {/* Removed scans - restore strip */}
                   {removedScans.length > 0 && (
                     <div>
                       <p className="text-[10px] text-slate-400 mb-1.5">
@@ -1231,7 +1231,7 @@ export default function ScanToPdfPage() {
               maxSizeMB={50}
               multiple
               onFilesSelected={handleUploadFiles}
-              title={cameraError ? "Camera not available — upload images instead" : "Upload images to scan"}
+              title={cameraError ? "Camera not available. Upload images instead." : "Upload images to scan"}
               subtitle="Select photos from your device to create a PDF"
             />
           )}
@@ -1479,7 +1479,7 @@ export default function ScanToPdfPage() {
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="text-emerald-500">
                 <polyline points="20 6 9 17 4 12" />
               </svg>
-              <span className="text-xs font-medium text-emerald-700">High Quality — Enhanced scan with original resolution</span>
+              <span className="text-xs font-medium text-emerald-700">High Quality. Enhanced scan with original resolution.</span>
             </div>
           </div>
 

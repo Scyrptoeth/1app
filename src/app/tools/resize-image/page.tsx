@@ -152,7 +152,7 @@ export default function ResizeImagePage() {
   const imageAR =
     imageDims.width > 0 ? imageDims.width / imageDims.height : 1;
 
-  // Frame display size — proportional to actual cm dimensions
+  // Frame display size - proportional to actual cm dimensions
   const FRAME_PX_PER_CM = 63; // 6cm height → ~378px on screen
   const FRAME_MAX_H = 400;
   const FRAME_MAX_W = 460;
@@ -699,7 +699,7 @@ export default function ResizeImagePage() {
             </p>
           </div>
 
-          {/* Preview frame — proportional to actual cm */}
+          {/* Preview frame - proportional to actual cm */}
           <div className="flex flex-col items-center gap-3">
             <div
               data-testid="resize-frame"

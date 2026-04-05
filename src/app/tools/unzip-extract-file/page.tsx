@@ -233,7 +233,7 @@ export default function UnzipExtractFilePage() {
           </div>
 
           <p className="mt-3 text-center text-xs text-slate-400">
-            All files are extracted locally in your browser — nothing is uploaded
+            All files are extracted locally in your browser. Nothing is uploaded.
             to any server.
           </p>
 
@@ -372,7 +372,7 @@ export default function UnzipExtractFilePage() {
               </svg>
               <span className="text-xs font-medium text-emerald-700">
                 {result.fileCount} file{result.fileCount !== 1 ? "s" : ""}{" "}
-                extracted successfully — format:{" "}
+                extracted successfully, format:{" "}
                 {result.format.toUpperCase()}
               </span>
             </div>

@@ -87,7 +87,7 @@ export default function PdfToWordPage() {
           {
             step: "2",
             title: "Text Extraction",
-            desc: "The engine reads every text element on each page, capturing position, font, size, and style information.",
+            desc: "Each page is analyzed to capture every text element, including its position, font, size, and style information.",
           },
           {
             step: "3",
@@ -130,7 +130,7 @@ export default function PdfToWordPage() {
                 Conversion Complete
               </h3>
               <p className="text-sm text-slate-500">
-                {result.pageCount} page{result.pageCount !== 1 ? "s" : ""} converted — ready to download
+                {result.pageCount} page{result.pageCount !== 1 ? "s" : ""} converted. Ready to download
               </p>
             </div>
             <div className="flex items-center gap-3">
@@ -188,7 +188,7 @@ export default function PdfToWordPage() {
                   {file.name.replace(/\.pdf$/i, "")}.docx
                 </p>
                 <p className="text-sm text-slate-500 mt-0.5">
-                  Word Document — {formatFileSize(result.processedSize)}
+                  Word Document, {formatFileSize(result.processedSize)}
                 </p>
               </div>
             </div>

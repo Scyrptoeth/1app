@@ -151,7 +151,7 @@ function PageThumbInGroup({
           </div>
         )}
 
-        {/* Arrow controls — centered overlay on thumbnail */}
+        {/* Arrow controls - centered overlay on thumbnail */}
         <div className="absolute inset-0 flex items-center justify-center">
           <div className="flex flex-col items-center gap-0.5">
             {/* Up */}
@@ -206,7 +206,7 @@ function PageThumbInGroup({
           </div>
         </div>
 
-        {/* Remove button — top right of thumbnail */}
+        {/* Remove button - top right of thumbnail */}
         <button
           type="button"
           onClick={onRemove}
@@ -271,7 +271,7 @@ function RemovedPageThumb({ pageIndex, thumbnailUrl, onRestore }: RemovedPageThu
           </div>
         )}
 
-        {/* Restore button — center */}
+        {/* Restore button - center */}
         <div className="absolute inset-0 flex items-center justify-center">
           <button
             type="button"
@@ -555,7 +555,7 @@ export default function SplitPdfPage() {
 
   // ─── Split ────────────────────────────────────────────────────
 
-  // Groups already only contain active pages — no filtering needed
+  // Groups already only contain active pages - no filtering needed
   const canSplit = groups.some((g) => g.pageIndices.length > 0);
 
   const handleSplit = useCallback(async () => {
@@ -655,7 +655,7 @@ export default function SplitPdfPage() {
           maxSizeMB={200}
           onFilesSelected={handleFileSelected}
           title="Select a PDF to split"
-          subtitle="Upload a PDF file — drag & drop or click to select"
+          subtitle="Upload a PDF file. Drag & drop or click to select."
         />
       )}
 

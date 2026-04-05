@@ -424,7 +424,7 @@ export default function RemoveAndChangeBackgroundPage() {
           if (cropUrl) URL.revokeObjectURL(cropUrl);
         }
 
-        // Update working state — crop is destructive, resets bg mode
+        // Update working state - crop is destructive, resets bg mode
         if (foregroundUrl) URL.revokeObjectURL(foregroundUrl);
         if (compositeUrl) URL.revokeObjectURL(compositeUrl);
 
@@ -715,7 +715,7 @@ export default function RemoveAndChangeBackgroundPage() {
       {stage === "editor" && file && (
         <div className="w-full">
           <div className="flex flex-col lg:flex-row gap-6">
-            {/* Left — Preview */}
+            {/* Left - Preview */}
             <div className="flex-1 min-w-0" ref={previewRef}>
               <div
                 className={`relative mx-auto select-none overflow-hidden rounded-lg border border-slate-200 ${
@@ -794,7 +794,7 @@ export default function RemoveAndChangeBackgroundPage() {
               </div>
             </div>
 
-            {/* Right — Controls */}
+            {/* Right - Controls */}
             <div className="w-full lg:w-72 shrink-0 space-y-5">
               {/* Remove Background button (shown before removal) */}
               {!bgRemoved && (
@@ -1171,7 +1171,7 @@ export default function RemoveAndChangeBackgroundPage() {
             Your image is ready to download.
           </p>
 
-          {/* Preview — tight wrap, no empty space on sides */}
+          {/* Preview - tight wrap, no empty space on sides */}
           <div className="mb-6 flex justify-center">
             <div className="rounded-xl overflow-hidden border border-slate-100 shadow-sm inline-block">
               <img
@@ -1238,7 +1238,7 @@ export default function RemoveAndChangeBackgroundPage() {
             </p>
           </div>
 
-          {/* Actions — 3 buttons */}
+          {/* Actions - 3 buttons */}
           <div className="flex flex-col sm:flex-row gap-3">
             <button
               onClick={handleDownloadResult}

@@ -272,7 +272,7 @@ export default function CropImagePage() {
             </p>
           </div>
 
-          {/* Actions — 3 buttons, same size, 1 row */}
+          {/* Actions - 3 buttons, same size, 1 row */}
           <div className="flex flex-col sm:flex-row gap-3">
             <button
               onClick={handleDownload}

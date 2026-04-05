@@ -170,19 +170,19 @@ export default function PdfToPptPage() {
             [
               {
                 label: "Hybrid",
-                description: "Background image + white text overlay — visual fidelity + copyable text",
+                description: "Background image with white text overlay for visual fidelity and copyable text.",
                 blob: result.hybridBlob,
                 suffix: "hybrid",
               },
               {
                 label: "Image Only",
-                description: "Full-page screenshot per slide — identical to original PDF",
+                description: "Full-page screenshot per slide, identical to the original PDF.",
                 blob: result.imageOnlyBlob,
                 suffix: "image",
               },
               {
                 label: "Text Only",
-                description: "Editable text boxes on white background — best for editing",
+                description: "Editable text boxes on white background, best for editing.",
                 blob: result.textOnlyBlob,
                 suffix: "text",
               },

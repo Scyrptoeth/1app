@@ -121,7 +121,7 @@ function PageThumbnail({
           : "border-slate-200 hover:border-slate-300"
       }`}
     >
-      {/* Checkbox — top left */}
+      {/* Checkbox - top left */}
       <button
         type="button"
         onClick={onToggleSelect}
@@ -139,7 +139,7 @@ function PageThumbnail({
         )}
       </button>
 
-      {/* Remove button — top right */}
+      {/* Remove button - top right */}
       <button
         type="button"
         onClick={onRemove}
@@ -171,7 +171,7 @@ function PageThumbnail({
           </div>
         )}
 
-        {/* Arrow controls — center overlay */}
+        {/* Arrow controls - center overlay */}
         <div className="absolute inset-0 flex items-center justify-center">
           <div className="flex flex-col items-center gap-0.5">
             <button
@@ -311,7 +311,7 @@ function RemovedPageThumb({ pageIndex, thumbnailUrl, rotation, onRestore }: Remo
           </div>
         )}
 
-        {/* Restore button — center */}
+        {/* Restore button - center */}
         <div className="absolute inset-0 flex items-center justify-center">
           <button
             type="button"
@@ -601,7 +601,7 @@ export default function RotatePdfPage() {
           maxSizeMB={200}
           onFilesSelected={handleFileSelected}
           title="Select a PDF to rotate"
-          subtitle="Upload a PDF file — drag & drop or click to select"
+          subtitle="Upload a PDF file. Drag & drop or click to select."
         />
       )}
 
@@ -799,7 +799,7 @@ export default function RotatePdfPage() {
 
             {!hasChanges && (
               <p className="mt-2 text-xs text-amber-600 text-center">
-                Make changes to download — rotate, reorder, or remove pages.
+                Make changes to download. Rotate, reorder, or remove pages.
               </p>
             )}
           </div>

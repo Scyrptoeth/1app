@@ -117,12 +117,12 @@ function ActivePageThumb({
       onDrop={onDrop}
       className="relative rounded-lg border-2 border-slate-200 hover:border-slate-300 cursor-grab active:cursor-grabbing transition-all"
     >
-      {/* Page number badge — top left */}
+      {/* Page number badge - top left */}
       <div className="absolute top-1.5 left-1.5 z-10 px-1.5 py-0.5 rounded-full bg-slate-900/70 text-white text-[9px] font-bold">
         Page {pageIndex + 1}
       </div>
 
-      {/* Remove button — top right */}
+      {/* Remove button - top right */}
       <button
         type="button"
         onClick={onRemove}
@@ -154,7 +154,7 @@ function ActivePageThumb({
           </div>
         )}
 
-        {/* Arrow controls — center overlay */}
+        {/* Arrow controls - center overlay */}
         <div className="absolute inset-0 flex items-center justify-center">
           <div className="flex flex-col items-center gap-0.5">
             <button
@@ -259,7 +259,7 @@ function RemovedPageThumb({ pageIndex, thumbnailUrl, onRestore }: RemovedPageThu
           </div>
         )}
 
-        {/* Restore button — center */}
+        {/* Restore button - center */}
         <div className="absolute inset-0 flex items-center justify-center">
           <button
             type="button"
@@ -493,7 +493,7 @@ export default function RemovePagePdfPage() {
           maxSizeMB={200}
           onFilesSelected={handleFileSelected}
           title="Select a PDF to remove pages"
-          subtitle="Upload a PDF file — drag & drop or click to select"
+          subtitle="Upload a PDF file. Drag and drop or click to select."
         />
       )}
 
@@ -531,7 +531,7 @@ export default function RemovePagePdfPage() {
                 <line x1="12" y1="16" x2="12.01" y2="16" />
               </svg>
               <p className="text-xs text-amber-700">
-                This PDF has only 1 page — you cannot remove it. At least 1 page must remain.
+                This PDF has only 1 page, so you cannot remove it. At least 1 page must remain.
               </p>
             </div>
           )}
@@ -721,7 +721,7 @@ export default function RemovePagePdfPage() {
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="text-emerald-500">
                 <polyline points="20 6 9 17 4 12" />
               </svg>
-              <span className="text-xs font-medium text-emerald-700">Lossless — Original quality preserved</span>
+              <span className="text-xs font-medium text-emerald-700">Lossless. Original quality preserved.</span>
             </div>
           </div>
 

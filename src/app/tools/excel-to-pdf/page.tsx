@@ -304,7 +304,7 @@ export default function ExcelToPdfPage() {
               <line x1="12" y1="17" x2="12.01" y2="17" />
             </svg>
             <p className="text-xs text-amber-700 leading-relaxed">
-              <strong>.xlsx (Excel 2007+)</strong> preserves full styling — colors, borders, fonts, images.
+              <strong>.xlsx (Excel 2007+)</strong> preserves full styling, including colors, borders, fonts, and images.
               Legacy <strong>.xls</strong> files are supported with data and formatting, but visual styles may be limited.
             </p>
           </div>
@@ -316,7 +316,7 @@ export default function ExcelToPdfPage() {
         <ProcessingView fileName={file.name} progress={progress.progress} status={progress.status} />
       )}
 
-      {/* Configure — reorder, rotate, remove pages */}
+      {/* Configure - reorder, rotate, remove pages */}
       {stage === "configure" && result && (
         <div className="w-full">
           <div className="flex items-center justify-between mb-4">
@@ -355,7 +355,7 @@ export default function ExcelToPdfPage() {
             )}
           </div>
 
-          {/* Page grid — 3 columns */}
+          {/* Page grid - 3 columns */}
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 mb-6">
             {pageOrder.map((pageIdx, orderIdx) => {
               const rot = rotations.get(pageIdx) || 0;
@@ -416,7 +416,7 @@ export default function ExcelToPdfPage() {
                       </div>
                     )}
 
-                    {/* Arrow controls — center overlay (diamond layout) */}
+                    {/* Arrow controls - center overlay (diamond layout) */}
                     <div className="absolute inset-0 flex items-center justify-center">
                       <div className="flex flex-col items-center gap-0.5">
                         <button
@@ -461,7 +461,7 @@ export default function ExcelToPdfPage() {
                     </div>
                   </div>
 
-                  {/* Bottom controls — rotate + remove */}
+                  {/* Bottom controls - rotate + remove */}
                   <div className="flex items-center justify-between px-2 pb-2 border-t border-slate-100 pt-1.5">
                     <div className="flex gap-1">
                       <button onClick={() => rotatePage(pageIdx, -90)} className="p-1 text-slate-400 hover:text-slate-600 text-sm" title="Rotate left 90°">↺</button>
@@ -575,7 +575,7 @@ export default function ExcelToPdfPage() {
               <circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" />
             </svg>
             <p className="text-xs text-blue-700 leading-relaxed">
-              Converted 100% in your browser — no files are sent to any server.
+              Converted 100% in your browser. No files are sent to any server.
               Text in the PDF is searchable and selectable.
             </p>
           </div>

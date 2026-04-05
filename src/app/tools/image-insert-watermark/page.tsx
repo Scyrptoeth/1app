@@ -23,7 +23,7 @@ import { cropImage, type CropArea } from "@/lib/tools/crop-image";
 
 type Stage = "upload" | "configure" | "crop" | "processing" | "done";
 
-// ─── Font Registry (canvas-only — no pdf-lib deps) ──────────────────
+// ─── Font Registry (canvas-only - no pdf-lib deps) ──────────────────
 
 interface CanvasFontDef {
   id: string;
@@ -559,7 +559,7 @@ export default function InsertImageWatermarkPage() {
           maxSizeMB={100}
           onFilesSelected={handleFileSelected}
           title="Select an image to watermark"
-          subtitle="Upload a JPG or PNG file — drag & drop or click to select"
+          subtitle="Upload a JPG or PNG file. Drag and drop or click to select."
         />
       )}
 
@@ -895,7 +895,7 @@ export default function InsertImageWatermarkPage() {
             <div className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-50 border border-emerald-100 rounded-full">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-emerald-500"><polyline points="20 6 9 17 4 12"/></svg>
               <span className="text-xs font-medium text-emerald-700">
-                Quality: {result.qualityScore}% — maximum quality output
+                Quality: {result.qualityScore}%. Maximum quality output.
               </span>
             </div>
           </div>

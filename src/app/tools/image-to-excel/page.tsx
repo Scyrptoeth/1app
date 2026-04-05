@@ -107,7 +107,7 @@ export default function ImageToExcelPage() {
           multiple={false}
           onFilesSelected={handleFilesSelected}
           title="Select an image to extract data from"
-          subtitle="Supports PNG, JPG, JPEG — financial reports, tables, invoices"
+          subtitle="Supports PNG, JPG, and JPEG. Ideal for financial reports, tables, and invoices."
         />
       )}
 
@@ -126,7 +126,7 @@ export default function ImageToExcelPage() {
             <div>
               <h3 className="text-lg font-semibold text-slate-900">Preview</h3>
               <p className="text-sm text-slate-500">
-                {result.rows.length} rows extracted — review before downloading
+                {result.rows.length} rows extracted. Review before downloading.
               </p>
             </div>
             <div className="flex items-center gap-3">
@@ -177,7 +177,7 @@ export default function ImageToExcelPage() {
               Image Data Quality: {result.confidence.toFixed(1)}%
             </span>
             <p className="text-xs text-slate-500 leading-relaxed">
-              Extraction accuracy depends on Image Data Quality — the higher the score, the more precise the extracted data. For best results, use high-resolution images with clear, high-contrast text.
+              Extraction accuracy depends on Image Data Quality. The higher the score, the more precise the extracted data. For best results, use high-resolution images with clear, high-contrast text.
             </p>
           </div>
 

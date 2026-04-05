@@ -224,7 +224,7 @@ export default function LinkToQrCodePage() {
         prevPreviewUrlRef.current = newUrl;
         setPreviewUrl(newUrl);
       } catch {
-        // Preview generation failed — silently ignore
+        // Preview generation failed - silently ignore
       }
     }, 200);
 
@@ -395,7 +395,7 @@ export default function LinkToQrCodePage() {
                   ))}
                 </div>
 
-                {/* Frame text controls — only shown for text-bearing frames */}
+                {/* Frame text controls - only shown for text-bearing frames */}
                 {showTextControls && (
                   <div className="mt-4 p-4 bg-slate-50 rounded-xl border border-slate-100 space-y-4">
                     <p className="text-xs font-semibold text-slate-700 uppercase tracking-wide">Frame Text Settings</p>
@@ -632,7 +632,7 @@ export default function LinkToQrCodePage() {
               </div>
             </div>
 
-            {/* 3 action buttons — equal width */}
+            {/* 3 action buttons - equal width */}
             <div className="flex flex-col sm:flex-row gap-3">
               <button
                 onClick={handleDownload}
@@ -669,7 +669,7 @@ export default function LinkToQrCodePage() {
               High Quality (1024px)
             </span>
             <p className="text-xs text-slate-500 leading-relaxed">
-              Error correction level H — scannable even if partially obscured.
+              Error correction level H. Scannable even if partially obscured.
             </p>
           </div>
 

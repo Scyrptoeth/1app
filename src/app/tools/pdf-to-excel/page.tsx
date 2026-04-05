@@ -140,7 +140,7 @@ export default function PdfToExcelPage() {
                 Preview
               </h3>
               <p className="text-sm text-slate-500">
-                {result.pages.length} sheet(s) extracted — review before
+                {result.pages.length} sheet(s) extracted. Review before
                 downloading
               </p>
             </div>
@@ -201,7 +201,7 @@ export default function PdfToExcelPage() {
                   {qualityLabel}
                 </span>
                 <p className="text-xs text-slate-500 leading-relaxed">
-                  Extraction accuracy depends on PDF Data Quality — the higher the score, the more precise the extracted data. For best results, use high-resolution, text-based PDFs with clear formatting.
+                  Extraction accuracy depends on PDF Data Quality. The higher the score, the more precise the extracted data. For best results, use high-resolution, text-based PDFs with clear formatting.
                 </p>
               </div>
             );

@@ -261,7 +261,7 @@ export default function WordToPdfPage() {
               <line x1="12" y1="16" x2="12.01" y2="16" />
             </svg>
             <p className="text-xs text-blue-700 leading-relaxed">
-              Converted 100% in your browser — no files are sent to any server. Text in the PDF
+              Converted 100% in your browser. No files are sent to any server. Text in the PDF
               is searchable (Ctrl+F), selectable, copyable, and printable. Fonts not available
               in the browser will be substituted with a similar typeface.
             </p>

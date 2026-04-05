@@ -258,7 +258,7 @@ function PageThumb({
           </div>
         )}
 
-        {/* Arrow controls — centered overlay on thumbnail */}
+        {/* Arrow controls - centered overlay on thumbnail */}
         <div className="absolute inset-0 flex items-center justify-center">
           <div className="flex flex-col items-center gap-0.5">
             {/* Up */}
@@ -313,7 +313,7 @@ function PageThumb({
           </div>
         </div>
 
-        {/* Remove button — top right of thumbnail */}
+        {/* Remove button - top right of thumbnail */}
         <button
           type="button"
           onClick={onRemove}
@@ -503,7 +503,7 @@ export default function PdfMergePage() {
             const url = await renderThumbnail(newFiles[i], 0, 100);
             setFileThumbnails((prev) => ({ ...prev, [startIndex + i]: url }));
           } catch {
-            // Thumbnail failed — skip silently
+            // Thumbnail failed - skip silently
           }
         }
       } catch (err) {
@@ -722,7 +722,7 @@ export default function PdfMergePage() {
     dragIndexRef.current = -1;
   };
 
-  /** Drag-drop for page view — indices are active-page indices */
+  /** Drag-drop for page view - indices are active-page indices */
   const onDropActivePageFactory = (dropActiveIdx: number) => (e: React.DragEvent) => {
     e.preventDefault();
     const fromActiveIdx = dragIndexRef.current;
@@ -769,7 +769,7 @@ export default function PdfMergePage() {
           multiple={true}
           onFilesSelected={handleFilesSelected}
           title="Select PDF files to merge"
-          subtitle="Upload 2 or more PDFs — drag & drop or click to select"
+          subtitle="Upload 2 or more PDFs. Drag and drop or click to select."
         />
       )}
 

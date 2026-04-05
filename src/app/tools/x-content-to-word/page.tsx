@@ -58,7 +58,7 @@ export default function XContentToWordPage() {
   return (
     <ToolPageLayout
       tool={tool}
-      privacyMessage="Content is fetched via API — no files are stored on our servers"
+      privacyMessage="Content is fetched via API. No files are stored on our servers."
     >
       <HowItWorks
         steps={[

@@ -215,7 +215,7 @@ function CameraScanner({ onResult, onProcessing }: CameraScannerProps) {
           return;
         }
       } catch {
-        // jsQR not loaded yet or decode error — continue scanning
+        // jsQR not loaded yet or decode error - continue scanning
       }
 
       if (scanning) {

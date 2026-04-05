@@ -189,7 +189,7 @@ export default function ZipRarFilePage() {
         addEntries(newEntries);
         return;
       } catch (err) {
-        // User cancelled the picker — do nothing
+        // User cancelled the picker - do nothing
         if ((err as DOMException).name === "AbortError") return;
       }
     }
@@ -502,7 +502,7 @@ export default function ZipRarFilePage() {
             }}
           />
           {/* Fallback for browsers without showDirectoryPicker */}
-          {/* @ts-expect-error — webkitdirectory is not in React types */}
+          {/* @ts-expect-error - webkitdirectory is not in React types */}
           <input
             ref={folderInputRef}
             type="file"
@@ -715,7 +715,7 @@ export default function ZipRarFilePage() {
               <path d="M12 8h.01" />
             </svg>
             <p className="text-xs text-blue-700 leading-relaxed">
-              ZIP and RAR are both compressed archive formats that serve the same purpose. Your .zip file can be opened with WinRAR, 7-Zip, Windows Explorer, macOS Finder, and all major archive tools. All files are processed locally in your browser — nothing is uploaded to any server.
+              ZIP and RAR are both compressed archive formats that serve the same purpose. Your .zip file can be opened with WinRAR, 7-Zip, Windows Explorer, macOS Finder, and all major archive tools. All files are processed locally in your browser. Nothing is uploaded to any server.
             </p>
           </div>
 

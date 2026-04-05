@@ -662,7 +662,7 @@ export default function InsertPdfWatermarkPage() {
       {/* ─── Upload ──────────────────────────────────────────── */}
       {stage === "upload" && (
         <FileUploader acceptedFormats={[".pdf"]} maxSizeMB={200} onFilesSelected={handleFileSelected}
-          title="Select a PDF to watermark" subtitle="Upload a PDF file — drag & drop or click to select" />
+          title="Select a PDF to watermark" subtitle="Upload a PDF file. Drag and drop or click to select." />
       )}
 
       {/* ─── Configure ───────────────────────────────────────── */}
@@ -961,7 +961,7 @@ export default function InsertPdfWatermarkPage() {
             <div className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-50 border border-emerald-100 rounded-full">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-emerald-500"><polyline points="20 6 9 17 4 12"/></svg>
               <span className="text-xs font-medium text-emerald-700">
-                {layer === "over" ? "Lossless — original quality preserved" : "Watermark placed below content"}
+                {layer === "over" ? "Lossless. Original quality preserved." : "Watermark placed below content"}
               </span>
             </div>
           </div>
@@ -970,7 +970,7 @@ export default function InsertPdfWatermarkPage() {
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-blue-500 shrink-0 mt-0.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
             <p className="text-xs text-blue-700 leading-relaxed">
               {layer === "over"
-                ? "Pages are copied losslessly using copyPages(). The watermark is drawn as an overlay — original content, fonts, images, and layout are fully preserved."
+                ? "Pages are copied losslessly using copyPages(). The watermark is drawn as an overlay. Original content, fonts, images, and layout are fully preserved."
                 : "For \"below content\" mode, the original page is embedded as a form overlay. The watermark is only visible in areas without content."}
             </p>
           </div>
