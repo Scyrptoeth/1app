@@ -16,6 +16,7 @@ import {
   Upload,
   X,
   ImagePlus,
+  RotateCcw as ResetIcon,
 } from "lucide-react";
 import ToolPageLayout from "@/components/ToolPageLayout";
 import FileUploader from "@/components/FileUploader";
@@ -602,6 +603,34 @@ export default function ResizeImagePage() {
     setProgress({ stage: "", progress: 0 });
   }
 
+  function handleResetToOriginal() {
+    if (!originalFile) return;
+    // Reset all edits but keep original file loaded
+    if (imageUrl) URL.revokeObjectURL(imageUrl);
+    setBgRemoved(false);
+    setBgRemoving(false);
+    setForegroundBlob(null);
+    setPreBgImage(null);
+    setBgColor("#DC2626");
+    setShowBgPanel(false);
+    setBgMode("color");
+    setBgImageFile(null);
+    setBgScale(100);
+    setBgPosition("center");
+    setSelectedPreset(PHOTO_PRESETS[1]);
+    setResult(null);
+
+    const url = URL.createObjectURL(originalFile);
+    const img = new Image();
+    img.onload = () => {
+      setImageDims({ width: img.naturalWidth, height: img.naturalHeight });
+      setImageUrl(url);
+      setImageBlob(originalFile);
+      resetViewport();
+    };
+    img.src = url;
+  }
+
   function handleProcessAnother() {
     resetAll();
     setStage("upload");
@@ -662,6 +691,7 @@ export default function ResizeImagePage() {
           {/* Preview frame */}
           <div className="flex flex-col items-center gap-3">
             <div
+              data-testid="resize-frame"
               className="relative border-2 border-slate-300 bg-slate-100 overflow-hidden cursor-grab active:cursor-grabbing select-none"
               style={{
                 width: frameW,
@@ -963,14 +993,25 @@ export default function ResizeImagePage() {
             </div>
           </div>
 
-          {/* Process button */}
-          <button
-            onClick={handleProcess}
-            disabled={rotating || bgRemoving || compositing}
-            className="w-full py-3 rounded-xl bg-amber-500 text-white font-semibold text-lg hover:bg-amber-600 transition disabled:opacity-40 disabled:cursor-not-allowed"
-          >
-            Process
-          </button>
+          {/* Process + Reset All buttons */}
+          <div className="flex gap-2">
+            <button
+              onClick={handleProcess}
+              disabled={rotating || bgRemoving || compositing}
+              className="flex-1 py-3 rounded-xl bg-amber-500 text-white font-semibold text-lg hover:bg-amber-600 transition disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              Process
+            </button>
+            <button
+              onClick={handleResetToOriginal}
+              disabled={rotating || bgRemoving}
+              className="flex items-center justify-center gap-2 px-4 py-3 rounded-xl border border-slate-200 text-slate-600 font-medium hover:bg-slate-50 transition disabled:opacity-40"
+              title="Reset all changes to original image"
+            >
+              <ResetIcon className="w-4 h-4" />
+              Reset All
+            </button>
+          </div>
         </div>
       )}
 
