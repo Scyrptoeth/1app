@@ -124,6 +124,34 @@ export async function traverseDirectory(
 }
 
 /**
+ * Recursively read a FileSystemDirectoryHandle (File System Access API).
+ * Used by showDirectoryPicker() — no browser trust dialog.
+ */
+export async function readDirectoryHandle(
+  dirHandle: FileSystemDirectoryHandle,
+  basePath: string = ""
+): Promise<FileEntry[]> {
+  const results: FileEntry[] = [];
+
+  for await (const [name, handle] of dirHandle.entries()) {
+    const path = basePath ? `${basePath}/${name}` : name;
+
+    if (handle.kind === "file") {
+      const file = await (handle as FileSystemFileHandle).getFile();
+      results.push({ file, relativePath: path, size: file.size });
+    } else if (handle.kind === "directory") {
+      const subEntries = await readDirectoryHandle(
+        handle as FileSystemDirectoryHandle,
+        path
+      );
+      results.push(...subEntries);
+    }
+  }
+
+  return results;
+}
+
+/**
  * Process drag & drop DataTransfer items, handling both files and folders.
  */
 export async function processDataTransferItems(

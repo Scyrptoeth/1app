@@ -7,6 +7,7 @@ import { getToolById } from "@/config/tools";
 import {
   createZipArchive,
   processDataTransferItems,
+  readDirectoryHandle,
   type FileEntry,
   type ArchiveResult,
 } from "@/lib/tools/zip-rar-file";
@@ -98,6 +99,7 @@ export default function ZipRarFilePage() {
   const [sizeWarning, setSizeWarning] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const folderInputRef = useRef<HTMLInputElement>(null);
   const addFileInputRef = useRef<HTMLInputElement>(null);
 
   const SIZE_WARNING_THRESHOLD = 500 * 1024 * 1024; // 500MB
@@ -176,6 +178,23 @@ export default function ZipRarFilePage() {
     },
     [addEntries, handleFilesSelected]
   );
+
+  const handleSelectFolder = useCallback(async () => {
+    // Prefer showDirectoryPicker (no browser trust warning)
+    if ("showDirectoryPicker" in window) {
+      try {
+        const dirHandle = await (window as unknown as { showDirectoryPicker: () => Promise<FileSystemDirectoryHandle> }).showDirectoryPicker();
+        const newEntries = await readDirectoryHandle(dirHandle, dirHandle.name);
+        addEntries(newEntries);
+        return;
+      } catch (err) {
+        // User cancelled the picker — do nothing
+        if ((err as DOMException).name === "AbortError") return;
+      }
+    }
+    // Fallback: webkitdirectory input (shows browser dialog on some browsers)
+    folderInputRef.current?.click();
+  }, [addEntries]);
 
   const handleRemoveEntry = useCallback((index: number) => {
     setEntries((prev) => {
@@ -381,33 +400,37 @@ export default function ZipRarFilePage() {
             )}
           </div>
 
-          {/* Upload button */}
-          <button
-            onClick={() => fileInputRef.current?.click()}
-            className="w-full mt-4 flex items-center justify-center gap-2 px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors"
-          >
-            <svg
-              width="16"
-              height="16"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
+          {/* Upload buttons */}
+          <div className="flex items-center gap-3 mt-4">
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors"
             >
-              <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" />
-              <path d="M14 2v4a2 2 0 0 0 2 2h4" />
-              <path d="M12 18v-6" />
-              <path d="m9 15 3-3 3 3" />
-            </svg>
-            Select Files
-          </button>
-
-          {/* Folder hint */}
-          <p className="mt-2 text-center text-xs text-slate-400">
-            To add a folder, drag & drop it into the area above.
-          </p>
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" />
+                <path d="M14 2v4a2 2 0 0 0 2 2h4" />
+                <path d="M12 18v-6" />
+                <path d="m9 15 3-3 3 3" />
+              </svg>
+              Select Files
+            </button>
+            <button
+              onClick={handleSelectFolder}
+              className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors"
+            >
+              <FolderIcon />
+              Select Folder
+            </button>
+          </div>
 
           {/* Size warning */}
           {sizeWarning && (
@@ -447,6 +470,18 @@ export default function ZipRarFilePage() {
             ref={fileInputRef}
             type="file"
             multiple
+            className="hidden"
+            onChange={(e) => {
+              if (e.target.files) handleFilesSelected(e.target.files);
+              e.target.value = "";
+            }}
+          />
+          {/* Fallback for browsers without showDirectoryPicker */}
+          {/* @ts-expect-error — webkitdirectory is not in React types */}
+          <input
+            ref={folderInputRef}
+            type="file"
+            webkitdirectory=""
             className="hidden"
             onChange={(e) => {
               if (e.target.files) handleFilesSelected(e.target.files);
