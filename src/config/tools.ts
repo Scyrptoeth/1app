@@ -67,6 +67,19 @@ export const tools: ToolConfig[] = [
     isAvailable: true,
   },
   {
+    id: "image-insert-watermark",
+    name: "Insert Image Watermark",
+    description:
+      "Add text or image watermark to images with customizable position, opacity, rotation, and mosaic pattern.",
+    category: "watermark",
+    icon: "Stamp",
+    route: "/tools/image-insert-watermark",
+    accentColor: "rose",
+    inputFormats: [".jpg", ".jpeg", ".png"],
+    outputFormats: [".jpg", ".jpeg", ".png"],
+    isAvailable: true,
+  },
+  {
     id: "pdf-insert-watermark",
     name: "Insert PDF Watermark",
     description:
@@ -474,7 +487,7 @@ export const SECTIONS: ToolSection[] = [
   },
   {
     label: "Image Utilities",
-    toolIds: ["compress-image", "crop-image", "image-watermark-remove", "remove-and-change-background", "resize-image", "rotate-image"],
+    toolIds: ["compress-image", "crop-image", "image-insert-watermark", "image-watermark-remove", "remove-and-change-background", "resize-image", "rotate-image"],
   },
   {
     label: "PDF",
@@ -498,7 +511,7 @@ export const SECTIONS: ToolSection[] = [
   },
   {
     label: "Watermark",
-    toolIds: ["image-watermark-remove", "pdf-insert-watermark", "pdf-watermark-remove"],
+    toolIds: ["image-insert-watermark", "image-watermark-remove", "pdf-insert-watermark", "pdf-watermark-remove"],
   },
   {
     label: "Word",
