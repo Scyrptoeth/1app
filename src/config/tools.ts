@@ -444,6 +444,19 @@ export const tools: ToolConfig[] = [
     isAvailable: true,
   },
   {
+    id: "ocr-pdf",
+    name: "OCR PDF",
+    description:
+      "Make scanned or image-based PDFs searchable. Adds an invisible text layer so you can select, copy, and search (Ctrl+F) text.",
+    category: "ocr",
+    icon: "ScanSearch",
+    route: "/tools/ocr-pdf",
+    accentColor: "violet",
+    inputFormats: [".pdf"],
+    outputFormats: [".pdf"],
+    isAvailable: true,
+  },
+  {
     id: "unzip-extract-file",
     name: "Unzip (Extract) File",
     description:
@@ -491,11 +504,11 @@ export const SECTIONS: ToolSection[] = [
   },
   {
     label: "PDF",
-    toolIds: ["excel-to-pdf", "image-to-pdf", "pdf-to-excel", "pdf-to-image", "pdf-to-ppt", "pdf-to-word", "pptx-to-pdf", "scan-to-pdf", "word-to-pdf", "x-content-to-pdf"],
+    toolIds: ["excel-to-pdf", "image-to-pdf", "ocr-pdf", "pdf-to-excel", "pdf-to-image", "pdf-to-ppt", "pdf-to-word", "pptx-to-pdf", "scan-to-pdf", "word-to-pdf", "x-content-to-pdf"],
   },
   {
     label: "PDF Utilities",
-    toolIds: ["compress-pdf", "pdf-insert-watermark", "pdf-lock", "pdf-merge", "pdf-watermark-remove", "remove-page-pdf", "reorder-pdf", "rotate-pdf", "split-pdf"],
+    toolIds: ["compress-pdf", "ocr-pdf", "pdf-insert-watermark", "pdf-lock", "pdf-merge", "pdf-watermark-remove", "remove-page-pdf", "reorder-pdf", "rotate-pdf", "split-pdf"],
   },
   {
     label: "PowerPoint",
