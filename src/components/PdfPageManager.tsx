@@ -357,9 +357,9 @@ export function PdfPageManager({
   const [rotations, setRotations] = useState<Map<number, number>>(new Map());
   const [selectedPages, setSelectedPages] = useState<Set<number>>(new Set());
   const [loadingThumbnails, setLoadingThumbnails] = useState(false);
-  const [initialized, setInitialized] = useState(false);
 
   const dragIndexRef = useRef<number>(-1);
+  const initializedRef = useRef(false);
 
   // ─── Computed values ───────────────────────────────────────────
 
@@ -370,8 +370,8 @@ export function PdfPageManager({
   // ─── Initialize: load thumbnails ──────────────────────────────
 
   useEffect(() => {
-    if (initialized) return;
-    setInitialized(true);
+    if (initializedRef.current) return;
+    initializedRef.current = true;
 
     let cancelled = false;
     (async () => {
@@ -402,7 +402,7 @@ export function PdfPageManager({
     })();
 
     return () => { cancelled = true; };
-  }, [file, initialized]);
+  }, [file]);
 
   // ─── Reorder ───────────────────────────────────────────────────
 
